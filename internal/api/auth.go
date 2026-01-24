@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"net/mail"
 
 	"github.com/Xangel0s/FlowKore/internal/core"
 	"github.com/labstack/echo/v4"
@@ -26,6 +27,15 @@ func (h *AuthHandler) Signup(c echo.Context) error {
 	var req AuthRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
+	}
+
+	// Security: Input validation
+	if _, err := mail.ParseAddress(req.Email); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid email format"})
+	}
+
+	if len(req.Password) < 8 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Password must be at least 8 characters long"})
 	}
 
 	user, err := h.authService.Signup(c.Request().Context(), req.Email, req.Password)
