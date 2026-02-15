@@ -45,11 +45,9 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
             if (statusFilter !== 'all') {
                 params.append('status', statusFilter);
             }
-            // Live Tail uses in-memory buffer for real-time activity (includes polling requests)
-            // Explorer uses DB source for persistent historical records
-            if (view === 'live') {
-                params.append('source', 'memory');
-            }
+            // Both Explorer and Live Tail use in-memory buffer for real-time updates
+            // DB audit logs exclude polling endpoints, so DB-only would appear "stuck"
+            params.append('source', 'memory');
             
             const res = await fetchWithAuth(`/api/project/logs?${params.toString()}`);
             if (res.ok) {
@@ -69,7 +67,6 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
                     return;
                 }
 
-                console.debug(`📥 [Logs Received] Count: ${logData.length} | ServerTime Sync: ${new Date(latestServerTimeRef.current).toLocaleTimeString()}`);
                 setLogs(logData);
             }
         } catch (e) { console.error(e); }
@@ -85,49 +82,36 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
         } catch (e) { console.error(e); }
     }, []);
 
-    const fetchAllData = React.useCallback(async () => {
-        await Promise.all([fetchAnalytics(), fetchLogs(), fetchAlerts()]);
-    }, [fetchAnalytics, fetchLogs, fetchAlerts]);
-
+    // 🔄 Reliable polling with setInterval (never breaks, unlike recursive setTimeout)
     useEffect(() => {
-        let timer;
+        let intervalId;
         let isMounted = true;
 
-        const runPoll = async () => {
+        const doFetch = async () => {
             if (!isMounted || isLivePaused) return;
-            
             try {
                 if (view === 'explorer' || view === 'metrics') await fetchAnalytics();
                 if (view === 'live' || view === 'explorer' || view === 'metrics') await fetchLogs();
                 if (view === 'alerts') await fetchAlerts();
             } catch (e) { console.error(e); }
-
-            if (isMounted) {
-                timer = setTimeout(runPoll, pollingInterval);
-            }
         };
 
-        const start = async () => {
-            if (skipNextFetchRef.current) {
-                // After a clear, skip the immediate fetch once, then resume normal polling
-                skipNextFetchRef.current = false;
-                timer = setTimeout(runPoll, pollingInterval);
-            } else {
-                // Normal: fetch immediately, then start polling
-                await fetchAllData();
-                if (isMounted) {
-                    timer = setTimeout(runPoll, pollingInterval);
-                }
-            }
-        };
-        
-        start();
+        // Initial fetch (skip one cycle after clear)
+        if (skipNextFetchRef.current) {
+            skipNextFetchRef.current = false;
+        } else {
+            doFetch();
+        }
+
+        // Start reliable interval-based polling
+        intervalId = setInterval(doFetch, pollingInterval);
 
         return () => {
             isMounted = false;
-            clearTimeout(timer);
+            clearInterval(intervalId);
         };
-    }, [view, isLivePaused, pollingInterval, lastClearedTime, fetchAllData, fetchAnalytics, fetchLogs, fetchAlerts]);
+    }, [view, isLivePaused, pollingInterval, lastClearedTime, fetchAnalytics, fetchLogs, fetchAlerts]);
+
 
     const renderLiveTail = () => (
         <div className="flex flex-col h-full animate-in fade-in duration-500">
