@@ -45,6 +45,11 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
             if (statusFilter !== 'all') {
                 params.append('status', statusFilter);
             }
+            // Live Tail uses in-memory buffer for real-time activity (includes polling requests)
+            // Explorer uses DB source for persistent historical records
+            if (view === 'live') {
+                params.append('source', 'memory');
+            }
             
             const res = await fetchWithAuth(`/api/project/logs?${params.toString()}`);
             if (res.ok) {

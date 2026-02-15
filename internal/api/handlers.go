@@ -262,6 +262,8 @@ func (h *Handler) GetStats(c echo.Context) error {
 }
 
 // GetLogs handles GET /api/project/logs
+// Supports ?source=memory for real-time live tail (in-memory buffer)
+// Defaults to database source for historical explorer view
 func (h *Handler) GetLogs(c echo.Context) error {
 	limitStr := c.QueryParam("limit")
 	limit := 100
@@ -272,6 +274,44 @@ func (h *Handler) GetLogs(c echo.Context) error {
 	}
 
 	statusFilter := c.QueryParam("status")
+	source := c.QueryParam("source")
+
+	// In-memory source: fast, real-time, includes all requests (even polling)
+	if source == "memory" {
+		h.Metrics.RLock()
+		allLogs := make([]LogEntry, len(h.Metrics.Logs))
+		copy(allLogs, h.Metrics.Logs)
+		h.Metrics.RUnlock()
+
+		var filtered []LogEntry
+		for _, l := range allLogs {
+			switch statusFilter {
+			case "success":
+				if l.Status >= 400 {
+					continue
+				}
+			case "error":
+				if l.Status < 400 {
+					continue
+				}
+			}
+			filtered = append(filtered, l)
+			if len(filtered) >= limit {
+				break
+			}
+		}
+
+		if filtered == nil {
+			filtered = []LogEntry{}
+		}
+
+		return c.JSON(http.StatusOK, map[string]any{
+			"logs":        filtered,
+			"server_time": time.Now().UTC(),
+		})
+	}
+
+	// Database source: canonical, persistent, for explorer/history
 	query := `SELECT id, created_at, method, path, status, latency_ms, ip_address, country, city FROM _v_audit_logs `
 	var params []any
 
