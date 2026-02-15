@@ -15,10 +15,10 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
     const [logLimit, setLogLimit] = useState(50);
     const [statusFilter, setStatusFilter] = useState('all');
     const [lastClearedTime, setLastClearedTime] = useState(() => Number(localStorage.getItem('ozy_logs_clear_time')) || 0);
-    const [pollResetCount, setPollResetCount] = useState(0);
     const [lastSyncTime, setLastSyncTime] = useState(null);
     const generationRef = useRef(0);
-    const latestServerTimeRef = useRef(0); // Initialized to 0, updated by server
+    const skipNextFetchRef = useRef(false); // Only skip ONE cycle after clear
+    const latestServerTimeRef = useRef(0);
 
     const fetchAnalytics = React.useCallback(async () => {
         try {
@@ -103,11 +103,12 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
         };
 
         const start = async () => {
-            // If this is a manual reset from "Clear", wait the full interval first
-            // otherwise (initial mount/filter change), fetch immediately
-            if (pollResetCount > 0) {
+            if (skipNextFetchRef.current) {
+                // After a clear, skip the immediate fetch once, then resume normal polling
+                skipNextFetchRef.current = false;
                 timer = setTimeout(runPoll, pollingInterval);
             } else {
+                // Normal: fetch immediately, then start polling
                 await fetchAllData();
                 if (isMounted) {
                     timer = setTimeout(runPoll, pollingInterval);
@@ -121,7 +122,7 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
             isMounted = false;
             clearTimeout(timer);
         };
-    }, [view, isLivePaused, pollingInterval, pollResetCount, fetchAllData, fetchAnalytics, fetchLogs, fetchAlerts]);
+    }, [view, isLivePaused, pollingInterval, lastClearedTime, fetchAllData, fetchAnalytics, fetchLogs, fetchAlerts]);
 
     const renderLiveTail = () => (
         <div className="flex flex-col h-full animate-in fade-in duration-500">
@@ -150,8 +151,8 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
                             console.log(`🧹 [Clear Console] Gen: ${generationRef.current} | Threshold: ${new Date(latestTimestamp).toISOString()}`);
                             localStorage.setItem('ozy_logs_clear_time', latestTimestamp.toString());
                             setLastClearedTime(latestTimestamp);
-                            setLogs([]); 
-                            setPollResetCount(prev => prev + 1); 
+                            setLogs([]);
+                            skipNextFetchRef.current = true;
                         }}
                         className="flex items-center gap-2 px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest bg-zinc-800 text-zinc-400 hover:text-white transition-all border border-transparent hover:border-zinc-700"
                     >
@@ -163,7 +164,7 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
                             onClick={() => {
                                 localStorage.removeItem('ozy_logs_clear_time');
                                 setLastClearedTime(0);
-                                setPollResetCount(prev => prev + 1);
+                                // Immediate re-fetch (no skip)
                                 console.log("🔄 [Reset Filters] All history restored.");
                             }}
                             className="bg-zinc-800 text-zinc-400 hover:text-emerald-500 p-1.5 rounded-xl transition-all border border-transparent hover:border-emerald-500/20"
@@ -395,7 +396,7 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
                             localStorage.setItem('ozy_logs_clear_time', latestTimestamp.toString());
                             setLastClearedTime(latestTimestamp);
                             setLogs([]);
-                            setPollResetCount(prev => prev + 1); 
+                            skipNextFetchRef.current = true;
                         }}
                         className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest bg-[#0c0c0c] text-zinc-500 hover:text-white transition-all border border-[#2e2e2e] hover:border-zinc-700"
                     >
@@ -407,7 +408,6 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
                             onClick={() => {
                                 localStorage.removeItem('ozy_logs_clear_time');
                                 setLastClearedTime(0);
-                                setPollResetCount(prev => prev + 1);
                                 console.log("🔄 [Reset Explorer] All history restored.");
                             }}
                             className="bg-[#0c0c0c] text-zinc-500 hover:text-emerald-500 p-1.5 rounded-xl transition-all border border-[#2e2e2e] hover:border-emerald-500/20"
