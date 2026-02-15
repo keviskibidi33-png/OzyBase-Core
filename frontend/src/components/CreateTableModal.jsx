@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { X, Check, Plus, Trash2, Shield, Zap, Info, Link as LinkIcon, Settings } from 'lucide-react';
+import { X, Check, Plus, Trash2, Shield, Zap, Info, Link as LinkIcon, Settings, FileUp } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
 
-const CreateTableModal = ({ isOpen, onClose, onTableCreated, schema = 'public' }) => {
+const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, schema = 'public' }) => {
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [isRLSEnabled, setIsRLSEnabled] = useState(true);
@@ -18,6 +18,86 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, schema = 'public' }
 
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
+    const [csvRecords, setCsvRecords] = useState([]);
+
+    const handleCSVImport = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const text = event.target.result;
+            const lines = text.split(/\r?\n/).filter(l => l.trim());
+            if (lines.length < 1) return;
+
+            // Robust split (handles quotes)
+            const splitLine = (line) => {
+                const result = [];
+                let cur = '';
+                let inQuote = false;
+                for (let i = 0; i < line.length; i++) {
+                    const char = line[i];
+                    if (char === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+                    else if (char === '"') { inQuote = !inQuote; }
+                    else if (char === ',' && !inQuote) { result.push(cur.trim()); cur = ''; }
+                    else { cur += char; }
+                }
+                result.push(cur.trim());
+                return result;
+            };
+
+            const headers = splitLine(lines[0]);
+            const firstRow = lines.length > 1 ? splitLine(lines[1]) : [];
+            const allRecords = [];
+
+            for (let i = 1; i < lines.length; i++) {
+                const values = splitLine(lines[i]);
+                const record = {};
+                headers.forEach((header, idx) => {
+                    const val = values[idx];
+                    if (val !== undefined) record[header.toLowerCase().replace(/[^a-z0-9_]/g, '_')] = val;
+                });
+                if (Object.keys(record).length > 0) allRecords.push(record);
+            }
+            setCsvRecords(allRecords);
+
+            const newCols = headers.map((header, idx) => {
+                const val = firstRow[idx] || '';
+                let type = 'text';
+
+                // Simple type inference
+                if (!isNaN(val) && val !== '') {
+                    type = val.includes('.') ? 'numeric' : 'int8';
+                } else if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val)) {
+                    type = 'uuid';
+                } else if (val.toLowerCase() === 'true' || val.toLowerCase() === 'false') {
+                    type = 'boolean';
+                }
+
+                return {
+                    name: header.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+                    type: type,
+                    defaultValue: '',
+                    isPrimary: false,
+                    isSystem: false
+                };
+            });
+
+            // Merge with system columns
+            setColumns([
+                { name: 'id', type: 'uuid', defaultValue: 'gen_random_uuid()', isPrimary: true, isSystem: true },
+                ...newCols,
+                { name: 'created_at', type: 'timestamptz', defaultValue: 'now()', isPrimary: false, isSystem: true },
+            ]);
+
+            // Auto-suggest table name from file
+            if (!name) {
+                const fileName = file.name.split('.')[0].toLowerCase().replace(/[^a-z0-9_]/g, '_');
+                setName(fileName);
+            }
+        };
+        reader.readAsText(file);
+    };
 
     if (!isOpen) return null;
 
@@ -64,6 +144,16 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, schema = 'public' }
             }
 
             onTableCreated();
+
+            // Perform bulk import if records exist
+            if (csvRecords.length > 0) {
+                console.log(`[CSV] Importing ${csvRecords.length} records into ${name}`);
+                await fetchWithAuth(`/api/tables/${name}/import`, {
+                    method: 'POST',
+                    body: JSON.stringify(csvRecords)
+                });
+            }
+
             onClose();
         } catch (err) {
             setError(err.message);
@@ -73,7 +163,10 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, schema = 'public' }
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/50 backdrop-blur-sm">
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-end bg-black/50 backdrop-blur-sm"
+            onClick={(e) => e.target === e.currentTarget && onClose()}
+        >
             <div className="w-full max-w-2xl h-full bg-[#111111] border-l border-[#2e2e2e] shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
 
                 {/* Header */}
@@ -174,12 +267,36 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, schema = 'public' }
                         <div className="flex items-center justify-between">
                             <h3 className="text-sm font-bold text-zinc-100">Columns</h3>
                             <div className="flex gap-2">
-                                <button className="text-xs bg-[#171717] border border-[#2e2e2e] text-zinc-300 px-3 py-1.5 rounded hover:bg-zinc-800 transition-colors flex items-center gap-2">
+                                <button
+                                    onClick={() => {
+                                        onMenuViewSelect('db_api');
+                                        onClose();
+                                    }}
+                                    className="text-xs bg-[#171717] border border-[#2e2e2e] text-zinc-300 px-3 py-1.5 rounded hover:bg-zinc-800 transition-colors flex items-center gap-2"
+                                >
                                     <Settings size={12} /> About data types
                                 </button>
-                                <button className="text-xs bg-[#171717] border border-[#2e2e2e] text-zinc-300 px-3 py-1.5 rounded hover:bg-zinc-800 transition-colors">
+                                {csvRecords.length > 0 && (
+                                    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-green-900/20 border border-green-800/30 rounded text-[10px] font-black text-green-500 uppercase tracking-widest animate-in fade-in zoom-in duration-300">
+                                        <Check size={12} /> {csvRecords.length} records staged
+                                        <button
+                                            onClick={() => { setCsvRecords([]); setColumns([{ name: 'id', type: 'uuid', defaultValue: 'gen_random_uuid()', isPrimary: true, isSystem: true }, { name: 'user_id', type: 'uuid', defaultValue: '', isPrimary: false, isSystem: false }, { name: 'created_at', type: 'timestamptz', defaultValue: 'now()', isPrimary: false, isSystem: true }]); }}
+                                            className="ml-2 hover:text-white"
+                                        >
+                                            <Trash2 size={10} />
+                                        </button>
+                                    </div>
+                                )}
+                                <label className="text-xs bg-[#171717] border border-[#2e2e2e] text-zinc-300 px-3 py-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer flex items-center gap-2">
+                                    <FileUp size={12} />
                                     Import data from CSV
-                                </button>
+                                    <input
+                                        type="file"
+                                        accept=".csv"
+                                        onChange={handleCSVImport}
+                                        className="hidden"
+                                    />
+                                </label>
                             </div>
                         </div>
 
@@ -222,11 +339,31 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, schema = 'public' }
                                         >
                                             <option value="uuid">uuid</option>
                                             <option value="text">text</option>
+                                            <option value="varchar">varchar</option>
                                             <option value="int8">int8</option>
-                                            <option value="number">number</option>
-                                            <option value="boolean">boolean</option>
+                                            <option value="int4">int4</option>
+                                            <option value="int2">int2</option>
+                                            <option value="number">number (alias)</option>
+                                            <option value="numeric">numeric</option>
+                                            <option value="float8">float8</option>
+                                            <option value="float4">float4</option>
+                                            <option value="bool">bool</option>
+                                            <option value="boolean">boolean (alias)</option>
                                             <option value="timestamptz">timestamptz</option>
+                                            <option value="timestamp">timestamp</option>
+                                            <option value="date">date</option>
+                                            <option value="time">time</option>
+                                            <option value="timetz">timetz</option>
+                                            <option value="interval">interval</option>
+                                            <option value="money">money</option>
+                                            <option value="jsonb">jsonb</option>
                                             <option value="json">json</option>
+                                            <option value="inet">inet (Networking)</option>
+                                            <option value="cidr">cidr (Networking)</option>
+                                            <option value="macaddr">macaddr (MAC Hardware)</option>
+                                            <option value="text_array">text[] (Array)</option>
+                                            <option value="int_array">int[] (Array)</option>
+                                            <option value="bytea">bytea (Binary)</option>
                                         </select>
                                     </div>
                                     <div className="col-span-3">

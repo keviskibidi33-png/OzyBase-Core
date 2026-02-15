@@ -56,20 +56,20 @@ const AuthManager = () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('ozy_token');
-            const res = await fetch('/api/tables/users', {
+            const res = await fetch('/api/tables/users?limit=1000', {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
             });
-            const data = await res.json();
-            if (Array.isArray(data)) {
-                setUsers(data);
-                setStats(prev => ({
-                    ...prev,
-                    total: data.length,
-                    authorized: data.filter(u => u.is_verified).length
-                }));
-            }
+            const result = await res.json();
+            const usersList = result.data || [];
+
+            setUsers(usersList);
+            setStats(prev => ({
+                ...prev,
+                total: result.total || usersList.length,
+                authorized: usersList.filter(u => u.is_verified).length
+            }));
         } catch (error) {
             console.error('Failed to fetch users:', error);
         } finally {

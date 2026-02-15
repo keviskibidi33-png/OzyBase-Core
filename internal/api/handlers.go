@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
@@ -34,7 +35,7 @@ type LogEntry struct {
 	IP        string    `json:"ip"`
 	Country   string    `json:"country,omitempty"`
 	City      string    `json:"city,omitempty"`
-	Timestamp time.Time `json:"-"`
+	Timestamp time.Time `json:"timestamp"` // Exposed for frontend comparisons
 }
 
 // Metrics holds in-memory activity stats
@@ -262,12 +263,29 @@ func (h *Handler) GetStats(c echo.Context) error {
 
 // GetLogs handles GET /api/project/logs
 func (h *Handler) GetLogs(c echo.Context) error {
-	rows, err := h.DB.Pool.Query(c.Request().Context(), `
-		SELECT id, created_at, method, path, status, latency_ms, ip_address, country, city
-		FROM _v_audit_logs
-		ORDER BY created_at DESC
-		LIMIT 100
-	`)
+	limitStr := c.QueryParam("limit")
+	limit := 100
+	if limitStr != "" {
+		if val, err := strconv.Atoi(limitStr); err == nil {
+			limit = val
+		}
+	}
+
+	statusFilter := c.QueryParam("status")
+	query := `SELECT id, created_at, method, path, status, latency_ms, ip_address, country, city FROM _v_audit_logs `
+	var params []any
+
+	switch statusFilter {
+	case "success":
+		query += `WHERE status < 400 `
+	case "error":
+		query += `WHERE status >= 400 `
+	}
+
+	query += `ORDER BY created_at DESC LIMIT $1`
+	params = append(params, limit)
+
+	rows, err := h.DB.Pool.Query(c.Request().Context(), query, params...)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
@@ -279,7 +297,8 @@ func (h *Handler) GetLogs(c echo.Context) error {
 		var createdAt time.Time
 		var latencyMs int64
 		if err := rows.Scan(&l.ID, &createdAt, &l.Method, &l.Path, &l.Status, &latencyMs, &l.IP, &l.Country, &l.City); err == nil {
-			l.Time = createdAt.Format("15:04:05")
+			l.Timestamp = createdAt.UTC()
+			l.Time = createdAt.UTC().Format("15:04:05")
 			l.Latency = fmt.Sprintf("%dms", latencyMs)
 			logs = append(logs, l)
 		}
@@ -289,7 +308,10 @@ func (h *Handler) GetLogs(c echo.Context) error {
 		logs = []LogEntry{}
 	}
 
-	return c.JSON(http.StatusOK, logs)
+	return c.JSON(http.StatusOK, map[string]any{
+		"logs":        logs,
+		"server_time": time.Now().UTC(),
+	})
 }
 
 // GetSecurityPolicies handles GET /api/project/security/policies
@@ -446,6 +468,46 @@ func (h *Handler) GetSecurityStats(c echo.Context) error {
 	_ = h.DB.Pool.QueryRow(ctx, "SELECT created_at FROM _v_security_alerts ORDER BY created_at DESC LIMIT 1").Scan(&stats.LastBreachAt)
 
 	return c.JSON(http.StatusOK, stats)
+}
+
+// GetSecurityAlerts handles GET /api/project/security/alerts
+func (h *Handler) GetSecurityAlerts(c echo.Context) error {
+	rows, err := h.DB.Pool.Query(c.Request().Context(), `
+		SELECT id, created_at, type, severity, message, metadata
+		FROM _v_security_alerts
+		ORDER BY created_at DESC
+		LIMIT 100
+	`)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	defer rows.Close()
+
+	var alerts []map[string]any
+	for rows.Next() {
+		var id, aType, severity, message string
+		var createdAt time.Time
+		var metadata []byte
+		if err := rows.Scan(&id, &createdAt, &aType, &severity, &message, &metadata); err == nil {
+			var metaMap any
+			_ = json.Unmarshal(metadata, &metaMap)
+			alerts = append(alerts, map[string]any{
+				"id":         id,
+				"time":       createdAt.Format("15:04:05"),
+				"type":       aType,
+				"severity":   severity,
+				"message":    message,
+				"metadata":   metaMap,
+				"created_at": createdAt,
+			})
+		}
+	}
+
+	if alerts == nil {
+		alerts = []map[string]any{}
+	}
+
+	return c.JSON(http.StatusOK, alerts)
 }
 
 // GetNotificationRecipients handles GET /api/project/security/notifications

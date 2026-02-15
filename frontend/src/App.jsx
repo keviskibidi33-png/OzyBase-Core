@@ -1,41 +1,56 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, lazy, Suspense } from 'react'
 import Layout from './components/Layout'
-import TableEditor from './components/TableEditor'
 import Login from './components/Login'
 
-import Overview from './components/Overview'
-import SQLEditor from './components/SQLEditor'
-import AuthManager from './components/AuthManager'
-import StorageManager from './components/StorageManager'
-import EdgeFunctions from './components/EdgeFunctions'
-import RealtimeInspector from './components/RealtimeInspector'
-import Advisors from './components/Advisors'
-import Observability from './components/Observability'
-import LogsAnalytics from './components/LogsAnalytics'
-import SchemaVisualizer from './components/SchemaVisualizer';
-
-import Settings from './components/Settings'
-import ApiDocs from './components/ApiDocs'
-import Integrations from './components/Integrations'
-import SecurityManager from './components/SecurityManager'
-import SecurityDashboard from './components/SecurityDashboard'
-import PermissionManager from './components/PermissionManager'
-import NotificationSettings from './components/NotificationSettings'
-import TwoFactorAuth from './components/TwoFactorAuth'
-import IntegrationsManager from './components/IntegrationsManager'
-import SetupWizard from './components/SetupWizard'
-import FirewallManager from './components/FirewallManager'
+// Dynamic imports for bundle optimization (bundle-dynamic-imports)
+const TableEditor = lazy(() => import('./components/TableEditor'));
+const Overview = lazy(() => import('./components/Overview'));
+const SqlTerminal = lazy(() => import('./components/SqlTerminal'));
+const AuthManager = lazy(() => import('./components/AuthManager'));
+const StorageManager = lazy(() => import('./components/StorageManager'));
+const EdgeFunctions = lazy(() => import('./components/EdgeFunctions'));
+const RealtimeInspector = lazy(() => import('./components/RealtimeInspector'));
+const Advisors = lazy(() => import('./components/Advisors'));
+const Observability = lazy(() => import('./components/Observability'));
+const LogsAnalytics = lazy(() => import('./components/LogsAnalytics'));
+const SchemaVisualizer = lazy(() => import('./components/SchemaVisualizer'));
+const Settings = lazy(() => import('./components/Settings'));
+const ApiDocs = lazy(() => import('./components/ApiDocs'));
+const Integrations = lazy(() => import('./components/Integrations'));
+const SecurityManager = lazy(() => import('./components/SecurityManager'));
+const SecurityDashboard = lazy(() => import('./components/SecurityDashboard'));
+const PermissionManager = lazy(() => import('./components/PermissionManager'));
+const NotificationSettings = lazy(() => import('./components/NotificationSettings'));
+const TwoFactorAuth = lazy(() => import('./components/TwoFactorAuth'));
+const IntegrationsManager = lazy(() => import('./components/IntegrationsManager'));
+const SetupWizard = lazy(() => import('./components/SetupWizard'));
+const FirewallManager = lazy(() => import('./components/FirewallManager'));
 
 function App() {
     const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('ozy_token'));
-    const [isSystemInitialized, setIsSystemInitialized] = useState(true); // Default true to avoid flash
+    const [isSystemInitialized, setIsSystemInitialized] = useState(true);
     const [checkingSystem, setCheckingSystem] = useState(true);
     const [selectedView, setSelectedView] = useState('overview');
     const [selectedTable, setSelectedTable] = useState(null);
+    const [tables, setTables] = useState([]);
 
     useEffect(() => {
         checkSystemStatus();
-    }, []);
+        if (isAuthenticated) {
+            loadTables();
+        }
+    }, [isAuthenticated]);
+
+    const loadTables = () => {
+        fetch('/api/collections', {
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('ozy_token')}`
+            }
+        })
+            .then(res => res.json())
+            .then(data => setTables(Array.isArray(data) ? data : []))
+            .catch(err => console.error("Failed to load tables", err));
+    };
 
     const checkSystemStatus = async () => {
         try {
@@ -56,7 +71,6 @@ function App() {
         const token = urlParams.get('token');
         if (token) {
             localStorage.setItem('ozy_token', token);
-            // Clear URL params without reload
             window.history.replaceState({}, document.title, window.location.pathname);
             setIsAuthenticated(true);
         }
@@ -82,31 +96,69 @@ function App() {
 
     const handleTableSelect = (tableName) => {
         setSelectedTable(tableName);
-        setSelectedView(tableName === '__visualizer__' ? 'visualizer' : 'table');
+        if (tableName === '__visualizer__' || tableName === '__visualizer_system__') {
+            setSelectedView('visualizer');
+        } else {
+            setSelectedView('table');
+        }
     };
 
     const renderView = () => {
         switch (selectedView) {
-            case 'table': return <TableEditor tableName={selectedTable} />;
-            case 'tables': return <TableEditor tableName={null} />;
-            case 'visualizer': return <SchemaVisualizer />;
+            case 'table': return <TableEditor tableName={selectedTable} onTableSelect={handleTableSelect} allTables={tables} />;
+            case 'tables': return <TableEditor tableName={null} onTableSelect={handleTableSelect} allTables={tables} />;
+            case 'visualizer': return <SchemaVisualizer viewMode={selectedTable === '__visualizer_system__' ? 'system' : 'user'} />;
             case 'overview': return <Overview onTableSelect={handleTableSelect} onViewSelect={setSelectedView} />;
-            case 'sql': return <SQLEditor />;
-            case 'auth': return <AuthManager />;
-            case 'storage': return <StorageManager />;
-            case 'edge': return <EdgeFunctions />;
-            case 'realtime': return <RealtimeInspector />;
+            case 'sql': return <SqlTerminal />;
+            case 'auth':
+            case 'users':
+            case 'providers':
+            case 'two_factor':
+            case 'templates':
+                return <AuthManager view={selectedView === 'auth' ? 'users' : selectedView} />;
+            case 'storage':
+            case 'buckets':
+            case 'storage_policies':
+            case 'usage':
+            case 'storage_settings':
+                {
+                    const view = selectedView === 'storage' ? 'buckets' : (selectedView === 'storage_policies' ? 'policies' : (selectedView === 'storage_settings' ? 'settings' : selectedView));
+                    return <StorageManager view={view} />;
+                }
+            case 'edge':
+            case 'functions':
+            case 'deployments':
+            case 'secrets':
+            case 'edge_logs':
+                {
+                    const view = selectedView === 'edge' ? 'functions' : (selectedView === 'edge_logs' ? 'logs' : selectedView);
+                    return <EdgeFunctions view={view} />;
+                }
+            case 'realtime':
+            case 'inspector':
+            case 'channels':
+            case 'config':
+                return <RealtimeInspector view={selectedView === 'realtime' ? 'inspector' : selectedView} />;
             case 'advisors': return <Advisors />;
             case 'observability': return <Observability />;
-            case 'logs': return <LogsAnalytics />;
+            case 'logs':
+            case 'explorer':
+            case 'live':
+            case 'alerts':
+            case 'metrics':
+                return <LogsAnalytics view={selectedView === 'logs' ? 'explorer' : selectedView} />;
             case 'policies': return <PermissionManager />;
             case 'security': return <SecurityDashboard />;
             case 'security_policies': return <SecurityManager />;
             case 'firewall': return <FirewallManager />;
             case 'security_notifications': return <NotificationSettings />;
-            case 'integrations': return <IntegrationsManager />;
-            case 'two_factor': return <TwoFactorAuth />;
-            case 'settings': return <Settings />;
+            case 'auth_settings': return <Settings />;
+            case 'settings':
+            case 'general':
+            case 'infrastructure':
+            case 'billing':
+            case 'api_keys':
+                return <Settings view={selectedView === 'settings' ? 'general' : selectedView} />;
             case 'docs':
             case 'intro':
             case 'auth_api':
@@ -133,12 +185,23 @@ function App() {
             selectedView={selectedView}
             selectedTable={selectedTable}
             onTableSelect={handleTableSelect}
+            tables={tables}
+            refreshTables={loadTables}
             onMenuViewSelect={(view) => {
                 setSelectedView(view);
                 setSelectedTable(null);
             }}
         >
-            {renderView()}
+            <Suspense fallback={
+                <div className="h-full w-full flex items-center justify-center bg-transparent">
+                    <div className="flex flex-col items-center gap-2">
+                        <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                        <span className="text-[10px] font-black text-zinc-700 uppercase tracking-widest">Loading Module...</span>
+                    </div>
+                </div>
+            }>
+                {renderView()}
+            </Suspense>
         </Layout>
     )
 }

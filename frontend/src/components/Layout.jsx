@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import {
     LayoutGrid,
     Table2,
@@ -14,6 +14,7 @@ import {
     Bell,
     HelpCircle,
     ChevronDown,
+    ChevronRight,
     Search,
     BarChart,
     Home,
@@ -24,6 +25,7 @@ import {
     PanelLeftOpen,
     LogOut,
     Plus,
+    X,
     MousePointer2,
     Lightbulb,
     Telescope,
@@ -40,7 +42,6 @@ import {
     Server,
     Check,
     Trash2,
-    X,
     ShieldBan
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
@@ -49,10 +50,10 @@ import CreateTableModal from './CreateTableModal';
 import ConnectionModal from './ConnectionModal';
 import NotificationCenter from './NotificationCenter';
 import AutoFixModal from './AutoFixModal';
+import ConfirmModal from './ConfirmModal';
 
-const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuViewSelect }) => {
+const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuViewSelect, tables = [], refreshTables }) => {
     const [dbStatus, setDbStatus] = useState('Checking...');
-    const [tables, setTables] = useState([]);
     const [user, setUser] = useState(null);
     const [projectInfo, setProjectInfo] = useState(null);
     const [isSidebarPinned, setIsSidebarPinned] = useState(false);
@@ -69,37 +70,64 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
     const [isAutoFixModalOpen, setIsAutoFixModalOpen] = useState(false);
     const [isBannerDismissed, setIsBannerDismissed] = useState(false);
     const [toast, setToast] = useState(null);
+    const [confirmDeleteTable, setConfirmDeleteTable] = useState(null);
+    const [explorerSearchTerm, setExplorerSearchTerm] = useState('');
+    const [docsFilter, setDocsFilter] = useState('all');
+    const [isSystemTablesExpanded, setIsSystemTablesExpanded] = useState(false);
+
+    const notificationRef = useRef(null);
+    const userDropdownRef = useRef(null);
+
+    // Derived state (js-combine-iterations)
+    const safeHealthIssues = useMemo(() => Array.isArray(healthIssues) ? healthIssues : [], [healthIssues]);
+
+    // Pre-calculate and memoize filtered table lists for performance (js-combine-iterations)
+    const { filteredUserTables, filteredSystemTables } = useMemo(() => {
+        const lowerSearch = explorerSearchTerm.toLowerCase();
+        const user = [];
+        const system = [];
+
+        tables.forEach(t => {
+            const isSystem = t.is_system || t.name?.startsWith('_v_') || t.name?.startsWith('_ozy_');
+            const matchesSearch = t.name?.toLowerCase().includes(lowerSearch);
+
+            if (matchesSearch) {
+                if (isSystem) system.push(t);
+                else user.push(t);
+            }
+        });
+
+        return { filteredUserTables: user, filteredSystemTables: system };
+    }, [tables, explorerSearchTerm]);
 
     const showToast = (message, type = 'success') => {
         setToast({ message, type });
         setTimeout(() => setToast(null), 5000);
     };
 
-    const loadTables = () => {
-        fetchWithAuth('/api/collections')
-            .then(res => res.json())
-            .then(data => setTables(data))
-            .catch(err => console.error("Failed to load tables", err));
+    const handleDeleteTable = (tableName, e) => {
+        e.stopPropagation();
+        setConfirmDeleteTable(tableName);
     };
 
-    const handleDeleteTable = async (tableName, e) => {
-        e.stopPropagation();
-        if (!window.confirm(`Are you sure you want to delete table "${tableName}"? This action cannot be undone.`)) return;
-
+    const confirmTableDeletion = async () => {
+        const tableName = confirmDeleteTable;
         try {
             const res = await fetchWithAuth(`/api/collections/${tableName}`, {
                 method: 'DELETE'
             });
             if (res.ok) {
-                loadTables();
+                showToast(`Table "${tableName}" deleted successfully`, 'success');
+                refreshTables();
                 if (selectedTable === tableName) {
                     onTableSelect(null);
                 }
             } else {
-                alert('Failed to delete table');
+                showToast('Failed to delete table', 'error');
             }
         } catch (err) {
             console.error(err);
+            showToast('Network error', 'error');
         }
     };
 
@@ -117,7 +145,7 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
             .catch(err => console.error("Failed to load project info", err));
 
         // Load tables
-        loadTables();
+        refreshTables();
 
         // Load schemas
         fetchWithAuth('/api/collections/schemas')
@@ -138,7 +166,7 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
         const fetchHealth = () => {
             fetchWithAuth('/api/project/health')
                 .then(res => res.json())
-                .then(data => setHealthIssues(data))
+                .then(data => setHealthIssues(Array.isArray(data) ? data : []))
                 .catch(err => console.error("Failed to fetch health info", err));
         };
 
@@ -159,6 +187,24 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
         };
     }, []);
 
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (notificationRef.current && !notificationRef.current.contains(event.target)) {
+                setIsNotificationOpen(false);
+            }
+            if (userDropdownRef.current && !userDropdownRef.current.contains(event.target)) {
+                setIsUserDropdownOpen(false);
+            }
+        };
+
+        if (isNotificationOpen || isUserDropdownOpen) {
+            document.addEventListener('mousedown', handleClickOutside);
+        }
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, [isNotificationOpen, isUserDropdownOpen]);
+
     const handleApplyFix = async (issue) => {
         try {
             const res = await fetchWithAuth('/api/project/health/fix', {
@@ -173,7 +219,7 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
                 // Refresh health after fix
                 fetchWithAuth('/api/project/health')
                     .then(res => res.json())
-                    .then(data => setHealthIssues(data));
+                    .then(data => setHealthIssues(Array.isArray(data) ? data : []));
             } else {
                 const errData = await res.json();
                 showToast(errData.error || "Failed to apply fix", 'error');
@@ -215,8 +261,83 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
         let currentModule = selectedView;
         if (selectedView === 'table') currentModule = 'tables';
         if (selectedView === 'visualizer') currentModule = 'database';
+        
+        // Fix persistence for sub-views
+        if (['users', 'providers', 'policies', 'two_factor', 'security', 'security_policies', 'firewall', 'security_notifications', 'templates', 'auth_settings'].includes(selectedView)) currentModule = 'auth';
+        if (['buckets', 'storage_policies', 'usage', 'storage_settings'].includes(selectedView)) currentModule = 'storage';
+        if (['functions', 'deployments', 'secrets', 'edge_logs'].includes(selectedView)) currentModule = 'edge';
+        if (['inspector', 'channels', 'config'].includes(selectedView)) currentModule = 'realtime';
+        if (['explorer', 'live', 'alerts', 'metrics'].includes(selectedView)) currentModule = 'logs';
         if (['intro', 'auth_api', 'db_api', 'storage_api', 'realtime_api', 'edge_api', 'sdk'].includes(selectedView)) currentModule = 'docs';
         if (['wrappers', 'webhooks', 'cron', 'extensions', 'vault', 'graphql'].includes(selectedView)) currentModule = 'integrations';
+        if (['general', 'infrastructure', 'billing', 'api_keys'].includes(selectedView)) currentModule = 'settings';
+
+        const submenus = {
+            auth: [
+                { id: 'users', name: 'Users', icon: Users },
+                { id: 'providers', name: 'Providers', icon: Key },
+                { id: 'policies', name: 'Permissions', icon: Shield },
+                { id: 'two_factor', name: '2FA Settings', icon: ShieldCheck },
+                { id: 'security', name: 'Security Hub', icon: ShieldAlert },
+                { id: 'security_policies', name: 'Geo-Fencing', icon: Globe },
+                { id: 'firewall', name: 'IP Firewall', icon: ShieldBan },
+                { id: 'security_notifications', name: 'Alert Notifications', icon: Bell },
+                { id: 'integrations', name: 'Integrations & SIEM', icon: Activity },
+                { id: 'templates', name: 'Email Templates', icon: FileText },
+                { id: 'auth_settings', name: 'Auth Settings', icon: Settings }
+            ],
+            storage: [
+                { id: 'buckets', name: 'Buckets', icon: FolderOpen },
+                { id: 'storage_policies', name: 'Policies', icon: Shield },
+                { id: 'usage', name: 'Usage', icon: Activity },
+                { id: 'storage_settings', name: 'Settings', icon: Settings }
+            ],
+            edge: [
+                { id: 'functions', name: 'Functions', icon: Code },
+                { id: 'deployments', name: 'Deployments', icon: Zap },
+                { id: 'secrets', name: 'Env Variables', icon: Key },
+                { id: 'edge_logs', name: 'Edge Logs', icon: List }
+            ],
+            realtime: [
+                { id: 'inspector', name: 'Inspector', icon: Search },
+                { id: 'channels', name: 'Channels', icon: Activity },
+                { id: 'config', name: 'Configuration', icon: Settings }
+            ],
+            logs: [
+                { id: 'explorer', name: 'Log Explorer', icon: Search },
+                { id: 'live', name: 'Live Tail', icon: Activity },
+                { id: 'alerts', name: 'Security Alerts', icon: Bell },
+                { id: 'metrics', name: 'Traffic Analysis', icon: BarChart }
+            ],
+            docs: [
+                { id: 'intro', name: 'Getting Started', icon: Home },
+                { id: 'auth_api', name: 'Authentication', icon: Lock },
+                { id: 'db_api', name: 'Database & SQL', icon: Database },
+                { id: 'storage_api', name: 'Storage', icon: FolderOpen },
+                { id: 'realtime_api', name: 'Realtime', icon: MousePointer2 },
+                { id: 'edge_api', name: 'Edge Functions', icon: Zap },
+                { id: 'sdk', name: 'Client SDKs', icon: Code }
+            ],
+            settings: [
+                { id: 'general', name: 'General', icon: Settings },
+                { id: 'infrastructure', name: 'Infrastructure', icon: Server },
+                { id: 'billing', name: 'Billing', icon: CreditCard },
+                { id: 'api_keys', name: 'API Keys', icon: Key }
+            ],
+            integrations: [
+                { id: 'wrappers', name: 'Wrappers', icon: Globe },
+                { id: 'webhooks', name: 'Webhooks', icon: Zap },
+                { id: 'cron', name: 'Cron Jobs', icon: History },
+                { id: 'extensions', name: 'PG Extensions', icon: Cpu },
+                { id: 'vault', name: 'Vault', icon: Shield },
+                { id: 'graphql', name: 'GraphQL', icon: Code }
+            ]
+        };
+
+        const activeSubmenu = submenus[currentModule] || [
+            { id: 'general', name: 'Dashboard', icon: LayoutGrid },
+            { id: 'status', name: 'System Status', icon: Activity }
+        ];
 
 
         if (currentModule === 'sql') {
@@ -235,49 +356,12 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
                             </div>
                         </div>
 
-                        <div className="space-y-4 px-2">
-                            {/* SHARED */}
-                            <div>
-                                <button className="flex items-center gap-2 px-1 py-1 w-full text-left text-[10px] font-bold text-zinc-500 hover:text-zinc-300 uppercase tracking-widest transition-colors">
-                                    <ChevronDown size={12} className="-rotate-90" /> SHARED
-                                </button>
+                        <div className="flex-1 flex flex-col items-center justify-center px-4 py-8 text-center">
+                            <div className="w-10 h-10 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-3">
+                                <Terminal size={18} className="text-zinc-600" />
                             </div>
-
-                            {/* FAVORITES */}
-                            <div>
-                                <button className="flex items-center gap-2 px-1 py-1 w-full text-left text-[10px] font-bold text-zinc-500 hover:text-zinc-300 uppercase tracking-widest transition-colors">
-                                    <ChevronDown size={12} className="-rotate-90" /> FAVORITES
-                                </button>
-                            </div>
-
-                            {/* PRIVATE */}
-                            <div>
-                                <button className="flex items-center gap-2 px-1 py-1 w-full text-left text-[10px] font-bold text-zinc-500 hover:text-zinc-300 uppercase tracking-widest transition-colors mb-2">
-                                    <ChevronDown size={12} /> PRIVATE (3)
-                                </button>
-                                <div className="pl-2 space-y-0.5">
-                                    {[
-                                        "Normalize scans status...",
-                                        "Migrate scans status...",
-                                        "User Profiles, Scans..."
-                                    ].map((item, i) => (
-                                        <button
-                                            key={i}
-                                            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-xs text-left truncate transition-colors group ${i === 1 ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300'}`}
-                                        >
-                                            <div className="min-w-[14px] h-[14px] rounded border border-zinc-700 flex items-center justify-center bg-[#111111] text-[8px] font-black text-zinc-500 group-hover:border-zinc-500">SQL</div>
-                                            <span className="truncate">{item}</span>
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* COMMUNITY */}
-                            <div>
-                                <button className="flex items-center gap-2 px-1 py-1 w-full text-left text-[10px] font-bold text-zinc-500 hover:text-zinc-300 uppercase tracking-widest transition-colors mb-1">
-                                    <ChevronDown size={12} className="-rotate-90" /> COMMUNITY
-                                </button>
-                            </div>
+                            <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest mb-1">No Saved Queries</p>
+                            <p className="text-[9px] text-zinc-700">Run a query and save it for later.</p>
                         </div>
                     </div>
 
@@ -347,33 +431,89 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
                             </button>
                         </div>
 
-                        <div className="flex items-center justify-between px-3 mb-2">
-                            <h4 className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.2em]">All Tables</h4>
-                            <button className="text-zinc-700 hover:text-primary transition-colors"><Search size={12} /></button>
+                        <div className="px-3 mb-2">
+                            <div className="flex items-center gap-2 px-3 py-1.5 bg-[#0a0a0a] border border-[#2e2e2e] rounded-lg group focus-within:border-primary/50 transition-all">
+                                <Search size={12} className="text-zinc-600 group-focus-within:text-primary" />
+                                <input
+                                    type="text"
+                                    placeholder="Filter tables..."
+                                    value={explorerSearchTerm}
+                                    onChange={(e) => setExplorerSearchTerm(e.target.value)}
+                                    className="bg-transparent border-none text-[10px] text-zinc-300 placeholder:text-zinc-700 focus:outline-none w-full uppercase font-bold tracking-widest"
+                                />
+                                {explorerSearchTerm && (
+                                    <button onClick={() => setExplorerSearchTerm('')} className="text-zinc-700 hover:text-white">
+                                        <X size={10} />
+                                    </button>
+                                )}
+                            </div>
                         </div>
 
-                        <div className="space-y-0.5">
-                            {tables.map((t) => (
+
+                        <div className="space-y-4">
+                            <div>
+                                <div className="flex items-center justify-between px-3 mb-2">
+                                    <h4 className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.2em]">User Tables ({filteredUserTables.length})</h4>
+                                </div>
+                                <div className="space-y-0.5">
+                                    {filteredUserTables.map((t) => (
+                                        <button
+                                            key={t.name}
+                                            onClick={() => onTableSelect(t.name)}
+                                            className={`w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-xs transition-all group ${selectedTable === t.name
+                                                ? 'bg-zinc-900 text-primary font-bold border border-[#2e2e2e]/50 shadow-xl'
+                                                : 'text-zinc-600 hover:text-zinc-300 hover:bg-zinc-900/40 border border-transparent'
+                                                }`}
+                                        >
+                                            <div className="flex items-center gap-3 truncate">
+                                                <Table2 size={14} className={selectedTable === t.name ? 'text-primary' : 'text-zinc-800 group-hover:text-zinc-500'} />
+                                                <span className="truncate">{t.name}</span>
+                                            </div>
+                                            <div
+                                                onClick={(e) => handleDeleteTable(t.name, e)}
+                                                className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-500 hover:bg-zinc-800 rounded transition-all"
+                                            >
+                                                <Trash2 size={12} />
+                                            </div>
+                                        </button>
+                                    ))}
+                                    {filteredUserTables.length === 0 && (
+                                        <p className="px-3 py-4 text-[10px] text-zinc-600 italic uppercase">No user tables yet</p>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="border-t border-[#2e2e2e] pt-4">
                                 <button
-                                    key={t.name}
-                                    onClick={() => onTableSelect(t.name)}
-                                    className={`w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-xs transition-all group ${selectedTable === t.name
-                                        ? 'bg-zinc-900 text-primary font-bold border border-[#2e2e2e]/50 shadow-xl'
-                                        : 'text-zinc-600 hover:text-zinc-300 hover:bg-zinc-900/40 border border-transparent'
-                                        }`}
+                                    onClick={() => setIsSystemTablesExpanded(!isSystemTablesExpanded)}
+                                    className="w-full flex items-center justify-between px-3 mb-2 group"
                                 >
-                                    <div className="flex items-center gap-3 truncate">
-                                        <Table2 size={14} className={selectedTable === t.name ? 'text-primary' : 'text-zinc-800 group-hover:text-zinc-500'} />
-                                        <span className="truncate">{t.name}</span>
-                                    </div>
-                                    <div
-                                        onClick={(e) => handleDeleteTable(t.name, e)}
-                                        className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-500 hover:bg-zinc-800 rounded transition-all"
-                                    >
-                                        <Trash2 size={12} />
-                                    </div>
+                                    <h4 className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.2em] group-hover:text-zinc-400 transition-colors flex items-center gap-2">
+                                        {isSystemTablesExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                                        System Tables ({filteredSystemTables.length})
+                                    </h4>
                                 </button>
-                            ))}
+
+                                {isSystemTablesExpanded && (
+                                    <div className="space-y-0.5 animate-in slide-in-from-top-1 duration-200">
+                                        {filteredSystemTables.map((t) => (
+                                            <button
+                                                key={t.name}
+                                                onClick={() => onTableSelect(t.name)}
+                                                className={`w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-xs transition-all group ${selectedTable === t.name
+                                                    ? 'bg-zinc-900 text-primary font-bold border border-[#2e2e2e]/50 shadow-xl'
+                                                    : 'text-zinc-600/60 hover:text-zinc-300 hover:bg-zinc-900/40 border border-transparent'
+                                                    }`}
+                                            >
+                                                <div className="flex items-center gap-3 truncate">
+                                                    <Lock size={12} className={selectedTable === t.name ? 'text-primary' : 'text-zinc-800 group-hover:text-zinc-500'} />
+                                                    <span className="truncate font-mono opacity-80">{t.name}</span>
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -399,83 +539,93 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
                                 <LayoutGrid size={14} className={selectedTable === '__visualizer__' ? 'text-primary' : 'text-zinc-800 group-hover:text-zinc-500'} />
                                 <span className="truncate">Schema Visualizer</span>
                             </button>
+                            <button
+                                onClick={() => onTableSelect('__visualizer_system__')}
+                                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs transition-all group ${selectedTable === '__visualizer_system__'
+                                    ? 'bg-amber-900/20 text-amber-500 font-bold border border-amber-500/20 shadow-xl'
+                                    : 'text-zinc-600 hover:text-zinc-300 hover:bg-zinc-900/40 border border-transparent'
+                                    }`}
+                            >
+                                <Lock size={14} className={selectedTable === '__visualizer_system__' ? 'text-amber-500' : 'text-zinc-800 group-hover:text-zinc-500'} />
+                                <span className="truncate">System Schemas</span>
+                            </button>
                         </div>
                     </div>
                 </div>
             );
         }
 
-        const submenus = {
-            auth: [
-                { id: 'users', name: 'Users', icon: Users },
-                { id: 'providers', name: 'Providers', icon: Key },
-                { id: 'policies', name: 'Permissions', icon: Shield },
-                { id: 'two_factor', name: '2FA Settings', icon: ShieldCheck },
-                { id: 'security', name: 'Security Hub', icon: ShieldAlert },
-                { id: 'security_policies', name: 'Geo-Fencing', icon: Globe },
-                { id: 'firewall', name: 'IP Firewall', icon: ShieldBan },
-                { id: 'security_notifications', name: 'Alert Notifications', icon: Bell },
-                { id: 'integrations', name: 'Integrations & SIEM', icon: Activity },
-                { id: 'templates', name: 'Email Templates', icon: FileText },
-                { id: 'settings', name: 'Auth Settings', icon: Settings }
-            ],
-            storage: [
-                { id: 'buckets', name: 'Buckets', icon: FolderOpen },
-                { id: 'policies', name: 'Policies', icon: Shield },
-                { id: 'usage', name: 'Usage', icon: Activity },
-                { id: 'settings', name: 'Settings', icon: Settings }
-            ],
-            edge: [
-                { id: 'functions', name: 'Functions', icon: Code },
-                { id: 'deployments', name: 'Deployments', icon: Zap },
-                { id: 'secrets', name: 'Env Variables', icon: Key },
-                { id: 'logs', name: 'Edge Logs', icon: List }
-            ],
-            realtime: [
-                { id: 'inspector', name: 'Inspector', icon: Search },
-                { id: 'channels', name: 'Channels', icon: Activity },
-                { id: 'config', name: 'Configuration', icon: Settings }
-            ],
-            logs: [
-                { id: 'explorer', name: 'Log Explorer', icon: Search },
-                { id: 'live', name: 'Live Tail', icon: Activity },
-                { id: 'alerts', name: 'Alerts', icon: Bell }
-            ],
-            docs: [
-                { id: 'intro', name: 'Getting Started', icon: Home },
-                { id: 'auth_api', name: 'Authentication', icon: Lock },
-                { id: 'db_api', name: 'Database & SQL', icon: Database },
-                { id: 'storage_api', name: 'Storage', icon: FolderOpen },
-                { id: 'realtime_api', name: 'Realtime', icon: MousePointer2 },
-                { id: 'edge_api', name: 'Edge Functions', icon: Zap },
-                { id: 'sdk', name: 'Client SDKs', icon: Code }
-            ],
-            settings: [
-                { id: 'general', name: 'General', icon: Settings },
-                { id: 'infrastructure', name: 'Infrastructure', icon: Server },
-                { id: 'billing', name: 'Billing', icon: CreditCard },
-                { id: 'api_keys', name: 'API Keys', icon: Key }
-            ],
-            integrations: [
-                { id: 'wrappers', name: 'Wrappers', icon: Globe },
-                { id: 'webhooks', name: 'Webhooks', icon: Zap },
-                { id: 'cron', name: 'Cron Jobs', icon: History },
-                { id: 'extensions', name: 'PG Extensions', icon: Cpu },
-                { id: 'vault', name: 'Vault', icon: Shield },
-                { id: 'graphql', name: 'GraphQL', icon: Code }
-            ]
-        };
+        if (currentModule === 'docs') {
+            const filteredDocs = activeSubmenu.filter(item => {
+                const matchesSearch = item.name.toLowerCase().includes(explorerSearchTerm.toLowerCase());
+                const matchesFilter = docsFilter === 'all' ||
+                    (docsFilter === 'core' && ['intro', 'sdk'].includes(item.id)) ||
+                    (docsFilter === 'apis' && item.id.includes('_api'));
+                return matchesSearch && matchesFilter;
+            });
 
-        const activeSubmenu = submenus[currentModule] || [
-            { id: 'general', name: 'Dashboard', icon: LayoutGrid },
-            { id: 'status', name: 'System Status', icon: Activity }
-        ];
+            return (
+                <div className="space-y-6 animate-in fade-in duration-300">
+                    <div className="px-2 space-y-4">
+                        <div className="relative group">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600 group-focus-within:text-primary transition-colors" size={12} />
+                            <input
+                                type="text"
+                                placeholder="Search documentation..."
+                                value={explorerSearchTerm}
+                                onChange={(e) => setExplorerSearchTerm(e.target.value)}
+                                className="w-full bg-[#111111] border border-[#2e2e2e] rounded-lg pl-9 pr-4 py-2 text-[10px] text-white placeholder:text-zinc-700 focus:outline-none focus:border-primary/50 transition-all"
+                            />
+                        </div>
+
+                        <div className="flex flex-wrap gap-1.5">
+                            {['all', 'core', 'apis'].map((f) => (
+                                <button
+                                    key={f}
+                                    onClick={() => setDocsFilter(f)}
+                                    className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border transition-all ${docsFilter === f ? 'bg-primary text-black border-primary' : 'bg-transparent border-zinc-800 text-zinc-600 hover:text-zinc-400'}`}
+                                >
+                                    {f}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div>
+                        <h4 className="px-3 mb-4 text-[9px] font-black text-zinc-600 uppercase tracking-[0.2em]">
+                            Documentation Sections
+                        </h4>
+                        <div className="space-y-0.5">
+                            {filteredDocs.length > 0 ? (
+                                filteredDocs.map((item) => (
+                                    <button
+                                        key={item.id}
+                                        onClick={() => onMenuViewSelect(item.id)}
+                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs transition-all group ${selectedView === item.id ? 'bg-zinc-900 text-primary font-bold' : 'text-zinc-600 hover:text-zinc-300 hover:bg-zinc-900/40'}`}
+                                    >
+                                        <item.icon size={14} className="text-zinc-800 group-hover:text-zinc-500" />
+                                        <span className="truncate font-medium">{item.name}</span>
+                                    </button>
+                                ))
+                            ) : (
+                                <div className="px-3 py-10 text-center space-y-2">
+                                    <div className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center mx-auto text-zinc-700">
+                                        <Search size={14} />
+                                    </div>
+                                    <p className="text-[9px] text-zinc-700 font-bold uppercase tracking-widest">No results found</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
 
         return (
             <div className="space-y-6 animate-in fade-in duration-300">
                 <div>
                     <h4 className="px-3 mb-4 text-[9px] font-black text-zinc-600 uppercase tracking-[0.2em]">
-                        {currentModule === 'docs' ? 'Documentation' : `${currentModule} Management`}
+                        {currentModule === 'docs' ? 'Documentation' : `${currentModule.replace('_', ' ')} Management`}
                     </h4>
                     <div className="space-y-0.5">
                         {activeSubmenu.map((item) => (
@@ -493,6 +643,7 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
             </div>
         );
     };
+
 
     return (
         <div className="flex h-screen bg-[#171717] overflow-hidden text-zinc-400 font-sans selection:bg-primary selection:text-black">
@@ -520,15 +671,22 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
                         if (item.type === 'separator') return <div key={i} className="h-[1px] bg-[#2e2e2e] my-2 mx-2 shrink-0" />;
 
                         const isActive = (item.id === 'tables' && (selectedView === 'tables' || selectedView === 'table')) ||
-                            (item.id === 'database' && (selectedView === 'database' || selectedView === 'visualizer')) ||
+                            (item.id === 'logs' && ['explorer', 'live', 'alerts', 'metrics'].includes(selectedView)) ||
+                            (item.id === 'auth' && ['users', 'providers', 'policies', 'two_factor', 'security', 'security_policies', 'firewall', 'security_notifications', 'templates', 'auth_settings'].includes(selectedView)) ||
+                            (item.id === 'storage' && ['buckets', 'storage_policies', 'usage', 'storage_settings'].includes(selectedView)) ||
+                            (item.id === 'edge' && ['functions', 'deployments', 'secrets', 'edge_logs'].includes(selectedView)) ||
+                            (item.id === 'realtime' && ['inspector', 'channels', 'config'].includes(selectedView)) ||
                             (selectedView === item.id);
 
                         return (
                             <button
                                 key={item.id}
+                                aria-label={item.label}
                                 onClick={() => {
                                     if (item.id === 'tables' && tables.length > 0) {
-                                        onTableSelect(tables[0].name);
+                                        // Prioritize user tables over system tables
+                                        const firstUserTable = tables.find(t => !(t.is_system || t.name?.startsWith('_v_') || t.name?.startsWith('_ozy_')));
+                                        onTableSelect(firstUserTable ? firstUserTable.name : tables[0].name);
                                     } else if (item.id === 'database') {
                                         onTableSelect('__visualizer__');
                                     } else {
@@ -584,9 +742,9 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
                 </div>
             </div>
 
-            {/* Explorer Sidebar */}
-            <div className={`bg-[#0c0c0c] border-r border-[#2e2e2e] flex flex-col transition-all duration-300 ${selectedView === 'overview' ? 'w-0 border-r-0 overflow-hidden' : 'w-60'
-                }`}>
+            {/* Explorer Sidebar — only rendered for views that need it */}
+            {!['overview', 'sql', 'settings', 'advisors', 'observability'].includes(selectedView) && (
+            <div className="bg-[#0c0c0c] border-r border-[#2e2e2e] flex flex-col w-60">
                 <div className="h-14 flex items-center px-4 border-b border-[#2e2e2e] flex-shrink-0">
                     <span className="font-black text-[10px] uppercase tracking-[0.25em] text-zinc-500 truncate">
                         Explorer
@@ -607,9 +765,10 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
                     </button>
                 </div>
             </div>
+            )}
 
             {/* Main Content Area */}
-            <div className="flex-1 flex flex-col min-w-0 bg-[#0c0c0c]">
+            <div key={selectedView} className={`flex-1 flex flex-col min-w-0 bg-[#0c0c0c] ${['overview', 'sql', 'settings', 'advisors', 'observability'].includes(selectedView) ? 'animate-in fade-in slide-in-from-left-2 duration-300' : ''}`}>
                 <header className="h-14 border-b border-[#2e2e2e] bg-[#111111] flex items-center justify-between px-6 flex-shrink-0">
                     <div className="flex items-center gap-2 text-[11px] font-bold tracking-tight">
                         <span className="text-zinc-600 hover:text-zinc-400 cursor-pointer transition-colors uppercase tracking-[0.1em]">OzyBase</span>
@@ -632,15 +791,20 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
 
                         <div className="h-4 w-[1px] bg-[#2e2e2e] mx-1" />
 
-                        <div className="relative">
+                        <div className="relative" ref={notificationRef}>
                             <button
                                 onClick={() => setIsNotificationOpen(!isNotificationOpen)}
-                                className={`w-8 h-8 rounded-lg bg-zinc-900 border border-[#2e2e2e] flex items-center justify-center transition-all ${healthIssues.length > 0 ? 'text-amber-500 border-amber-500/30' : 'text-zinc-500 hover:text-white hover:border-zinc-600'}`}
+                                className={`w-8 h-8 rounded-lg bg-zinc-900 border border-[#2e2e2e] flex items-center justify-center transition-all ${safeHealthIssues.length > 0
+                                    ? safeHealthIssues.some(i => i.type === 'security')
+                                        ? 'text-red-500 border-red-500/30 animate-security-pulse'
+                                        : 'text-amber-500 border-amber-500/30 animate-notification-pulse'
+                                    : 'text-zinc-500 hover:text-white hover:border-zinc-600'
+                                    }`}
                             >
-                                <Bell size={16} className={healthIssues.some(i => i.type === 'security') ? 'animate-bounce' : ''} />
-                                {healthIssues.length > 0 && (
+                                <Bell size={16} className={safeHealthIssues.some(i => i.type === 'security') ? 'animate-bounce' : ''} />
+                                {safeHealthIssues.length > 0 && (
                                     <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-[#111111] flex items-center justify-center text-[7px] font-black text-white">
-                                        {healthIssues.length}
+                                        {safeHealthIssues.length}
                                     </span>
                                 )}
                             </button>
@@ -648,7 +812,7 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
                             <NotificationCenter
                                 isOpen={isNotificationOpen}
                                 onClose={() => setIsNotificationOpen(false)}
-                                issues={healthIssues}
+                                issues={safeHealthIssues}
                                 onIssueAction={(issue) => {
                                     setSelectedFixIssue(issue);
                                     setIsAutoFixModalOpen(true);
@@ -661,16 +825,44 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
                             />
                         </div>
 
-                        <div
-                            className="w-8 h-8 rounded-lg bg-zinc-900 border border-[#2e2e2e] flex items-center justify-center text-primary text-[10px] font-black cursor-pointer hover:border-primary/50 transition-all font-mono"
-                            onClick={() => setIsUserDropdownOpen(!isUserDropdownOpen)}
-                        >
-                            {user?.email?.charAt(0).toUpperCase() || 'A'}
+                        <div className="relative" ref={userDropdownRef}>
+                            <div
+                                className="w-8 h-8 rounded-lg bg-zinc-900 border border-[#2e2e2e] flex items-center justify-center text-primary text-[10px] font-black cursor-pointer hover:border-primary/50 transition-all font-mono"
+                                onClick={() => setIsUserDropdownOpen(!isUserDropdownOpen)}
+                            >
+                                {user?.email?.charAt(0).toUpperCase() || 'A'}
+                            </div>
+
+                            {isUserDropdownOpen && (
+                                <div className="absolute top-10 right-0 w-48 bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl shadow-2xl z-[100] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                                    <div className="px-4 py-3 border-b border-[#2e2e2e] bg-[#111111]">
+                                        <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Signed in as</p>
+                                        <p className="text-xs font-bold text-white truncate">{user?.email}</p>
+                                    </div>
+                                    <div className="p-1">
+                                        <button
+                                            onClick={() => {
+                                                onMenuViewSelect('settings');
+                                                setIsUserDropdownOpen(false);
+                                            }}
+                                            className="w-full flex items-center gap-3 px-3 py-2 text-xs font-medium text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all rounded-lg"
+                                        >
+                                            <Settings size={14} /> Settings
+                                        </button>
+                                        <button
+                                            onClick={handleLogout}
+                                            className="w-full flex items-center gap-3 px-3 py-2 text-xs font-medium text-red-400 hover:text-red-500 hover:bg-red-500/5 transition-all rounded-lg"
+                                        >
+                                            <LogOut size={14} /> Sign Out
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </header>
 
-                {healthIssues.filter(i => i.type === 'security').length > 2 && !isBannerDismissed && (
+                {safeHealthIssues.filter(i => i.type === 'security').length > 1 && !isBannerDismissed && (
                     <div className="bg-red-500/10 border-b border-red-500/20 px-6 py-2 flex items-center justify-between animate-in slide-in-from-top-full duration-500 shadow-[0_4px_12px_rgba(239,68,68,0.1)]">
                         <div className="flex items-center gap-3">
                             <Shield size={14} className="text-red-500 animate-pulse" />
@@ -726,9 +918,10 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
             <CreateTableModal
                 isOpen={isCreateTableModalOpen}
                 onClose={() => setIsCreateTableModalOpen(false)}
+                onMenuViewSelect={onMenuViewSelect}
                 schema={selectedSchema}
                 onTableCreated={() => {
-                    loadTables();
+                    refreshTables();
                 }}
             />
 
@@ -764,6 +957,15 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
                 issue={selectedFixIssue}
                 onClose={() => setIsAutoFixModalOpen(false)}
                 onConfirm={handleApplyFix}
+            />
+
+            <ConfirmModal
+                isOpen={!!confirmDeleteTable}
+                onClose={() => setConfirmDeleteTable(null)}
+                onConfirm={confirmTableDeletion}
+                title="Delete Table"
+                message={`Are you sure you want to delete table "${confirmDeleteTable}"? All data within this collection will be lost forever.`}
+                confirmText="Burn Table"
             />
         </div>
     );

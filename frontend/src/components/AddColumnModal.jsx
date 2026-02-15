@@ -9,7 +9,12 @@ import {
     Calendar,
     CheckCircle2,
     Key,
-    Code
+    Code,
+    Globe,
+    DollarSign,
+    Layers,
+    Clock,
+    Cpu
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
 
@@ -76,6 +81,13 @@ const AddColumnModal = ({ isOpen, onClose, tableName, onColumnAdded }) => {
         { label: 'timestamptz', value: 'timestamptz', icon: Calendar, desc: 'Date and time, including time zone' },
         { label: 'bool', value: 'bool', icon: CheckCircle2, desc: 'Logical boolean (true/false)' },
         { label: 'bytea', value: 'bytea', icon: Database, desc: 'Variable-length binary string' },
+        { label: 'inet', value: 'inet', icon: Globe, desc: 'IPv4 or IPv6 host address' },
+        { label: 'cidr', value: 'cidr', icon: Globe, desc: 'IPv4 or IPv6 network address' },
+        { label: 'macaddr', value: 'macaddr', icon: Cpu, desc: 'MAC address' },
+        { label: 'interval', value: 'interval', icon: Clock, desc: 'Time span / Duration' },
+        { label: 'money', value: 'money', icon: DollarSign, desc: 'Currency / Monetary amount' },
+        { label: 'text_array', value: 'text_array', icon: Layers, desc: 'Array of strings' },
+        { label: 'int_array', value: 'int_array', icon: Layers, desc: 'Array of integers' },
     ];
 
     return (

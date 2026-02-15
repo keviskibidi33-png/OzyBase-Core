@@ -1,0 +1,27 @@
+
+Running 1 test using 1 worker
+
+[1A[2K[1/1] [chromium] › tests\data-types.spec.js:26:6 › should create a table with all data types
+�Desea terminar el trabajo por lotes (S/N)? [1A[2K  1) [chromium] › tests\data-types.spec.js:26:6 › should create a table with all data types ────────
+
+    Test was interrupted.
+
+    Error: locator.fill: Target page, context or browser has been closed
+    Call log:
+    [2m  - waiting for getByPlaceholder('e.g. products')[22m
+
+
+      37 |
+      38 |     const tableName = `test_types_${Date.now()}`;
+    > 39 |     await page.getByPlaceholder('e.g. products').fill(tableName);
+         |                                                  ^
+      40 |
+      41 |     const dataTypes = ['text', 'int4', 'bool', 'jsonb', 'uuid', 'date'];
+      42 |     let i = 0;
+        at C:\Users\lunax\OneDrive\Documentos\broo\OzyBase-Core\frontend\tests\data-types.spec.js:39:50
+
+    Error: browserContext.close: Target page, context or browser has been closed
+
+
+[1A[2K  1 interrupted
+    [chromium] › tests\data-types.spec.js:26:6 › should create a table with all data types ─────────

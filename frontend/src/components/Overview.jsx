@@ -65,6 +65,21 @@ const Overview = ({ onTableSelect, onViewSelect }) => {
     const [healthIssues, setHealthIssues] = useState([]);
     const [loading, setLoading] = useState(true);
     const [issuesTab, setIssuesTab] = useState('security');
+    const [timeRange, setTimeRange] = useState(60);
+    const [showTimeMenu, setShowTimeMenu] = useState(false);
+    const [showStatusMenu, setShowStatusMenu] = useState(false);
+
+    // Close menus on outside click
+    useEffect(() => {
+        const handleOutsideClick = () => {
+            setShowTimeMenu(false);
+            setShowStatusMenu(false);
+        };
+        if (showTimeMenu || showStatusMenu) {
+            window.addEventListener('click', handleOutsideClick);
+        }
+        return () => window.removeEventListener('click', handleOutsideClick);
+    }, [showTimeMenu, showStatusMenu]);
 
     useEffect(() => {
         const loadData = async () => {
@@ -103,15 +118,43 @@ const Overview = ({ onTableSelect, onViewSelect }) => {
         );
     }
 
-    // Determine project status color
+    // Categorical System Status Logic
     const securityIssues = healthIssues.filter(i => i.type === 'security').length;
     const performanceIssues = healthIssues.filter(i => i.type === 'performance').length;
     const totalIssues = securityIssues + performanceIssues;
 
-    const statusColor = securityIssues > 2 ? 'bg-red-500' :
-        totalIssues > 0 ? 'bg-amber-500' : 'bg-green-500';
-    const statusGlow = securityIssues > 2 ? 'shadow-[0_0_8px_rgba(239,68,68,0.6)]' :
-        totalIssues > 0 ? 'shadow-[0_0_8px_rgba(245,158,11,0.6)]' : 'shadow-[0_0_8px_rgba(34,197,94,0.6)]';
+    const getStatusDetails = () => {
+        if (securityIssues > 2) return {
+            label: 'VULNERABILITY DETECTED',
+            color: 'bg-red-500',
+            glow: 'shadow-[0_0_12px_rgba(239,68,68,0.8)]',
+            desc: 'System integrity compromised. Immediate security reinforcement is strictly required.',
+            type: 'vulnerable'
+        };
+        if (securityIssues > 0) return {
+            label: 'CRITICAL ATTENTION',
+            color: 'bg-orange-500',
+            glow: 'shadow-[0_0_12px_rgba(249,115,22,0.8)]',
+            desc: 'Major anomalies detected in access layers. Significant system impact if unaddressed.',
+            type: 'grave'
+        };
+        if (performanceIssues > 0 || (projectInfo?.metrics?.cpu_history?.[projectInfo.metrics.cpu_history.length - 1] > 85)) return {
+            label: 'MINOR INSTABILITY',
+            color: 'bg-amber-500',
+            glow: 'shadow-[0_0_12px_rgba(245,158,11,0.8)]',
+            desc: 'Partial subsystem degradation observed. System is monitoring for potential failure points.',
+            type: 'fallas'
+        };
+        return {
+            label: 'SYSTEM OPTIMAL',
+            color: 'bg-green-500',
+            glow: 'shadow-[0_0_12px_rgba(34,197,94,0.8)]',
+            desc: 'All core modules are performing within nominal parameters. System environment is stable.',
+            type: 'estable'
+        };
+    };
+
+    const status = getStatusDetails();
 
     return (
         <div className="flex flex-col h-full bg-[#111111] animate-in fade-in duration-500 overflow-y-auto custom-scrollbar p-10 font-sans">
@@ -132,9 +175,13 @@ const Overview = ({ onTableSelect, onViewSelect }) => {
                             onClick={() => onViewSelect('tables')}
                             className="text-center group transition-all"
                         >
-                            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest leading-none mb-1 group-hover:text-primary">Tables</p>
-                            <p className="text-xl font-black text-white leading-none group-hover:scale-110 transition-transform">{projectInfo?.table_count || 0}</p>
+                            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest leading-none mb-1 group-hover:text-primary">User Tables</p>
+                            <p className="text-xl font-black text-white leading-none group-hover:scale-110 transition-transform">{(projectInfo?.user_table_count !== undefined) ? projectInfo.user_table_count : '...'}</p>
                         </button>
+                        <div className="text-center opacity-40">
+                            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest leading-none mb-1">System</p>
+                            <p className="text-xl font-black text-zinc-500 leading-none">{(projectInfo?.system_table_count !== undefined) ? projectInfo.system_table_count : '...'}</p>
+                        </div>
                         <button
                             onClick={() => onViewSelect('edge')}
                             className="text-center group transition-all"
@@ -150,10 +197,62 @@ const Overview = ({ onTableSelect, onViewSelect }) => {
                             <p className="text-xl font-black text-white leading-none group-hover:scale-110 transition-transform">{projectInfo?.schema_count || 0}</p>
                         </button>
                     </div>
-                    <button className="bg-zinc-900 border border-zinc-700 text-zinc-300 px-4 py-1.5 rounded-lg flex items-center gap-2 text-[10px] font-black uppercase tracking-widest hover:border-zinc-500 transition-colors">
-                        <div className={`w-1.5 h-1.5 rounded-full ${statusColor} ${statusGlow}`}></div>
-                        Project Status
-                    </button>
+                    <div className="relative">
+                        <button
+                            onClick={(e) => { e.stopPropagation(); setShowStatusMenu(!showStatusMenu); }}
+                            className="bg-[#171717] border border-[#2e2e2e] text-zinc-300 px-4 py-1.5 rounded-lg flex items-center gap-3 text-[10px] font-black uppercase tracking-widest hover:border-zinc-500 transition-all shadow-xl group"
+                        >
+                            <div className={`w-2 h-2 rounded-full ${status.color} ${status.glow} group-hover:scale-125 transition-transform`}></div>
+                            Project Status
+                            <ChevronDown size={10} className={`transition-transform ${showStatusMenu ? 'rotate-180' : ''}`} />
+                        </button>
+
+                        {showStatusMenu && (
+                            <div className="absolute right-0 mt-3 w-80 bg-[#1a1a1a] border border-[#2e2e2e] rounded-2xl shadow-[0_25px_50px_-12px_rgba(0,0,0,0.7)] z-[100] p-5 animate-in fade-in slide-in-from-top-2 duration-300 backdrop-blur-xl">
+                                <div className="flex items-center gap-4 mb-4 pb-4 border-b border-zinc-800/50">
+                                    <div className={`w-3.5 h-3.5 rounded-full ${status.color} ${status.glow}`}></div>
+                                    <div>
+                                        <h4 className={`text-[11px] font-black uppercase tracking-widest ${status.color.replace('bg-', 'text-')}`}>
+                                            {status.label}
+                                        </h4>
+                                        <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-tight mt-0.5">Instance: {projectInfo?.database || 'ozybase-core'}</p>
+                                    </div>
+                                </div>
+
+                                <p className="text-[10px] text-zinc-400 leading-relaxed font-medium mb-5 uppercase tracking-wide">
+                                    {status.desc}
+                                </p>
+
+                                <div className="space-y-3">
+                                    <div className="flex justify-between items-center p-2 rounded-lg bg-zinc-900/50 border border-zinc-800/30">
+                                        <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Infrastructure</span>
+                                        <span className="text-[9px] font-black text-white uppercase tracking-widest">Nominal</span>
+                                    </div>
+                                    <div className="flex justify-between items-center p-2 rounded-lg bg-zinc-900/50 border border-zinc-800/30">
+                                        <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Security Gate</span>
+                                        <span className={`text-[9px] font-black uppercase tracking-widest ${securityIssues > 0 ? 'text-orange-500' : 'text-green-500'}`}>
+                                            {securityIssues > 0 ? `${securityIssues} Anomalies` : 'Verified'}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center p-2 rounded-lg bg-zinc-900/50 border border-zinc-800/30">
+                                        <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Latencies</span>
+                                        <span className={`text-[9px] font-black uppercase tracking-widest ${performanceIssues > 0 ? 'text-amber-500' : 'text-green-500'}`}>
+                                            {performanceIssues > 0 ? 'Degraded' : 'Optimized'}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <div className="mt-6 pt-4 border-t border-zinc-800/50 flex justify-center">
+                                    <button
+                                        onClick={() => setShowStatusMenu(false)}
+                                        className="text-[8px] font-black uppercase tracking-[0.2em] text-zinc-600 hover:text-white transition-colors"
+                                    >
+                                        Dismiss Diagnostics
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
 
@@ -161,11 +260,39 @@ const Overview = ({ onTableSelect, onViewSelect }) => {
 
             {/* Filter */}
             <div className="flex items-center gap-4 mb-8">
-                <button className="flex items-center gap-2 bg-[#171717] border border-[#2e2e2e] px-3 py-1.5 rounded-lg text-xs font-bold text-zinc-300 hover:text-white transition-colors">
-                    Last 60 minutes
-                    <ChevronDown size={14} />
-                </button>
-                <span className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Statistics for last 60 minutes</span>
+                <div className="relative">
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setShowTimeMenu(!showTimeMenu);
+                        }}
+                        className="flex items-center gap-2 bg-[#171717] border border-[#2e2e2e] px-3 py-1.5 rounded-lg text-xs font-bold text-zinc-300 hover:text-white transition-colors"
+                    >
+                        Last {timeRange} minutes
+                        <ChevronDown size={14} className={`transition-transform ${showTimeMenu ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {showTimeMenu && (
+                        <div className="absolute left-0 mt-2 w-48 bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl shadow-2xl z-50 py-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                            {[60, 120, 160, 200].map(mins => (
+                                <button
+                                    key={mins}
+                                    onClick={() => {
+                                        setTimeRange(mins);
+                                        setShowTimeMenu(false);
+                                    }}
+                                    className={`w-full flex items-center justify-between px-4 py-2.5 text-[10px] font-black uppercase tracking-widest transition-colors
+                                        ${timeRange === mins ? 'text-primary bg-primary/5' : 'text-zinc-500 hover:text-white hover:bg-zinc-900'}
+                                    `}
+                                >
+                                    Last {mins} minutes
+                                    {timeRange === mins && <div className="w-1 h-1 rounded-full bg-primary" />}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+                <span className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Statistics for last {timeRange} minutes</span>
             </div>
 
             {/* Metrics Cards Grid */}

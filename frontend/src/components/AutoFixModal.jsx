@@ -19,7 +19,10 @@ const AutoFixModal = ({ isOpen, onClose, issue, onConfirm }) => {
     };
 
     return (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
+        <div
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-[#000000]/80 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={(e) => e.target === e.currentTarget && onClose()}
+        >
             <div className="w-full max-w-xl bg-[#111111] border border-[#2e2e2e] rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
                 {/* Header */}
                 <div className="px-8 py-6 border-b border-[#2e2e2e] flex items-center justify-between bg-zinc-900/30">

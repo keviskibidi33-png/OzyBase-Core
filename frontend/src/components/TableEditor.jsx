@@ -1,9 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
     Key,
     AtSign,
     Calendar,
-    User,
     CheckCircle2,
     Plus,
     Filter,
@@ -16,19 +15,59 @@ import {
     Hash,
     Database,
     Trash2,
-    Edit2,
-    Upload,
     FileUp,
     ChevronRight,
+    ChevronLeft,
     ChevronDown,
-    ListPlus
+    ListPlus,
+    Globe,
+    DollarSign,
+    Layers,
+    Cpu,
+    Lock,
+    GripVertical
 } from 'lucide-react';
 
 import AddRowModal from './AddRowModal';
 import AddColumnModal from './AddColumnModal';
+import ConfirmModal from './ConfirmModal';
+import InlineCellEditor from './InlineCellEditor';
 import { fetchWithAuth } from '../utils/api';
 
-const TableEditor = ({ tableName }) => {
+// --- Custom Hooks ---
+
+function useDebounce(value, delay) {
+    const [debouncedValue, setDebouncedValue] = useState(value);
+    useEffect(() => {
+        const handler = setTimeout(() => setDebouncedValue(value), delay);
+        return () => clearTimeout(handler);
+    }, [value, delay]);
+    return debouncedValue;
+}
+
+// localStorage key for column widths
+const getStorageKey = (tableName) => `ozybase_column_widths_${tableName}`;
+
+// Default column widths by type
+const getDefaultWidth = (colName, colType) => {
+    const type = (colType || 'text').toLowerCase();
+    if (colName === 'id') return 280;
+    if (type.includes('uuid')) return 280;
+    if (type.includes('bool')) return 100;
+    if (type.includes('int') || type.includes('num')) return 120;
+    if (type.includes('date') || type.includes('time')) return 180;
+    if (type.includes('json')) return 250;
+    return 180; // default for text
+};
+
+const MAX_COLUMN_WIDTH = 5000;
+
+// Dynamic minimum width based on header content
+const calculateMinColumnWidth = () => {
+    return 60;
+};
+
+const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
     const [data, setData] = useState([]);
     const [schema, setSchema] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -36,24 +75,77 @@ const TableEditor = ({ tableName }) => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isColumnModalOpen, setIsColumnModalOpen] = useState(false);
     const [isInsertDropdownOpen, setIsInsertDropdownOpen] = useState(false);
+    const [isTableSwitcherOpen, setIsTableSwitcherOpen] = useState(false);
     const [editingRow, setEditingRow] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
+    const debouncedSearch = useDebounce(searchTerm, 500);
+    const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+    const [alertMessage, setAlertMessage] = useState(null);
 
-    const fetchData = async () => {
+    // Pagination State
+    const [pageSize, setPageSize] = useState(100);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [totalRecords, setTotalRecords] = useState(0);
+
+    // --- NEW: Column Widths & Inline Editing State ---
+    const [columnWidths, setColumnWidths] = useState({});
+    const [editingCell, setEditingCell] = useState(null); // { rowId, colName }
+    const [resizingColumn, setResizingColumn] = useState(null);
+    const resizeStartX = useRef(0);
+    const resizeStartWidth = useRef(0);
+    const columnWidthsRef = useRef({});
+
+    // Keep ref in sync with state
+    useEffect(() => {
+        columnWidthsRef.current = columnWidths;
+    }, [columnWidths]);
+
+    // Load saved column widths from localStorage
+    useEffect(() => {
+        if (tableName) {
+            const saved = localStorage.getItem(getStorageKey(tableName));
+            if (saved) {
+                try {
+                    setColumnWidths(JSON.parse(saved));
+                } catch {
+                    setColumnWidths({});
+                }
+            } else {
+                setColumnWidths({});
+            }
+        }
+    }, [tableName]);
+
+    // Save column widths to localStorage
+    const saveColumnWidths = useCallback((widths) => {
+        if (tableName) {
+            localStorage.setItem(getStorageKey(tableName), JSON.stringify(widths));
+        }
+    }, [tableName]);
+
+    const fetchData = useCallback(async () => {
+        if (!tableName) return;
         setLoading(true);
         try {
-            // Step A: Fetch Schema (Introspection)
-            const schemaRes = await fetchWithAuth(`/api/schema/${tableName}`);
-            if (!schemaRes.ok) throw new Error(`Table '${tableName}' schema lookup failed`);
-            const schemaItems = await schemaRes.json();
+            const offset = (currentPage - 1) * pageSize;
+            const searchParam = debouncedSearch ? `&q=${encodeURIComponent(debouncedSearch)}` : '';
 
-            // Step B: Fetch Data
-            const dataRes = await fetchWithAuth(`/api/tables/${tableName}`);
+            const [schemaRes, dataRes] = await Promise.all([
+                fetchWithAuth(`/api/schema/${tableName}`),
+                fetchWithAuth(`/api/tables/${tableName}?limit=${pageSize}&offset=${offset}${searchParam}`)
+            ]);
+
+            if (!schemaRes.ok) throw new Error(`Table '${tableName}' schema lookup failed`);
             if (!dataRes.ok) throw new Error('Failed to fetch data');
-            const result = await dataRes.json();
+
+            const [schemaItems, result] = await Promise.all([
+                schemaRes.json(),
+                dataRes.json()
+            ]);
 
             setSchema(schemaItems);
-            setData(result);
+            setData(Array.isArray(result.data) ? result.data : []);
+            setTotalRecords(typeof result.total === 'number' ? result.total : 0);
             setError(null);
         } catch (err) {
             console.error(err);
@@ -61,6 +153,83 @@ const TableEditor = ({ tableName }) => {
         } finally {
             setLoading(false);
         }
+    }, [tableName, currentPage, pageSize, debouncedSearch]);
+
+    useEffect(() => {
+        if (tableName) {
+            fetchData();
+            setEditingCell(null); // Clear editing state when table changes
+        }
+    }, [tableName, fetchData]);
+
+    // --- Column Resize Handlers ---
+    const handleResizeStart = (e, colName) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setResizingColumn(colName);
+        resizeStartX.current = e.clientX;
+        resizeStartWidth.current = columnWidths[colName] || getDefaultWidth(colName, schema.find(c => c.name === colName)?.type);
+    };
+
+    useEffect(() => {
+        if (!resizingColumn) return;
+
+        const handleResizeMove = (e) => {
+            const delta = e.clientX - resizeStartX.current;
+            const minWidth = calculateMinColumnWidth(resizingColumn);
+            const newWidth = Math.max(minWidth, Math.min(MAX_COLUMN_WIDTH, resizeStartWidth.current + delta));
+
+            setColumnWidths(prev => ({
+                ...prev,
+                [resizingColumn]: newWidth
+            }));
+        };
+
+        const handleResizeEnd = () => {
+            saveColumnWidths(columnWidthsRef.current);
+            setResizingColumn(null);
+        };
+
+        document.addEventListener('mousemove', handleResizeMove);
+        document.addEventListener('mouseup', handleResizeEnd);
+
+        return () => {
+            document.removeEventListener('mousemove', handleResizeMove);
+            document.removeEventListener('mouseup', handleResizeEnd);
+        };
+    }, [resizingColumn, saveColumnWidths]);
+
+    // --- Virtualization Logic ---
+    const [scrollTop, setScrollTop] = useState(0);
+    const containerRef = useRef(null);
+    const ROW_HEIGHT = 45;
+
+    const handleScroll = (e) => {
+        setScrollTop(e.target.scrollTop);
+    };
+
+    const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 5);
+    const endIndex = Math.min(data.length, startIndex + Math.ceil(600 / ROW_HEIGHT) + 10);
+    const visibleData = data.slice(startIndex, endIndex);
+    const topPadding = startIndex * ROW_HEIGHT;
+    const bottomPadding = (data.length - endIndex) * ROW_HEIGHT;
+
+    // --- Cell Editing Handlers ---
+    const handleCellClick = (rowId, colName) => {
+        // Don't allow editing id or created_at
+        if (colName === 'id' || colName === 'created_at') return;
+        setEditingCell({ rowId, colName });
+    };
+
+    const handleCellSave = (rowId, colName, newValue) => {
+        setData(prev => prev.map(row =>
+            row.id === rowId ? { ...row, [colName]: newValue } : row
+        ));
+        setEditingCell(null);
+    };
+
+    const handleCellCancel = () => {
+        setEditingCell(null);
     };
 
     const handleCSVImport = async (e) => {
@@ -70,18 +239,40 @@ const TableEditor = ({ tableName }) => {
         const reader = new FileReader();
         reader.onload = async (event) => {
             const text = event.target.result;
-            const lines = text.split('\n');
-            const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+            const lines = text.split(/\r?\n/).filter(l => l.trim());
+            if (lines.length < 1) return;
+
+            // Robust split (handles quotes)
+            const splitLine = (line) => {
+                const result = [];
+                let cur = '';
+                let inQuote = false;
+                for (let i = 0; i < line.length; i++) {
+                    const char = line[i];
+                    if (char === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+                    else if (char === '"') { inQuote = !inQuote; }
+                    else if (char === ',' && !inQuote) { result.push(cur.trim()); cur = ''; }
+                    else { cur += char; }
+                }
+                result.push(cur.trim());
+                return result;
+            };
+
+            const headers = splitLine(lines[0]);
             const records = [];
 
             for (let i = 1; i < lines.length; i++) {
-                if (!lines[i].trim()) continue;
-                const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
+                const values = splitLine(lines[i]);
                 const record = {};
                 headers.forEach((header, index) => {
-                    record[header] = values[index];
+                    const val = values[index];
+                    if (val !== undefined) {
+                        record[header] = val;
+                    }
                 });
-                records.push(record);
+                if (Object.keys(record).length > 0) {
+                    records.push(record);
+                }
             }
 
             try {
@@ -91,14 +282,14 @@ const TableEditor = ({ tableName }) => {
                     body: JSON.stringify(records)
                 });
                 if (res.ok) {
-                    alert('Imported successfully!');
+                    setAlertMessage({ title: 'Success', message: 'Imported successfully!', type: 'success' });
                     fetchData();
                 } else {
                     const err = await res.json();
-                    alert(`Error: ${err.error}`);
+                    setAlertMessage({ title: 'Import Failed', message: err.error, type: 'danger' });
                 }
-            } catch (err) {
-                alert('Import failed');
+            } catch {
+                setAlertMessage({ title: 'Error', message: 'Import failed due to network error', type: 'danger' });
             } finally {
                 setLoading(false);
                 setIsInsertDropdownOpen(false);
@@ -107,9 +298,12 @@ const TableEditor = ({ tableName }) => {
         reader.readAsText(file);
     };
 
-    const handleDeleteRow = async (id) => {
-        if (!window.confirm('Are you sure you want to delete this row?')) return;
+    const handleDeleteRow = (id) => {
+        setConfirmDeleteId(id);
+    };
 
+    const confirmRowDeletion = async () => {
+        const id = confirmDeleteId;
         try {
             const res = await fetchWithAuth(`/api/tables/${tableName}/rows/${id}`, {
                 method: 'DELETE'
@@ -117,10 +311,11 @@ const TableEditor = ({ tableName }) => {
             if (res.ok) {
                 fetchData();
             } else {
-                alert('Failed to delete row');
+                setAlertMessage({ title: 'Error', message: 'Failed to delete row', type: 'danger' });
             }
         } catch (err) {
             console.error(err);
+            setAlertMessage({ title: 'Error', message: 'Network error during deletion', type: 'danger' });
         }
     };
 
@@ -144,61 +339,125 @@ const TableEditor = ({ tableName }) => {
         a.click();
     };
 
-    const filteredData = data.filter(row => {
-        if (!searchTerm) return true;
-        return Object.values(row).some(val =>
-            String(val).toLowerCase().includes(searchTerm.toLowerCase())
-        );
-    });
-
     const handleEditRow = (row) => {
         setEditingRow(row);
         setIsModalOpen(true);
     };
 
-    useEffect(() => {
-        if (tableName) {
-            fetchData();
-        }
-    }, [tableName]);
-
     const getTypeIcon = (type) => {
         const t = (type || 'text').toLowerCase();
         if (t.includes('uuid')) return <Key size={14} className="text-primary" />;
         if (t.includes('text') || t.includes('char')) return <AtSign size={14} className="text-primary" />;
-        if (t.includes('time') || t.includes('date')) return <Calendar size={14} className="text-primary" />;
+        if (t.includes('time') || t.includes('date') || t.includes('interval')) return <Calendar size={14} className="text-primary" />;
         if (t.includes('bool')) return <CheckCircle2 size={14} className="text-primary" />;
         if (t.includes('num') || t.includes('int') || t.includes('float')) return <Hash size={14} className="text-primary" />;
+        if (t.includes('inet') || t.includes('cidr')) return <Globe size={14} className="text-primary" />;
+        if (t.includes('money')) return <DollarSign size={14} className="text-primary" />;
+        if (t.includes('array')) return <Layers size={14} className="text-primary" />;
+        if (t.includes('macaddr')) return <Cpu size={14} className="text-primary" />;
+        if (t.includes('json')) return <Code2 size={14} className="text-primary" />;
         return <Database size={14} className="text-primary" />;
     };
 
-    // Standard columns for display
     const standardColumns = [
         { name: 'id', type: 'uuid' },
         ...schema,
         { name: 'created_at', type: 'datetime' }
     ];
 
+    // Get column width with fallback to default
+    const getColumnWidth = (colName, colType) => {
+        return columnWidths[colName] || getDefaultWidth(colName, colType);
+    };
+
     const SkeletonRow = () => (
-        <tr className="border-b border-[#2e2e2e]/50">
-            <td className="px-4 py-4 w-10"><div className="w-4 h-4 bg-zinc-800 rounded animate-pulse" /></td>
-            {standardColumns.map((_, i) => (
-                <td key={i} className="px-4 py-4">
-                    <div className="h-4 bg-zinc-800 rounded animate-pulse w-full max-w-[120px]" />
-                </td>
+        <div className="flex border-b border-[#2e2e2e]/50" style={{ height: `${ROW_HEIGHT}px` }}>
+            <div className="w-10 px-4 flex items-center shrink-0">
+                <div className="w-4 h-4 bg-zinc-800 rounded animate-pulse" />
+            </div>
+            {standardColumns.map((col, i) => (
+                <div
+                    key={i}
+                    className="px-4 flex items-center shrink-0"
+                    style={{ width: `${getColumnWidth(col.name, col.type)}px` }}
+                >
+                    <div className="h-4 bg-zinc-800 rounded animate-pulse w-[80%]" />
+                </div>
             ))}
-        </tr>
+            <div className="w-20 px-4 flex items-center shrink-0" />
+        </div>
     );
 
+    // Calculate total table width
+    const totalWidth = standardColumns.reduce((acc, col) => acc + getColumnWidth(col.name, col.type), 0) + 40 + 80; // +checkbox +actions
+
     return (
-        <div className="flex flex-col h-full text-zinc-400 font-sans animate-in fade-in duration-500">
+        <div className="flex flex-col h-full w-full max-w-full overflow-hidden text-zinc-400 font-sans animate-in fade-in duration-500">
             {/* Table Toolbar */}
-            <div className="flex items-center justify-between px-6 py-3 border-b border-[#2e2e2e] bg-[#1a1a1a]">
-                <div className="flex items-center gap-3">
+            <div className="h-14 flex items-center justify-between px-6 border-b border-[#2e2e2e] bg-[#1a1a1a] shrink-0">
+                <div className="flex items-center gap-4">
+                    {/* Table Switcher Breadcrumb */}
+                    <div className="relative">
+                        <button
+                            onClick={() => setIsTableSwitcherOpen(!isTableSwitcherOpen)}
+                            className="flex items-center gap-2 px-3 py-1.5 bg-[#111111] border border-[#2e2e2e] rounded-lg hover:border-zinc-500 transition-all group shrink-0"
+                        >
+                            <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Table</span>
+                            <span className="text-[11px] font-bold text-white group-hover:text-primary transition-colors">{tableName}</span>
+                            <ChevronDown size={14} className={`text-zinc-600 transition-transform ${isTableSwitcherOpen ? 'rotate-180' : ''}`} />
+                        </button>
+
+                        {isTableSwitcherOpen && (
+                            <>
+                                <div className="fixed inset-0 z-40" onClick={() => setIsTableSwitcherOpen(false)} />
+                                <div className="absolute top-full left-0 mt-2 w-64 bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                                    <div className="max-h-80 overflow-y-auto custom-scrollbar p-1.5 space-y-4">
+                                        <div>
+                                            <p className="px-3 py-1 text-[9px] font-black text-zinc-600 uppercase tracking-widest">User Tables</p>
+                                            {allTables.filter(t => !t.is_system).map(t => (
+                                                <button
+                                                    key={t.name}
+                                                    onClick={() => {
+                                                        onTableSelect(t.name);
+                                                        setIsTableSwitcherOpen(false);
+                                                    }}
+                                                    className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex items-center gap-3 ${tableName === t.name ? 'bg-primary/10 text-primary font-bold' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}
+                                                >
+                                                    <Database size={12} className={tableName === t.name ? 'text-primary' : 'text-zinc-600'} />
+                                                    {t.name}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        {allTables.some(t => t.is_system) && (
+                                            <div>
+                                                <p className="px-3 py-1 text-[9px] font-black text-zinc-600 uppercase tracking-widest">System Tables</p>
+                                                {allTables.filter(t => t.is_system).map(t => (
+                                                    <button
+                                                        key={t.name}
+                                                        onClick={() => {
+                                                            onTableSelect(t.name);
+                                                            setIsTableSwitcherOpen(false);
+                                                        }}
+                                                        className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex items-center gap-3 font-mono opacity-80 ${tableName === t.name ? 'bg-primary/10 text-primary font-bold' : 'text-zinc-500 hover:bg-zinc-800 hover:text-white'}`}
+                                                    >
+                                                        <Lock size={12} className={tableName === t.name ? 'text-primary' : 'text-zinc-700'} />
+                                                        {t.name}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </>
+                        )}
+                    </div>
+
+                    <div className="h-4 w-[1px] bg-[#2e2e2e]" />
+
                     <div className="relative">
                         <button
                             onClick={() => setIsInsertDropdownOpen(!isInsertDropdownOpen)}
-                            className="flex items-center gap-2 bg-primary text-black px-4 py-1.5 rounded-lg font-bold text-xs uppercase tracking-widest hover:bg-[#E6E600] transition-all transform active:scale-95 shadow-[0_0_20px_rgba(254,254,0,0.15)]"
+                            className="flex items-center gap-2 bg-primary text-black px-4 py-1.5 rounded-lg font-black text-[10px] uppercase tracking-widest hover:bg-[#E6E600] transition-all transform active:scale-95 shadow-[0_0_20px_rgba(254,254,0,0.1) shrink-0"
                         >
                             <Plus size={14} strokeWidth={3} />
                             Insert
@@ -266,23 +525,22 @@ const TableEditor = ({ tableName }) => {
                     </div>
 
                     <div className="h-4 w-[1px] bg-[#2e2e2e] mx-2" />
-                    <button className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800/50 rounded-md transition-colors text-[10px] font-bold uppercase tracking-widest text-zinc-500 hover:text-zinc-200">
+                    <button className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800/50 rounded-md transition-colors text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-zinc-200 shrink-0">
                         <Filter size={14} />
                         Filter
                     </button>
-                    <button className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800 rounded-md transition-colors text-sm text-zinc-500">
-                        <ArrowUpDown size={16} />
+                    <button className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800/50 rounded-md transition-colors text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-zinc-200 shrink-0">
+                        <ArrowUpDown size={14} />
                         Sort
                     </button>
                     <button
                         onClick={() => setIsColumnModalOpen(true)}
-                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800 rounded-md transition-colors text-sm text-zinc-300 border border-zinc-800 hover:border-zinc-700 bg-zinc-900/40"
+                        className="flex items-center gap-2 px-3 py-1.5 bg-[#111111] border border-[#2e2e2e] rounded-lg hover:border-zinc-500 transition-all text-[10px] font-black uppercase tracking-widest text-zinc-300 shrink-0"
                     >
-                        <Columns3 size={16} />
+                        <Columns3 size={14} />
                         Columns
                     </button>
                 </div>
-
 
                 <div className="flex items-center gap-3">
                     <div className="relative group">
@@ -292,7 +550,7 @@ const TableEditor = ({ tableName }) => {
                             placeholder="Search records..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className="bg-[#111111] border border-[#2e2e2e] rounded-lg pl-9 pr-4 py-1.5 text-xs focus:outline-none focus:border-primary/50 w-64 text-zinc-200 placeholder:text-zinc-700 transition-all focus:ring-1 focus:ring-primary/10"
+                            className="bg-[#111111] border border-[#2e2e2e] rounded-lg pl-9 pr-4 py-1.5 text-[11px] font-bold focus:outline-none focus:border-primary/50 w-64 text-zinc-200 placeholder:text-zinc-700 transition-all focus:ring-1 focus:ring-primary/10"
                         />
                     </div>
                     <button
@@ -305,116 +563,216 @@ const TableEditor = ({ tableName }) => {
                 </div>
             </div>
 
-            {/* Table Content */}
-            <div className="flex-1 overflow-auto bg-[#171717] custom-scrollbar">
-                <table className="w-full border-collapse table-fixed">
-                    <thead className="sticky top-0 bg-[#111111] z-10 border-b border-[#2e2e2e]">
-                        <tr>
-                            <th className="w-10 px-4 py-3 text-left">
-                                <input type="checkbox" className="rounded border-border bg-transparent accent-primary" />
-                            </th>
-                            {standardColumns.map((col) => (
-                                <th key={col.name} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-[0.2em] whitespace-nowrap overflow-hidden">
-                                    <div className="flex items-center gap-2 text-zinc-600 border-r border-[#2e2e2e]/50 pr-4">
+            {/* Table Content - Dynamic Width */}
+            <div
+                ref={containerRef}
+                onScroll={handleScroll}
+                className="flex-1 overflow-auto bg-[#171717] custom-scrollbar"
+            >
+                <div style={{ minWidth: `${totalWidth}px` }}>
+                    {/* Table Header */}
+                    <div className="sticky top-0 bg-[#111111] z-10 border-b border-[#2e2e2e] flex">
+                        {/* Checkbox column */}
+                        <div className="w-10 px-4 py-3 flex items-center shrink-0">
+                            <input type="checkbox" className="rounded border-border bg-transparent accent-primary" />
+                        </div>
+
+                        {/* Dynamic columns */}
+                        {standardColumns.map((col) => {
+                            const width = getColumnWidth(col.name, col.type);
+                            const isResizing = resizingColumn === col.name;
+
+                            return (
+                                <div
+                                    key={col.name}
+                                    className="relative flex items-center shrink-0"
+                                    style={{ width: `${width}px` }}
+                                >
+                                    <div className="flex-1 px-4 py-3 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-600 overflow-hidden">
                                         {getTypeIcon(col.type)}
                                         <span className="truncate">{col.name}</span>
                                     </div>
-                                </th>
-                            ))}
-                            <th className="w-24 px-4 py-3 text-right text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-600">
-                                Actions
-                            </th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#2e2e2e]/50">
+
+                                    {/* Resize Handle */}
+                                    <div
+                                        onMouseDown={(e) => handleResizeStart(e, col.name)}
+                                        className={`absolute right-0 top-0 bottom-0 w-1 cursor-col-resize group/resize flex items-center justify-center
+                                            ${isResizing ? 'bg-primary' : 'hover:bg-primary/50'} transition-colors`}
+                                    >
+                                        <div className={`w-[2px] h-4 rounded-full transition-colors
+                                            ${isResizing ? 'bg-primary' : 'bg-zinc-700 group-hover/resize:bg-primary'}`}
+                                        />
+                                    </div>
+                                </div>
+                            );
+                        })}
+
+                        {/* Actions column */}
+                        <div className="w-20 px-4 py-3 text-right text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-600 shrink-0">
+                            Actions
+                        </div>
+                    </div>
+
+                    {/* Table Body */}
+                    <div className="divide-y divide-[#2e2e2e]/50 font-mono">
                         {loading && data.length === 0 ? (
-                            [...Array(10)].map((_, i) => <SkeletonRow key={i} />)
+                            <div className="space-y-0">
+                                {[...Array(10)].map((_, i) => <SkeletonRow key={i} />)}
+                            </div>
                         ) : error ? (
-                            <tr>
-                                <td colSpan={standardColumns.length + 2} className="py-32 text-center">
-                                    <div className="max-w-xs mx-auto space-y-4">
-                                        <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto text-red-500">
-                                            <Code2 size={24} />
-                                        </div>
-                                        <p className="text-red-500/70 uppercase tracking-widest font-black text-[10px]">
-                                            API Error: {error}
-                                        </p>
+                            <div className="py-32 text-center">
+                                <div className="max-w-xs mx-auto space-y-4">
+                                    <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto text-red-500">
+                                        <Code2 size={24} />
                                     </div>
-                                </td>
-                            </tr>
-                        ) : filteredData.length === 0 ? (
-                            <tr>
-                                <td colSpan={standardColumns.length + 2} className="py-40 text-center">
-                                    <div className="max-w-xs mx-auto space-y-6">
-                                        <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-[#2e2e2e] flex items-center justify-center mx-auto text-zinc-700 shadow-xl">
-                                            <Database size={32} strokeWidth={1.5} />
-                                        </div>
-                                        <div className="space-y-2">
-                                            <h4 className="text-zinc-300 font-bold text-sm uppercase tracking-widest">No records found</h4>
-                                            <p className="text-zinc-600 text-xs tracking-tight">Try adjusting your search or add your first row.</p>
-                                        </div>
+                                    <p className="text-red-500/70 uppercase tracking-widest font-black text-[10px]">
+                                        API Error: {error}
+                                    </p>
+                                </div>
+                            </div>
+                        ) : data.length === 0 ? (
+                            <div className="py-40 text-center">
+                                <div className="max-w-xs mx-auto space-y-6">
+                                    <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-[#2e2e2e] flex items-center justify-center mx-auto text-zinc-700 shadow-xl">
+                                        <Database size={32} strokeWidth={1.5} />
                                     </div>
-                                </td>
-                            </tr>
+                                    <div className="space-y-2">
+                                        <h4 className="text-zinc-300 font-bold text-sm uppercase tracking-widest">No records found</h4>
+                                        <p className="text-zinc-600 text-xs tracking-tight">Try adjusting your search or add your first row.</p>
+                                    </div>
+                                </div>
+                            </div>
                         ) : (
-                            filteredData.map((row) => (
-                                <tr key={row.id} className="hover:bg-zinc-900/30 transition-colors group cursor-cell border-b border-[#2e2e2e]/30">
-                                    <td className="px-4 py-3">
-                                        <input type="checkbox" className="rounded border-border bg-transparent accent-primary" />
-                                    </td>
-                                    {standardColumns.map((col) => {
-                                        const val = row[col.name];
-                                        return (
-                                            <td key={col.name} className="px-4 py-3 truncate text-xs">
-                                                {col.type === 'uuid' ? (
-                                                    <span className="font-mono text-[11px] text-zinc-500 group-hover:text-zinc-300">
-                                                        {val}
-                                                    </span>
-                                                ) : col.type === 'boolean' || col.type === 'bool' ? (
-                                                    val ? (
-                                                        <span className="px-2 py-0.5 rounded text-[9px] font-black bg-green-500/10 text-green-500 uppercase tracking-widest border border-green-500/20">
-                                                            True
-                                                        </span>
-                                                    ) : (
-                                                        <span className="px-2 py-0.5 rounded text-[9px] font-black bg-zinc-800/50 text-zinc-600 uppercase tracking-widest border border-zinc-700/50">
-                                                            False
-                                                        </span>
-                                                    )
-                                                ) : (
-                                                    <span className={`${col.type === 'datetime' ? 'font-mono text-zinc-500 text-[10px]' : 'text-zinc-400 group-hover:text-zinc-200'} tracking-tight`}>
-                                                        {typeof val === 'object' ? JSON.stringify(val) : String(val ?? '')}
-                                                    </span>
-                                                )}
-                                            </td>
-                                        );
-                                    })}
-                                    <td className="px-4 py-3 text-right">
-                                        <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button
-                                                onClick={() => handleEditRow(row)}
-                                                className="p-1 hover:text-primary transition-colors hover:bg-zinc-800 rounded"
-                                            >
-                                                <Edit2 size={12} />
-                                            </button>
-                                            <button
-                                                onClick={() => handleDeleteRow(row.id)}
-                                                className="p-1 hover:text-red-500 transition-colors hover:bg-zinc-800 rounded"
-                                            >
-                                                <Trash2 size={12} />
-                                            </button>
+                            <>
+                                {/* Virtual Top Padding */}
+                                {topPadding > 0 && (
+                                    <div style={{ height: `${topPadding}px` }} />
+                                )}
+
+                                {visibleData.map((row) => {
+                                    const isEditing = editingCell?.rowId === row.id;
+
+                                    return (
+                                        <div
+                                            key={row.id}
+                                            className="flex hover:bg-zinc-900/30 transition-colors group border-b border-[#2e2e2e]/30"
+                                            style={{ height: `${ROW_HEIGHT}px` }}
+                                        >
+                                            {/* Checkbox */}
+                                            <div className="w-10 px-4 flex items-center shrink-0">
+                                                <input type="checkbox" className="rounded border-border bg-transparent accent-primary" />
+                                            </div>
+
+                                            {/* Data cells */}
+                                            {standardColumns.map((col) => {
+                                                const val = row[col.name];
+                                                const width = getColumnWidth(col.name, col.type);
+                                                const isCellEditing = isEditing && editingCell?.colName === col.name;
+                                                const isEditable = col.name !== 'id' && col.name !== 'created_at';
+
+                                                return (
+                                                    <div
+                                                        key={col.name}
+                                                        onClick={() => isEditable && handleCellClick(row.id, col.name, col.type)}
+                                                        className={`px-4 flex items-center text-xs shrink-0 overflow-hidden
+                                                            ${isEditable ? 'cursor-cell hover:bg-zinc-800/30' : 'cursor-default'}
+                                                            ${isCellEditing ? 'bg-zinc-800/50 ring-1 ring-primary/30' : ''}`}
+                                                        style={{ width: `${width}px` }}
+                                                    >
+                                                        <InlineCellEditor
+                                                            value={val}
+                                                            columnName={col.name}
+                                                            columnType={col.type}
+                                                            rowId={row.id}
+                                                            tableName={tableName}
+                                                            isEditing={isCellEditing}
+                                                            onSave={(newVal) => handleCellSave(row.id, col.name, newVal)}
+                                                            onCancel={handleCellCancel}
+                                                        />
+                                                    </div>
+                                                );
+                                            })}
+
+                                            {/* Actions */}
+                                            <div className="w-20 px-4 flex items-center justify-end gap-2 shrink-0">
+                                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <button
+                                                        onClick={() => handleEditRow(row)}
+                                                        className="p-1.5 hover:text-primary transition-colors hover:bg-zinc-800 rounded"
+                                                        title="Edit in modal"
+                                                    >
+                                                        <GripVertical size={12} />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleDeleteRow(row.id)}
+                                                        className="p-1.5 hover:text-red-500 transition-colors hover:bg-zinc-800 rounded"
+                                                        title="Delete row"
+                                                    >
+                                                        <Trash2 size={12} />
+                                                    </button>
+                                                </div>
+                                            </div>
                                         </div>
-                                    </td>
-                                </tr>
-                            ))
+                                    );
+                                })}
+
+                                {/* Virtual Bottom Padding */}
+                                {bottomPadding > 0 && (
+                                    <div style={{ height: `${bottomPadding}px` }} />
+                                )}
+                            </>
                         )}
-                    </tbody>
-                </table>
+                    </div>
+                </div>
             </div>
 
             {/* Table Footer */}
             <div className="flex items-center justify-between px-6 py-2 border-t border-[#2e2e2e] bg-[#111111] text-[9px] font-black tracking-[0.2em]">
                 <div className="flex items-center gap-6">
-                    <span className="uppercase text-zinc-600 font-bold">{filteredData.length} ROWS</span>
+                    <span className="uppercase text-zinc-500 font-bold">{totalRecords} TOTAL RECORDS</span>
+
+                    <div className="h-4 w-[1px] bg-[#2e2e2e]" />
+
+                    {/* Pagination Controls */}
+                    <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-1 group">
+                            <span className="text-zinc-600 uppercase">Per Page:</span>
+                            {[100, 500, 1000].map(size => (
+                                <button
+                                    key={size}
+                                    onClick={() => { setPageSize(size); setCurrentPage(1); }}
+                                    className={`px-1.5 py-0.5 rounded transition-all ${pageSize === size ? 'bg-primary text-black' : 'text-zinc-600 hover:text-zinc-300'}`}
+                                >
+                                    {size}
+                                </button>
+                            ))}
+                        </div>
+
+                        <div className="h-4 w-[1px] bg-[#2e2e2e]" />
+
+                        <div className="flex items-center gap-4">
+                            <button
+                                disabled={currentPage === 1}
+                                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                                className="p-1 hover:text-primary disabled:opacity-30 transition-colors"
+                            >
+                                <ChevronLeft size={14} />
+                            </button>
+                            <span className="text-zinc-500 flex items-center gap-2">
+                                PAGE <span className="text-primary">{currentPage}</span> OF {Math.ceil(totalRecords / pageSize) || 1}
+                            </span>
+                            <button
+                                disabled={currentPage >= Math.ceil(totalRecords / pageSize)}
+                                onClick={() => setCurrentPage(prev => prev + 1)}
+                                className="p-1 hover:text-primary disabled:opacity-30 transition-colors"
+                            >
+                                <ChevronRight size={14} />
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="h-4 w-[1px] bg-[#2e2e2e]" />
+
                     <div className="flex items-center gap-2">
                         <div className={`w-1 h-1 rounded-full ${error ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]' : 'bg-primary shadow-[0_0_6px_rgba(254,254,0,0.4)]'}`} />
                         <span className="uppercase text-zinc-500">
@@ -450,6 +808,25 @@ const TableEditor = ({ tableName }) => {
                 onClose={() => setIsColumnModalOpen(false)}
                 tableName={tableName}
                 onColumnAdded={fetchData}
+            />
+
+            <ConfirmModal
+                isOpen={!!confirmDeleteId}
+                onClose={() => setConfirmDeleteId(null)}
+                onConfirm={confirmRowDeletion}
+                title="Delete Record"
+                message="Are you sure you want to delete this record? This action will permanently remove the data from OzyBase."
+                confirmText="Delete Record"
+            />
+
+            <ConfirmModal
+                isOpen={!!alertMessage}
+                onClose={() => setAlertMessage(null)}
+                onConfirm={() => setAlertMessage(null)}
+                title={alertMessage?.title}
+                message={alertMessage?.message}
+                confirmText="Dismiss"
+                type={alertMessage?.type || 'success'}
             />
         </div>
     );

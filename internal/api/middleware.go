@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -118,6 +119,7 @@ func AccessMiddleware(db *data.DB, requirement string) echo.MiddlewareFunc {
 				collectionName).Scan(&listRule, &createRule, &updateRule, &deleteRule, &rlsEnabled, &rlsRule)
 
 			if err != nil {
+				fmt.Printf("[ACL-DEBUG] Collection NOT FOUND in _v_collections: %s\n", collectionName)
 				return c.JSON(http.StatusNotFound, map[string]string{"error": "collection not found"})
 			}
 
@@ -129,6 +131,7 @@ func AccessMiddleware(db *data.DB, requirement string) echo.MiddlewareFunc {
 			if requirement == "create" {
 				rule = createRule
 			}
+			fmt.Printf("[ACL-DEBUG] Table: %s | Requirement: %s | Rule: %s | User: %v\n", collectionName, requirement, rule, c.Get("user_id"))
 
 			// ACL Logic
 			switch rule {
@@ -136,12 +139,14 @@ func AccessMiddleware(db *data.DB, requirement string) echo.MiddlewareFunc {
 				return next(c)
 			case "auth":
 				if c.Get("user_id") == nil {
+					fmt.Printf("[ACL-DEBUG] BLOCKED: Auth required for %s\n", collectionName)
 					return c.JSON(http.StatusForbidden, map[string]string{"error": "authentication required for this collection"})
 				}
 				return next(c)
 			case "admin":
 				role := c.Get("role")
 				if role == nil || role.(string) != "admin" {
+					fmt.Printf("[ACL-DEBUG] BLOCKED: Admin required for %s | Current role: %v\n", collectionName, role)
 					return c.JSON(http.StatusForbidden, map[string]string{"error": "admin access required for this collection"})
 				}
 				return next(c)
@@ -165,41 +170,47 @@ func AccessMiddleware(db *data.DB, requirement string) echo.MiddlewareFunc {
 func MetricsMiddleware(h *Handler) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			start := time.Now()
+			path := c.Request().URL.Path
+			lowerPath := strings.ToLower(path)
+
+			// 🛡️ [Refined Exclusion] Strictly block automated polling noise
+			// We block only the HEAD and background fetch events, allowing actual interactions
+			isPolling := lowerPath == "/api/project/logs" ||
+				lowerPath == "/api/analytics/traffic" ||
+				lowerPath == "/api/analytics/geo" ||
+				lowerPath == "/api/project/security/alerts" ||
+				lowerPath == "/api/health" ||
+				lowerPath == "/api/system/status"
+
+			if isPolling {
+				return next(c)
+			}
+
+			fmt.Fprintf(os.Stderr, "📝 [Audit] Tracking Request: %s\n", path)
+
+			start := time.Now().UTC()
 			err := next(c)
-			stop := time.Now()
-
-			path := c.Path()
-			if path == "" {
-				path = c.Request().URL.Path
-			}
-
-			// Don't log metrics/logs requests to avoid infinite recursion noise
-			if strings.HasPrefix(path, "/api/project/stats") || strings.HasPrefix(path, "/api/project/logs") {
-				return err
-			}
-
-			h.Metrics.Lock()
-			if strings.HasPrefix(path, "/api/collections") || strings.HasPrefix(path, "/api/tables") {
-				h.Metrics.DbRequests++
-			} else if strings.HasPrefix(path, "/api/auth") {
-				h.Metrics.AuthRequests++
-			} else if strings.HasPrefix(path, "/api/files") {
-				h.Metrics.StorageRequests++
-			}
-			h.Metrics.Unlock()
+			stop := time.Now().UTC()
 
 			// Add to logs with Geolocation
 			ip := c.RealIP()
 			latency := stop.Sub(start)
 			status := c.Response().Status
-			userID, _ := c.Get("user_id").(string)
+
+			// Handle userID as UUID: convert "" to nil for Postgres safety
+			rawUserID := c.Get("user_id")
+			var userID any
+			if s, ok := rawUserID.(string); ok && s != "" {
+				userID = s
+			} else {
+				userID = nil
+			}
 
 			go func() {
 				geo, _ := h.Geo.GetLocation(context.Background(), ip)
 
 				entry := LogEntry{
-					ID:        fmt.Sprintf("%d", time.Now().UnixNano()),
+					ID:        fmt.Sprintf("%d", time.Now().UTC().UnixNano()),
 					Time:      stop.Format("15:04:05"),
 					Method:    c.Request().Method,
 					Path:      path,
@@ -215,11 +226,15 @@ func MetricsMiddleware(h *Handler) echo.MiddlewareFunc {
 				// Check for Geo Breach
 				isBreach, _ := h.Geo.CheckBreach(context.Background(), ip, geo.Country)
 
-				// Persist to DB
-				_, _ = h.DB.Pool.Exec(context.Background(), `
-					INSERT INTO _v_audit_logs (user_id, ip_address, method, path, status, latency_ms, country, city, user_agent)
-					VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-				`, userID, ip, entry.Method, entry.Path, entry.Status, latency.Milliseconds(), geo.Country, geo.City, c.Request().UserAgent())
+				// Persist to DB with explicit timestamp to align with server_time
+				_, err := h.DB.Pool.Exec(context.Background(), `
+					INSERT INTO _v_audit_logs (user_id, ip_address, method, path, status, latency_ms, country, city, user_agent, created_at)
+					VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+				`, userID, ip, entry.Method, entry.Path, entry.Status, latency.Milliseconds(), geo.Country, geo.City, c.Request().UserAgent(), stop)
+
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "❌ [Audit Error] Failed to insert log: %v (Path: %s, User: %v)\n", err, path, userID)
+				}
 
 				if isBreach {
 					details, _ := json.Marshal(map[string]any{

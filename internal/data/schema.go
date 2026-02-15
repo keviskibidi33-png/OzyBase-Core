@@ -35,6 +35,13 @@ var TypeMapping = map[string]string{
 	"bool":        "BOOL",
 	"boolean":     "BOOLEAN",
 	"bytea":       "BYTEA",
+	"inet":        "INET",
+	"cidr":        "CIDR",
+	"macaddr":     "MACADDR",
+	"interval":    "INTERVAL",
+	"money":       "MONEY",
+	"text_array":  "TEXT[]",
+	"int_array":   "INT4[]",
 	// Aliases
 	"number":  "INT4",
 	"integer": "INT4",
@@ -120,7 +127,7 @@ func IsValidIdentifier(name string) bool {
 }
 
 // formatDefault formats a default value for SQL
-func formatDefault(value any, fieldType string) string {
+func formatDefault(value any, _ string) string {
 	switch v := value.(type) {
 	case bool:
 		if v {
@@ -222,6 +229,21 @@ func mapPostgresTypeToOzy(pgType string) string {
 		return "text"
 	case pgType == "BYTEA":
 		return "bytea"
+	case pgType == "INET":
+		return "inet"
+	case pgType == "CIDR":
+		return "cidr"
+	case pgType == "MACADDR":
+		return "macaddr"
+	case pgType == "INTERVAL":
+		return "interval"
+	case pgType == "MONEY":
+		return "money"
+	case strings.Contains(pgType, "ARRAY") || strings.Contains(pgType, "[]"):
+		if strings.Contains(pgType, "INT") {
+			return "int_array"
+		}
+		return "text_array"
 	default:
 		return "text"
 	}
@@ -234,8 +256,9 @@ type DatabaseSchema struct {
 }
 
 type TableDefinition struct {
-	Name    string        `json:"name"`
-	Columns []FieldSchema `json:"columns"`
+	Name     string        `json:"name"`
+	IsSystem bool          `json:"is_system"`
+	Columns  []FieldSchema `json:"columns"`
 }
 
 type TableRelationship struct {
@@ -284,8 +307,9 @@ func (db *DB) GetDatabaseSchema(ctx context.Context) (*DatabaseSchema, error) {
 		rows.Close()
 
 		schema.Tables = append(schema.Tables, TableDefinition{
-			Name:    tableName,
-			Columns: cols,
+			Name:     tableName,
+			IsSystem: strings.HasPrefix(tableName, "_v_") || strings.HasPrefix(tableName, "_ozy_"),
+			Columns:  cols,
 		})
 	}
 

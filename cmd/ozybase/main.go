@@ -288,7 +288,15 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 			// Skip CSRF for API requests with Bearer token (since they are already protected by JWT)
 			// or for specific public endpoints if needed.
 			authHeader := c.Request().Header.Get("Authorization")
-			return strings.HasPrefix(authHeader, "Bearer ")
+			if strings.HasPrefix(authHeader, "Bearer ") {
+				return true
+			}
+			// Skip CSRF for login endpoint
+			path := c.Request().URL.Path
+			if path == "/api/auth/login" || path == "/api/system/status" || path == "/api/system/setup" {
+				return true
+			}
+			return false
 		},
 	}))
 
@@ -321,13 +329,6 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.GET("/health", h.Health)
 		apiGroup.GET("/project/stats", h.GetStats, authRequired)
 		apiGroup.GET("/realtime", realtimeHandler.Stream)
-		apiGroup.GET("/webhooks", webhookHandler.List, authRequired)
-		apiGroup.POST("/webhooks", webhookHandler.Create, authRequired)
-		apiGroup.DELETE("/webhooks/:id", webhookHandler.Delete, authRequired)
-
-		apiGroup.GET("/cron", cronHandler.List, authRequired)
-		apiGroup.POST("/cron", cronHandler.Create, authRequired)
-		apiGroup.DELETE("/cron/:id", cronHandler.Delete, authRequired)
 
 		// Auth
 		authGroup := apiGroup.Group("/auth")
@@ -388,6 +389,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.GET("/project/security/policies", h.GetSecurityPolicies, authRequired)
 		apiGroup.POST("/project/security/policies", h.UpdateSecurityPolicy, authRequired)
 		apiGroup.GET("/project/security/stats", h.GetSecurityStats, authRequired)
+		apiGroup.GET("/project/security/alerts", h.GetSecurityAlerts, authRequired)
 		apiGroup.GET("/project/security/notifications", h.GetNotificationRecipients, authRequired)
 		apiGroup.POST("/project/security/notifications", h.AddNotificationRecipient, authRequired)
 		apiGroup.DELETE("/project/security/notifications/:id", h.DeleteNotificationRecipient, authRequired)
@@ -430,6 +432,8 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.POST("/graphql/v1", h.HandleGraphQL, authRequired)
 
 		apiGroup.GET("/schema/:name", h.GetTableSchema, authRequired)
+		apiGroup.POST("/sql", h.HandleExecuteSQL, authRequired)
+		apiGroup.POST("/sql/sync", h.HandleSyncSystem, authRequired)
 
 		// Records
 		apiGroup.POST("/collections/:name/records", h.CreateRecord, authOptional, accessCreate)
@@ -439,7 +443,6 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.DELETE("/collections/:name/records/:id", h.DeleteRecord, authOptional, accessDelete)
 
 		// Tables (Generic/Dashboard endpoints) - Now PROTECTED
-		apiGroup.GET("/tables/:name", h.ListRecords, authRequired)
 		apiGroup.POST("/tables/:name/rows", h.CreateRecord, authRequired)
 		apiGroup.PATCH("/tables/:name/rows/:id", h.UpdateRecord, authRequired)
 		apiGroup.DELETE("/tables/:name/rows/:id", h.DeleteRecord, authRequired)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -44,90 +45,129 @@ func (db *DB) InsertRecord(ctx context.Context, collectionName string, data map[
 	return id, err
 }
 
-// ListRecords fetches all records with filters and sorting, respecting RLS if configured in DB
-func (db *DB) ListRecords(ctx context.Context, collectionName string, filters map[string][]string, orderBy string) ([]map[string]any, error) {
+// ListRecordsResult encapsulates the output of a paginated list operation
+type ListRecordsResult struct {
+	Data  []map[string]any
+	Total int64
+}
+
+// ListRecords fetches all records with filters and sorting, respecting RLS if configured in DB.
+// This implementation uses a structured QueryBuilder for improved maintainability.
+func (db *DB) ListRecords(ctx context.Context, collectionName string, filters map[string][]string, orderBy string, limit, offset int) (*ListRecordsResult, error) {
 	if !IsValidIdentifier(collectionName) {
 		return nil, fmt.Errorf("invalid collection name: %s", collectionName)
 	}
 
-	var results []map[string]any
-	err := db.WithTransactionAndRLS(ctx, func(tx pgx.Tx) error {
-		whereClauses := []string{"deleted_at IS NULL"}
-		var queryArgs []any
-		argIdx := 1
+	result := &ListRecordsResult{
+		Data: []map[string]any{},
+	}
 
+	isSystemTable := strings.HasPrefix(collectionName, "_v_") || strings.HasPrefix(collectionName, "_ozy_")
+
+	// 1. Fetch ALL columns dynamically for precise validation
+	validCols, err := db.GetTableColumns(ctx, collectionName)
+	if err != nil {
+		fmt.Printf("[DB ARCH] Column lookup failed for %s: %v\n", collectionName, err)
+		return nil, err
+	}
+	fmt.Printf("[DB ARCH] Detected columns for %s: %v\n", collectionName, validCols)
+	if len(validCols) == 0 {
+		return nil, fmt.Errorf("table not found or empty: %s", collectionName)
+	}
+
+	err = db.WithTransactionAndRLS(ctx, func(tx pgx.Tx) error {
+		qb := NewQueryBuilder(collectionName)
+
+		// 2. Structural Filters (Soft Delete) - Only if column exists
+		if !isSystemTable && validCols["deleted_at"] {
+			qb.whereClauses = append(qb.whereClauses, "deleted_at IS NULL")
+		}
+
+		// 3. Search Logic
+		if qValues, ok := filters["q"]; ok && len(qValues) > 0 && qValues[0] != "" {
+			if validCols["id"] {
+				qb.Where("id", "ilike", qValues[0])
+			}
+		}
+
+		// 4. Dynamic Filters
 		for col, values := range filters {
-			if col == "order" || col == "select" || col == "limit" || col == "offset" {
+			if col == "order" || col == "select" || col == "limit" || col == "offset" || col == "q" {
 				continue
 			}
-			if !IsValidIdentifier(col) {
+			if !IsValidIdentifier(col) || !validCols[col] {
 				continue
 			}
 
 			for _, valStr := range values {
 				parts := strings.SplitN(valStr, ".", 2)
-				op := "eq"
-				val := valStr
+				op, val := "eq", valStr
 				if len(parts) == 2 {
-					op = parts[0]
-					val = parts[1]
+					op, val = parts[0], parts[1]
 				}
-
-				sqlOp := "="
-				switch op {
-				case "gt":
-					sqlOp = ">"
-				case "gte":
-					sqlOp = ">="
-				case "lt":
-					sqlOp = "<"
-				case "lte":
-					sqlOp = "<="
-				case "neq":
-					sqlOp = "!="
-				case "like":
-					sqlOp = "ILIKE"
-					val = "%" + val + "%"
-				}
-
-				whereClauses = append(whereClauses, fmt.Sprintf("%s %s $%d", col, sqlOp, argIdx))
-				queryArgs = append(queryArgs, val)
-				argIdx++
+				qb.Where(col, op, val)
 			}
 		}
 
-		query := fmt.Sprintf("SELECT * FROM %s WHERE %s", collectionName, strings.Join(whereClauses, " AND "))
-
+		// 5. Sorting and Pagination
 		if orderBy != "" {
-			// Basic sanitization: only allow alphanumeric and underscores
-			if IsValidIdentifier(strings.ReplaceAll(orderBy, ".", "")) {
-				query += " ORDER BY " + strings.ReplaceAll(orderBy, ".", " ")
-			} else {
-				query += " ORDER BY created_at DESC"
-			}
-		} else {
-			query += " ORDER BY created_at DESC"
+			qb.Order(orderBy)
+		} else if validCols["created_at"] {
+			qb.Order("created_at DESC")
 		}
+		qb.Paginate(limit, offset)
 
-		rows, err := tx.Query(ctx, query, queryArgs...)
+		// 5. Execution - Count
+		importTime := time.Now()
+		countQuery, args := qb.BuildCount()
+		if err := tx.QueryRow(ctx, countQuery, args...).Scan(&result.Total); err != nil {
+			fmt.Printf("[DB ARCH] Count failed for %s: %v | Query: %s\n", collectionName, err, countQuery)
+			return err
+		}
+		countDuration := time.Since(importTime)
+
+		// 6. Execution - Data
+		dataTime := time.Now()
+		dataQuery, args := qb.BuildSelect()
+		rows, err := tx.Query(ctx, dataQuery, args...)
 		if err != nil {
+			fmt.Printf("[DB ARCH] Select failed for %s: %v | Query: %s\n", collectionName, err, dataQuery)
 			return err
 		}
 		defer rows.Close()
 
-		results, err = rowsToMaps(rows)
+		result.Data, err = rowsToMaps(rows)
+		dataDuration := time.Since(dataTime)
+
+		fmt.Printf("[PERF] %s: Total=%d | DataCount=%d | CountTime=%v | DataTime=%v | Query=%s | Args=%v\n",
+			collectionName, result.Total, len(result.Data), countDuration, dataDuration, dataQuery, args)
+
 		return err
 	})
 
-	return results, err
+	return result, err
 }
 
 // GetRecord fetches a single record, respecting RLS
 func (db *DB) GetRecord(ctx context.Context, collectionName, id string, ownerField, ownerID string) (map[string]any, error) {
 	var record map[string]any
 	err := db.WithTransactionAndRLS(ctx, func(tx pgx.Tx) error {
-		query := fmt.Sprintf("SELECT * FROM %s WHERE id = $1 AND deleted_at IS NULL", collectionName)
-		rows, err := tx.Query(ctx, query, id)
+		where := "id = $1"
+		var queryArgs []any
+		queryArgs = append(queryArgs, id)
+		argIdx := 2
+
+		if db.HasColumn(ctx, collectionName, "deleted_at") {
+			where += " AND deleted_at IS NULL"
+		}
+
+		if ownerField != "" && ownerID != "" && db.HasColumn(ctx, collectionName, ownerField) {
+			where += fmt.Sprintf(" AND %s = $%d", ownerField, argIdx)
+			queryArgs = append(queryArgs, ownerID)
+		}
+
+		query := fmt.Sprintf("SELECT * FROM %s WHERE %s", collectionName, where)
+		rows, err := tx.Query(ctx, query, queryArgs...)
 		if err != nil {
 			return err
 		}

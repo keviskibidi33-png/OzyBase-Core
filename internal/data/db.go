@@ -84,3 +84,44 @@ func (db *DB) ListTables(ctx context.Context) ([]string, error) {
 	}
 	return tables, nil
 }
+
+// HasColumn checks if a specific table has a specific column
+func (db *DB) HasColumn(ctx context.Context, tableName, columnName string) bool {
+	var exists bool
+	err := db.Pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 
+			FROM information_schema.columns 
+			WHERE table_name = $1 AND column_name = $2
+		)
+	`, tableName, columnName).Scan(&exists)
+	if err != nil {
+		return false
+	}
+	return exists
+}
+
+// GetTableColumns returns a map of column names for a specific table
+func (db *DB) GetTableColumns(ctx context.Context, tableName string) (map[string]bool, error) {
+	if !IsValidIdentifier(tableName) {
+		return nil, fmt.Errorf("invalid table name")
+	}
+	rows, err := db.Pool.Query(ctx, `
+		SELECT column_name 
+		FROM information_schema.columns 
+		WHERE table_name = $1 AND table_schema = 'public'
+	`, tableName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	cols := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err == nil {
+			cols[name] = true
+		}
+	}
+	return cols, nil
+}

@@ -1,0 +1,4 @@
+name,age,is_active,rating,join_date,api_key
+Alice,28,true,9.5,2024-03-10,550e8400-e29b-41d4-a716-446655440000
+Bob,35,false,8.2,2024-02-15,6ba7b810-9dad-11d1-80b4-00c04fd430c8
+Charlie,22,true,10.0,2024-01-20,6ba7b811-9dad-11d1-80b4-00c04fd430c8

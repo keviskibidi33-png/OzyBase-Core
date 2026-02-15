@@ -13,7 +13,12 @@ import (
 
 func (h *Handler) extractRlsOwnerInfo(c echo.Context) (string, string) {
 	rlsEnabled, _ := c.Get("rls_enabled").(bool)
-	if !rlsEnabled {
+	role, _ := c.Get("role").(string)
+
+	if !rlsEnabled || role == "admin" {
+		if role == "admin" && rlsEnabled {
+			fmt.Printf("[RLS] Bypassing RLS for admin user\n")
+		}
 		return "", ""
 	}
 
@@ -23,7 +28,9 @@ func (h *Handler) extractRlsOwnerInfo(c echo.Context) (string, string) {
 	if rlsRule != "" && userID != "" && strings.Contains(rlsRule, "auth.uid()") {
 		ruleParts := strings.Split(rlsRule, "=")
 		if len(ruleParts) == 2 {
-			return strings.TrimSpace(ruleParts[0]), userID
+			ownerField := strings.TrimSpace(ruleParts[0])
+			fmt.Printf("[RLS] Applying filter: %s = %s for user %s\n", ownerField, userID, userID)
+			return ownerField, userID
 		}
 	}
 
@@ -80,6 +87,9 @@ func (h *Handler) CreateRecord(c echo.Context) error {
 // ListRecords handles GET /api/collections/:name/records
 func (h *Handler) ListRecords(c echo.Context) error {
 	collectionName := c.Param("name")
+	role, _ := c.Get("role").(string)
+	fmt.Printf("\n[API] >>> ListRecords START | Table: %s | Role: %s | URL: %s\n", collectionName, role, c.Request().URL.String())
+
 	if collectionName == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{
 			"error": "Collection name is required",
@@ -91,6 +101,18 @@ func (h *Handler) ListRecords(c echo.Context) error {
 	// Collect all query parameters as filters
 	filters := c.QueryParams()
 
+	// Pagination parameters
+	limitStr := c.QueryParam("limit")
+	offsetStr := c.QueryParam("offset")
+	limit := 100 // Default limit
+	if limitStr != "" {
+		fmt.Sscanf(limitStr, "%d", &limit)
+	}
+	offset := 0
+	if offsetStr != "" {
+		fmt.Sscanf(offsetStr, "%d", &offset)
+	}
+
 	// Inject RLS filter if enabled
 	ownerField, ownerID := h.extractRlsOwnerInfo(c)
 	if ownerField != "" && ownerID != "" {
@@ -100,26 +122,28 @@ func (h *Handler) ListRecords(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
 	defer cancel()
 
-	records, err := h.DB.ListRecords(ctx, collectionName, filters, orderBy)
+	result, err := h.DB.ListRecords(ctx, collectionName, filters, orderBy, limit, offset)
 	if err != nil {
 		// SECURITY: Don't leak SQL errors to client
-		fmt.Printf("[ERROR] ListRecords: %v\n", err)
+		fmt.Printf("[ERROR] ListRecords (%s): %v\n", collectionName, err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": "Failed to fetch records. Please verify your query parameters.",
 		})
 	}
 
-	if records == nil {
-		records = []map[string]any{}
-	}
-
-	return c.JSON(http.StatusOK, records)
+	return c.JSON(http.StatusOK, map[string]any{
+		"data":  result.Data,
+		"total": result.Total,
+		"page":  (offset / limit) + 1,
+		"limit": limit,
+	})
 }
 
 // GetRecord handles GET /api/collections/:name/records/:id
 func (h *Handler) GetRecord(c echo.Context) error {
 	collectionName := c.Param("name")
 	recordID := c.Param("id")
+	fmt.Printf("\n[API] >>> GetRecord START | Table: %s | ID: %s | URL: %s\n", collectionName, recordID, c.Request().URL.String())
 
 	if collectionName == "" || recordID == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{

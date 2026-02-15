@@ -1,0 +1,64 @@
+
+Running 1 test using 1 worker
+
+Starting failing test...
+Clicking Table Editor...
+Waiting for User Tables header...
+Waiting for New table button...
+Clicking New table button...
+Waiting for Create Table Modal...
+Modal visible. Filling table name...
+Adding column text (index 0)...
+Adding column int4 (index 1)...
+Adding column bool (index 2)...
+Adding column jsonb (index 3)...
+Adding column uuid (index 4)...
+Adding column date (index 5)...
+  ✘  1 [chromium] › tests\data-types.spec.js:26:6 › should create a table with all data types (2.0m)
+
+
+  1) [chromium] › tests\data-types.spec.js:26:6 › should create a table with all data types ────────
+
+    [31mTest timeout of 120000ms exceeded.[39m
+
+    Error: locator.click: Test timeout of 120000ms exceeded.
+    Call log:
+    [2m  - waiting for getByRole('button', { name: /delete|confirm/i })[22m
+    [2m    - locator resolved to <button title="Delete row" class="p-1.5 hover:text-red-500 transition-colors hover:bg-zinc-800 rounded">…</button>[22m
+    [2m  - attempting click action[22m
+    [2m    2 × waiting for element to be visible, enabled and stable[22m
+    [2m      - element is visible, enabled and stable[22m
+    [2m      - scrolling into view if needed[22m
+    [2m      - done scrolling[22m
+    [2m      - <div class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-[#000000]/80 backdrop-blur-sm animate-in fade-in duration-200">…</div> intercepts pointer events[22m
+    [2m    - retrying click action[22m
+    [2m    - waiting 20ms[22m
+    [2m    2 × waiting for element to be visible, enabled and stable[22m
+    [2m      - element is visible, enabled and stable[22m
+    [2m      - scrolling into view if needed[22m
+    [2m      - done scrolling[22m
+    [2m      - <div class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-[#000000]/80 backdrop-blur-sm animate-in fade-in duration-200">…</div> intercepts pointer events[22m
+    [2m    - retrying click action[22m
+    [2m      - waiting 100ms[22m
+    [2m    213 × waiting for element to be visible, enabled and stable[22m
+    [2m        - element is visible, enabled and stable[22m
+    [2m        - scrolling into view if needed[22m
+    [2m        - done scrolling[22m
+    [2m        - <div class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-[#000000]/80 backdrop-blur-sm animate-in fade-in duration-200">…</div> intercepts pointer events[22m
+    [2m      - retrying click action[22m
+    [2m        - waiting 500ms[22m
+
+
+      72 |     await tableItem.hover();
+      73 |     await tableItem.locator('svg.lucide-trash2').click({ force: true });
+    > 74 |     await page.getByRole('button', { name: /delete|confirm/i }).click();
+         |                                                                 ^
+      75 |     await expect(page.getByText(tableName)).not.toBeVisible({ timeout: 30000 });
+      76 | });
+      77 |
+        at C:\Users\lunax\OneDrive\Documentos\broo\OzyBase-Core\frontend\tests\data-types.spec.js:74:65
+
+    Error Context: test-results\data-types-should-create-a-table-with-all-data-types-chromium\error-context.md
+
+  1 failed
+    [chromium] › tests\data-types.spec.js:26:6 › should create a table with all data types ─────────

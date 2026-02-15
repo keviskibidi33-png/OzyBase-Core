@@ -132,7 +132,8 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			type VARCHAR(50) NOT NULL,
 			severity VARCHAR(20) DEFAULT 'critical',
-			details JSONB NOT NULL,
+			message TEXT,
+			metadata JSONB NOT NULL DEFAULT '{}',
 			is_resolved BOOLEAN DEFAULT FALSE,
 			created_at TIMESTAMPTZ DEFAULT NOW()
 		)`,
@@ -233,6 +234,14 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 			applied_at TIMESTAMPTZ DEFAULT NOW(),
 			description TEXT
 		)`,
+
+		// Safety Schema Evolution (Repair missing columns in existing deployments)
+		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS rls_enabled BOOLEAN DEFAULT FALSE`,
+		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS rls_rule TEXT DEFAULT 'auth.uid() = owner_id'`,
+		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS update_rule VARCHAR(50) DEFAULT 'admin'`,
+		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS delete_rule VARCHAR(50) DEFAULT 'admin'`,
+		`ALTER TABLE _v_security_alerts ADD COLUMN IF NOT EXISTS message TEXT`,
+		`ALTER TABLE _v_security_alerts ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'`,
 	}
 
 	for i, migration := range migrations {

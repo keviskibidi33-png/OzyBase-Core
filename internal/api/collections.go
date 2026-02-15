@@ -17,6 +17,7 @@ import (
 type Collection struct {
 	ID         string             `json:"id"`
 	Name       string             `json:"name"`
+	IsSystem   bool               `json:"is_system"`
 	Schema     []data.FieldSchema `json:"schema"`
 	ListRule   string             `json:"list_rule"`
 	CreateRule string             `json:"create_rule"`
@@ -240,8 +241,6 @@ func (h *Handler) ListCollections(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
 	defer cancel()
 
-	includeSystem := c.QueryParam("include_system") == "true"
-
 	// Fetch all tables from information_schema
 	tables, err := h.DB.ListTables(ctx)
 	if err != nil {
@@ -271,17 +270,20 @@ func (h *Handler) ListCollections(c echo.Context) error {
 	}
 
 	// Combine information
-	var result []Collection
+	result := make([]Collection, 0, len(tables))
 	for _, tableName := range tables {
-		if !includeSystem && strings.HasPrefix(tableName, "_v_") {
-			continue
-		}
+		// Define system tables prefixes
+		lowerName := strings.ToLower(tableName)
+		isSystem := strings.HasPrefix(lowerName, "_v_") || strings.HasPrefix(lowerName, "_ozy_")
+
 		if meta, ok := metaMap[tableName]; ok {
+			meta.IsSystem = isSystem
 			result = append(result, meta)
 		} else {
-			// Basic entry for non-OzyBase managed tables
+			// Basic entry for non-OzyBase managed tables or system tables
 			result = append(result, Collection{
 				Name:       tableName,
+				IsSystem:   isSystem,
 				ListRule:   "public",
 				CreateRule: "admin",
 				Schema:     []data.FieldSchema{}, // Will be filled by dynamic introspection on select
@@ -397,18 +399,20 @@ func (h *Handler) GetVisualizeSchema(c echo.Context) error {
 
 // ProjectInfo represents the project information response
 type ProjectInfo struct {
-	Name          string      `json:"name"`
-	Host          string      `json:"host"`
-	Port          string      `json:"port"`
-	Database      string      `json:"database"`
-	User          string      `json:"user"`
-	TableCount    int         `json:"table_count"`
-	FunctionCount int         `json:"function_count"`
-	SchemaCount   int         `json:"schema_count"`
-	DbSize        string      `json:"db_size"`
-	Version       string      `json:"version"`
-	Metrics       DbMetrics   `json:"metrics"`
-	SlowQueries   []SlowQuery `json:"slow_queries"`
+	Name             string      `json:"name"`
+	Host             string      `json:"host"`
+	Port             string      `json:"port"`
+	Database         string      `json:"database"`
+	User             string      `json:"user"`
+	TableCount       int         `json:"table_count"`
+	UserTableCount   int         `json:"user_table_count"`
+	SystemTableCount int         `json:"system_table_count"`
+	FunctionCount    int         `json:"function_count"`
+	SchemaCount      int         `json:"schema_count"`
+	DbSize           string      `json:"db_size"`
+	Version          string      `json:"version"`
+	Metrics          DbMetrics   `json:"metrics"`
+	SlowQueries      []SlowQuery `json:"slow_queries"`
 }
 
 type DbMetrics struct {
@@ -449,15 +453,18 @@ func (h *Handler) GetProjectInfo(c echo.Context) error {
 		info.Version = "unknown"
 	}
 
-	// Get table count (public schema, excluding system tables)
-	err = h.DB.Pool.QueryRow(ctx, `
-		SELECT COUNT(*)
-		FROM information_schema.tables
-		WHERE table_schema = 'public'
-		AND table_type = 'BASE TABLE'
-	`).Scan(&info.TableCount)
-	if err != nil {
-		info.TableCount = 0
+	// Get table counts using the same logic as ListCollections
+	tables, err := h.DB.ListTables(ctx)
+	if err == nil {
+		info.TableCount = len(tables)
+		for _, tableName := range tables {
+			lowerName := strings.ToLower(tableName)
+			if strings.HasPrefix(lowerName, "_v_") || strings.HasPrefix(lowerName, "_ozy_") {
+				info.SystemTableCount++
+			} else {
+				info.UserTableCount++
+			}
+		}
 	}
 
 	// Get function count
@@ -583,7 +590,8 @@ func (h *Handler) GetHealthIssues(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
 	defer cancel()
 
-	var issues []HealthIssue
+	// Initialize as empty slice so it marshals to [] instead of null if empty
+	issues := make([]HealthIssue, 0)
 
 	// 1. Check for tables without RLS (Mock for now as we don't have a formal RLS system in the app yet,
 	// but we can check actual PG tables)
@@ -592,6 +600,7 @@ func (h *Handler) GetHealthIssues(c echo.Context) error {
 		SELECT name
 		FROM _v_collections
 		WHERE rls_enabled = false
+		  AND name NOT LIKE '_v_%' AND name NOT LIKE '_ozy_%'
 	`)
 	if err == nil {
 		defer rows.Close()
@@ -626,6 +635,7 @@ func (h *Handler) GetHealthIssues(c echo.Context) error {
 		FROM fk_columns f
 		LEFT JOIN indexed_columns i ON f.table_name = i.table_name AND f.column_name = i.column_name
 		WHERE i.column_name IS NULL
+		  AND f.table_name::text NOT LIKE '_v_%' AND f.table_name::text NOT LIKE '_ozy_%'
 	`)
 	if err == nil {
 		defer rows.Close()
@@ -641,18 +651,52 @@ func (h *Handler) GetHealthIssues(c echo.Context) error {
 		}
 	}
 
-	// 3. Fallback for sequential scans (Only if no FK issues to keep it clean)
-	if len(issues) < 3 {
-		issues = append(issues, HealthIssue{
-			Type:        "performance",
-			Title:       "High number of sequential scans detected",
-			Description: "Consider adding indexes to frequently filtered columns.",
-		})
+	// 3. Check for high sequential scans (Real PostgreSQL statistics)
+	var seqScanIssue bool
+	rows, err = h.DB.Pool.Query(ctx, `
+		SELECT relname, seq_scan, idx_scan
+		FROM pg_stat_user_tables
+		WHERE seq_scan > COALESCE(idx_scan, 0) * 10
+		  AND seq_scan > 1000
+		  AND relname NOT LIKE '_v_%' AND relname NOT LIKE '_ozy_%'
+		ORDER BY seq_scan DESC
+		LIMIT 3
+	`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var tableName string
+			var seqScan, idxScan int64
+			if err := rows.Scan(&tableName, &seqScan, &idxScan); err == nil {
+				seqScanIssue = true
+				issues = append(issues, HealthIssue{
+					Type:        "performance",
+					Title:       fmt.Sprintf("Table `%s` has high sequential scans (%d seq vs %d idx)", tableName, seqScan, idxScan),
+					Description: "Consider adding indexes to frequently filtered columns or running ANALYZE.",
+				})
+			}
+		}
+	}
+	// Only add generic warning if no specific tables found but stats suggest issues
+	if !seqScanIssue {
+		var totalSeq, totalIdx int64
+		_ = h.DB.Pool.QueryRow(ctx, `
+			SELECT COALESCE(SUM(seq_scan), 0), COALESCE(SUM(idx_scan), 0)
+			FROM pg_stat_user_tables
+		`).Scan(&totalSeq, &totalIdx)
+		// Only warn if significant imbalance
+		if totalSeq > 10000 && totalIdx == 0 {
+			issues = append(issues, HealthIssue{
+				Type:        "performance",
+				Title:       "High number of sequential scans detected",
+				Description: "Consider adding indexes to frequently filtered columns.",
+			})
+		}
 	}
 
 	// 4. Check for public access rules
 	var publicCount int
-	_ = h.DB.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM _v_collections WHERE list_rule = 'public'").Scan(&publicCount)
+	_ = h.DB.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM _v_collections WHERE list_rule = 'public' AND name NOT LIKE '_v_%' AND name NOT LIKE '_ozy_%'").Scan(&publicCount)
 	if publicCount > 0 {
 		issues = append(issues, HealthIssue{
 			Type:        "security",
@@ -672,9 +716,12 @@ func (h *Handler) GetHealthIssues(c echo.Context) error {
 				title := "Unknown Security Alert"
 				desc := "A security event was detected."
 
-				if aType == "geo_breach" {
+				if aType == "geo_breach" && details != nil {
 					title = "Geographic Access Breach"
 					desc = fmt.Sprintf("Access attempt from unauthorized location: %v (%v) via IP %v", details["country"], details["city"], details["ip"])
+				} else if aType == "system_error" && details != nil {
+					title = "System Configuration Error"
+					desc = fmt.Sprintf("Error: %v", details["error"])
 				}
 
 				issues = append(issues, HealthIssue{
@@ -750,11 +797,53 @@ func (h *Handler) FixHealthIssues(c echo.Context) error {
 	}
 
 	if typeLower == "performance" && strings.Contains(issueLower, "sequential scans") {
-		// Fix: Run ANALYZE to update statistics
+		// Extract table name from issue: "Table `tablename` has high sequential scans..."
+		parts := strings.Split(req.Issue, "`")
+		if len(parts) >= 2 {
+			tableName := parts[1]
+			if data.IsValidIdentifier(tableName) {
+				// 1. Create index on commonly queried columns (id is always indexed, but let's ensure others)
+				// Get columns that might benefit from indexing
+				columns, err := h.DB.Pool.Query(ctx, `
+					SELECT column_name FROM information_schema.columns 
+					WHERE table_name = $1 
+					  AND table_schema = 'public'
+					  AND column_name NOT IN ('id', 'created_at', 'updated_at', 'deleted_at')
+					  AND data_type IN ('uuid', 'integer', 'bigint', 'text', 'varchar', 'boolean')
+					LIMIT 3
+				`, tableName)
+				if err == nil {
+					defer columns.Close()
+					for columns.Next() {
+						var colName string
+						if columns.Scan(&colName) == nil && data.IsValidIdentifier(colName) {
+							indexName := fmt.Sprintf("idx_%s_%s", tableName, colName)
+							sql := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (%s)", indexName, tableName, colName)
+							_, _ = h.DB.Pool.Exec(ctx, sql)
+						}
+					}
+				}
+
+				// 2. Run ANALYZE on specific table
+				sql := fmt.Sprintf("ANALYZE %s", tableName)
+				_, _ = h.DB.Pool.Exec(ctx, sql)
+
+				// 3. Reset statistics for this table
+				_, _ = h.DB.Pool.Exec(ctx, "SELECT pg_stat_reset_single_table_counters($1::regclass::oid)", tableName)
+
+				return c.JSON(http.StatusOK, map[string]string{
+					"message": fmt.Sprintf("Created indexes, analyzed table '%s', and reset statistics", tableName),
+				})
+			}
+		}
+
+		// Fallback: Run global ANALYZE and reset all stats
 		if _, err := h.DB.Pool.Exec(ctx, "ANALYZE"); err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to run ANALYZE: " + err.Error()})
 		}
-		return c.JSON(http.StatusOK, map[string]string{"message": "Database statistics updated successfully"})
+		// Reset all user table stats
+		_, _ = h.DB.Pool.Exec(ctx, "SELECT pg_stat_reset()")
+		return c.JSON(http.StatusOK, map[string]string{"message": "Database statistics updated and counters reset"})
 	}
 
 	if typeLower == "security" && strings.Contains(issueLower, "public list rules") {

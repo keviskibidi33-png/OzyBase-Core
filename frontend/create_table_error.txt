@@ -1,0 +1,32 @@
+
+Running 1 test using 1 worker
+
+[1A[2K[1/1] [chromium] › tests\data-types.spec.js:26:6 › should create a table with all data types
+[1A[2K  1) [chromium] › tests\data-types.spec.js:26:6 › should create a table with all data types ────────
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: getByText('Create a new table under')
+    Expected: visible
+    Timeout: 30000ms
+    Error: element(s) not found
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 30000ms[22m
+    [2m  - waiting for getByText('Create a new table under')[22m
+
+
+      32 |
+      33 |     // Wait for the Create Table Modal to appear (slide-in from right)
+    > 34 |     await expect(page.getByText('Create a new table under')).toBeVisible({ timeout: 30000 });
+         |                                                              ^
+      35 |
+      36 |     const tableName = `test_types_${Date.now()}`;
+      37 |     await page.getByPlaceholder('e.g. products').fill(tableName);
+        at C:\Users\lunax\OneDrive\Documentos\broo\OzyBase-Core\frontend\tests\data-types.spec.js:34:62
+
+    Error Context: test-results\data-types-should-create-a-table-with-all-data-types-chromium\error-context.md
+
+
+[1A[2K  1 failed
+    [chromium] › tests\data-types.spec.js:26:6 › should create a table with all data types ─────────

@@ -1,0 +1,247 @@
+{
+  "config": {
+    "configFile": "C:\\Users\\lunax\\OneDrive\\Documentos\\broo\\OzyBase-Core\\frontend\\playwright.config.js",
+    "rootDir": "C:/Users/lunax/OneDrive/Documentos/broo/OzyBase-Core/frontend/tests",
+    "forbidOnly": false,
+    "fullyParallel": true,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 3
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "C:/Users/lunax/OneDrive/Documentos/broo/OzyBase-Core/frontend/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 3
+        },
+        "id": "chromium",
+        "name": "chromium",
+        "testDir": "C:/Users/lunax/OneDrive/Documentos/broo/OzyBase-Core/frontend/tests",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 180000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "runAgents": "none",
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.58.2",
+    "workers": 4,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "data-types.spec.js",
+      "file": "data-types.spec.js",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "should create a table with all data types",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 180000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 3995,
+                  "error": {
+                    "message": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5342/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5342/\", waiting until \"load\"\u001b[22m\n",
+                    "stack": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5342/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5342/\", waiting until \"load\"\u001b[22m\n\n    at C:\\Users\\lunax\\OneDrive\\Documentos\\broo\\OzyBase-Core\\frontend\\tests\\data-types.spec.js:16:16",
+                    "location": {
+                      "file": "C:\\Users\\lunax\\OneDrive\\Documentos\\broo\\OzyBase-Core\\frontend\\tests\\data-types.spec.js",
+                      "column": 16,
+                      "line": 16
+                    },
+                    "snippet": "\u001b[0m \u001b[90m 14 |\u001b[39m\n \u001b[90m 15 |\u001b[39m     \u001b[90m// 2. Navigate\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 16 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgoto(\u001b[32m'/'\u001b[39m\u001b[33m,\u001b[39m { waitUntil\u001b[33m:\u001b[39m \u001b[32m'load'\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m    |\u001b[39m                \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 17 |\u001b[39m\n \u001b[90m 18 |\u001b[39m     \u001b[90m// 3. Sequential Sync (Loading states)\u001b[39m\n \u001b[90m 19 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgetByText(\u001b[32m'Loading OzyBase...'\u001b[39m)\u001b[33m.\u001b[39mwaitFor({ state\u001b[33m:\u001b[39m \u001b[32m'detached'\u001b[39m\u001b[33m,\u001b[39m timeout\u001b[33m:\u001b[39m \u001b[35m30000\u001b[39m })\u001b[33m.\u001b[39m\u001b[36mcatch\u001b[39m(() \u001b[33m=>\u001b[39m { })\u001b[33m;\u001b[39m\u001b[0m"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "C:\\Users\\lunax\\OneDrive\\Documentos\\broo\\OzyBase-Core\\frontend\\tests\\data-types.spec.js",
+                        "column": 16,
+                        "line": 16
+                      },
+                      "message": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5342/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5342/\", waiting until \"load\"\u001b[22m\n\n\n  14 |\n  15 |     // 2. Navigate\n> 16 |     await page.goto('/', { waitUntil: 'load' });\n     |                ^\n  17 |\n  18 |     // 3. Sequential Sync (Loading states)\n  19 |     await page.getByText('Loading OzyBase...').waitFor({ state: 'detached', timeout: 30000 }).catch(() => { });\n    at C:\\Users\\lunax\\OneDrive\\Documentos\\broo\\OzyBase-Core\\frontend\\tests\\data-types.spec.js:16:16"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-02-12T01:47:24.690Z",
+                  "annotations": [],
+                  "attachments": [],
+                  "errorLocation": {
+                    "file": "C:\\Users\\lunax\\OneDrive\\Documentos\\broo\\OzyBase-Core\\frontend\\tests\\data-types.spec.js",
+                    "column": 16,
+                    "line": 16
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "70fccbb9bb740f0679fb-e3fad48a4edcfe3a7027",
+          "file": "data-types.spec.js",
+          "line": 26,
+          "column": 1
+        },
+        {
+          "title": "should open project status dropdown",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 180000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "parallelIndex": 1,
+                  "status": "failed",
+                  "duration": 3920,
+                  "error": {
+                    "message": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5342/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5342/\", waiting until \"load\"\u001b[22m\n",
+                    "stack": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5342/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5342/\", waiting until \"load\"\u001b[22m\n\n    at C:\\Users\\lunax\\OneDrive\\Documentos\\broo\\OzyBase-Core\\frontend\\tests\\data-types.spec.js:16:16",
+                    "location": {
+                      "file": "C:\\Users\\lunax\\OneDrive\\Documentos\\broo\\OzyBase-Core\\frontend\\tests\\data-types.spec.js",
+                      "column": 16,
+                      "line": 16
+                    },
+                    "snippet": "\u001b[0m \u001b[90m 14 |\u001b[39m\n \u001b[90m 15 |\u001b[39m     \u001b[90m// 2. Navigate\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 16 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgoto(\u001b[32m'/'\u001b[39m\u001b[33m,\u001b[39m { waitUntil\u001b[33m:\u001b[39m \u001b[32m'load'\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m    |\u001b[39m                \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 17 |\u001b[39m\n \u001b[90m 18 |\u001b[39m     \u001b[90m// 3. Sequential Sync (Loading states)\u001b[39m\n \u001b[90m 19 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgetByText(\u001b[32m'Loading OzyBase...'\u001b[39m)\u001b[33m.\u001b[39mwaitFor({ state\u001b[33m:\u001b[39m \u001b[32m'detached'\u001b[39m\u001b[33m,\u001b[39m timeout\u001b[33m:\u001b[39m \u001b[35m30000\u001b[39m })\u001b[33m.\u001b[39m\u001b[36mcatch\u001b[39m(() \u001b[33m=>\u001b[39m { })\u001b[33m;\u001b[39m\u001b[0m"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "C:\\Users\\lunax\\OneDrive\\Documentos\\broo\\OzyBase-Core\\frontend\\tests\\data-types.spec.js",
+                        "column": 16,
+                        "line": 16
+                      },
+                      "message": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5342/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5342/\", waiting until \"load\"\u001b[22m\n\n\n  14 |\n  15 |     // 2. Navigate\n> 16 |     await page.goto('/', { waitUntil: 'load' });\n     |                ^\n  17 |\n  18 |     // 3. Sequential Sync (Loading states)\n  19 |     await page.getByText('Loading OzyBase...').waitFor({ state: 'detached', timeout: 30000 }).catch(() => { });\n    at C:\\Users\\lunax\\OneDrive\\Documentos\\broo\\OzyBase-Core\\frontend\\tests\\data-types.spec.js:16:16"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-02-12T01:47:24.686Z",
+                  "annotations": [],
+                  "attachments": [],
+                  "errorLocation": {
+                    "file": "C:\\Users\\lunax\\OneDrive\\Documentos\\broo\\OzyBase-Core\\frontend\\tests\\data-types.spec.js",
+                    "column": 16,
+                    "line": 16
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "70fccbb9bb740f0679fb-0561a55d2d52e7812839",
+          "file": "data-types.spec.js",
+          "line": 57,
+          "column": 1
+        },
+        {
+          "title": "should verify CSV import availability in Create Table modal",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 180000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 2,
+                  "status": "failed",
+                  "duration": 4062,
+                  "error": {
+                    "message": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5342/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5342/\", waiting until \"load\"\u001b[22m\n",
+                    "stack": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5342/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5342/\", waiting until \"load\"\u001b[22m\n\n    at C:\\Users\\lunax\\OneDrive\\Documentos\\broo\\OzyBase-Core\\frontend\\tests\\data-types.spec.js:16:16",
+                    "location": {
+                      "file": "C:\\Users\\lunax\\OneDrive\\Documentos\\broo\\OzyBase-Core\\frontend\\tests\\data-types.spec.js",
+                      "column": 16,
+                      "line": 16
+                    },
+                    "snippet": "\u001b[0m \u001b[90m 14 |\u001b[39m\n \u001b[90m 15 |\u001b[39m     \u001b[90m// 2. Navigate\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 16 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgoto(\u001b[32m'/'\u001b[39m\u001b[33m,\u001b[39m { waitUntil\u001b[33m:\u001b[39m \u001b[32m'load'\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m    |\u001b[39m                \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 17 |\u001b[39m\n \u001b[90m 18 |\u001b[39m     \u001b[90m// 3. Sequential Sync (Loading states)\u001b[39m\n \u001b[90m 19 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgetByText(\u001b[32m'Loading OzyBase...'\u001b[39m)\u001b[33m.\u001b[39mwaitFor({ state\u001b[33m:\u001b[39m \u001b[32m'detached'\u001b[39m\u001b[33m,\u001b[39m timeout\u001b[33m:\u001b[39m \u001b[35m30000\u001b[39m })\u001b[33m.\u001b[39m\u001b[36mcatch\u001b[39m(() \u001b[33m=>\u001b[39m { })\u001b[33m;\u001b[39m\u001b[0m"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "C:\\Users\\lunax\\OneDrive\\Documentos\\broo\\OzyBase-Core\\frontend\\tests\\data-types.spec.js",
+                        "column": 16,
+                        "line": 16
+                      },
+                      "message": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5342/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5342/\", waiting until \"load\"\u001b[22m\n\n\n  14 |\n  15 |     // 2. Navigate\n> 16 |     await page.goto('/', { waitUntil: 'load' });\n     |                ^\n  17 |\n  18 |     // 3. Sequential Sync (Loading states)\n  19 |     await page.getByText('Loading OzyBase...').waitFor({ state: 'detached', timeout: 30000 }).catch(() => { });\n    at C:\\Users\\lunax\\OneDrive\\Documentos\\broo\\OzyBase-Core\\frontend\\tests\\data-types.spec.js:16:16"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-02-12T01:47:24.718Z",
+                  "annotations": [],
+                  "attachments": [],
+                  "errorLocation": {
+                    "file": "C:\\Users\\lunax\\OneDrive\\Documentos\\broo\\OzyBase-Core\\frontend\\tests\\data-types.spec.js",
+                    "column": 16,
+                    "line": 16
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "70fccbb9bb740f0679fb-7ae6d22ee01aefba26eb",
+          "file": "data-types.spec.js",
+          "line": 65,
+          "column": 1
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-02-12T01:47:21.012Z",
+    "duration": 8687.707999999999,
+    "expected": 0,
+    "skipped": 0,
+    "unexpected": 3,
+    "flaky": 0
+  }
+}
