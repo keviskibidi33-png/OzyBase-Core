@@ -1,6 +1,7 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react'
 import Layout from './components/Layout'
 import Login from './components/Login'
+import { fetchWithAuth } from './utils/api'
 
 // Dynamic imports for bundle optimization (bundle-dynamic-imports)
 const TableEditor = lazy(() => import('./components/TableEditor'));
@@ -33,20 +34,17 @@ function App() {
     const [selectedView, setSelectedView] = useState('overview');
     const [selectedTable, setSelectedTable] = useState(null);
     const [tables, setTables] = useState([]);
+    const [workspaceId, setWorkspaceId] = useState(localStorage.getItem('ozy_workspace_id'));
 
     useEffect(() => {
         checkSystemStatus();
         if (isAuthenticated) {
             loadTables();
         }
-    }, [isAuthenticated]);
+    }, [isAuthenticated, workspaceId]);
 
     const loadTables = () => {
-        fetch('/api/collections', {
-            headers: {
-                'Authorization': `Bearer ${localStorage.getItem('ozy_token')}`
-            }
-        })
+        fetchWithAuth('/api/collections')
             .then(res => res.json())
             .then(data => setTables(Array.isArray(data) ? data : []))
             .catch(err => console.error("Failed to load tables", err));
@@ -140,7 +138,7 @@ function App() {
             case 'config':
                 return <RealtimeInspector view={selectedView === 'realtime' ? 'inspector' : selectedView} />;
             case 'advisors': return <Advisors />;
-            case 'observability': return <Observability />;
+            case 'observability': return <Observability onViewSelect={setSelectedView} />;
             case 'logs':
             case 'explorer':
             case 'live':
@@ -187,6 +185,7 @@ function App() {
             onTableSelect={handleTableSelect}
             tables={tables}
             refreshTables={loadTables}
+            onWorkspaceChange={(id) => setWorkspaceId(id)}
             onMenuViewSelect={(view) => {
                 setSelectedView(view);
                 setSelectedTable(null);

@@ -103,7 +103,7 @@ func (h *Handler) SetupSystem(c echo.Context) error {
 	}
 
 	// 4. Generate Token for immediate login
-	token, err := h.Auth.GenerateTokenForUser(userID, "admin")
+	token, err := h.Auth.GenerateTokenForUser(c.Request().Context(), userID, "admin", c.RealIP(), c.Request().UserAgent(), false)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to generate session token"})
 	}

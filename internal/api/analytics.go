@@ -24,7 +24,8 @@ func (h *Handler) GetTrafficStats(c echo.Context) error {
 		SELECT
 			date_trunc('hour', created_at) as bucket,
 			COUNT(*) as count,
-			AVG(latency_ms) as avg_latency
+			AVG(latency_ms) as avg_latency,
+			COUNT(*) FILTER (WHERE status >= 400) as errors
 		FROM _v_audit_logs
 		WHERE created_at > NOW() - INTERVAL '24 hours'
 		GROUP BY bucket
@@ -39,13 +40,14 @@ func (h *Handler) GetTrafficStats(c echo.Context) error {
 		Time       time.Time `json:"time"`
 		Requests   int       `json:"requests"`
 		AvgLatency float64   `json:"avg_latency"`
+		Errors     int       `json:"errors"`
 	}
 	var stats []TimePoint
 
 	for rows.Next() {
 		var t TimePoint
 		var latency sql.NullFloat64
-		if err := rows.Scan(&t.Time, &t.Requests, &latency); err == nil {
+		if err := rows.Scan(&t.Time, &t.Requests, &latency, &t.Errors); err == nil {
 			t.AvgLatency = latency.Float64
 			stats = append(stats, t)
 		}

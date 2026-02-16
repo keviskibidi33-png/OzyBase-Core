@@ -4,6 +4,7 @@ package core
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -28,6 +29,10 @@ func NewAuthService(db *data.DB, jwtSecret string, mailer mailer.Mailer) *AuthSe
 		jwtSecret: jwtSecret,
 		mailer:    mailer,
 	}
+}
+
+func (s *AuthService) DB() *data.DB {
+	return s.db
 }
 
 // Signup handles user registration
@@ -67,8 +72,16 @@ func (s *AuthService) Signup(ctx context.Context, email, password string) (*User
 	return &user, nil
 }
 
-// Login verifies credentials and returns a JWT
-func (s *AuthService) Login(ctx context.Context, email, password string) (string, *User, error) {
+// AuthLoginResult represents the outcome of a login attempt
+type AuthLoginResult struct {
+	Token       string `json:"token,omitempty"`
+	MFAStore    string `json:"mfa_store,omitempty"` // Temporary identifier for MFA verification
+	MFARequired bool   `json:"mfa_required"`
+	User        *User  `json:"user"`
+}
+
+// Login verifies credentials and returns a AuthLoginResult
+func (s *AuthService) Login(ctx context.Context, email, password string) (*AuthLoginResult, error) {
 	var user User
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT id, email, password_hash, role, is_verified, created_at, updated_at
@@ -77,22 +90,39 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (string
 	`, email).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.Role, &user.IsVerified, &user.CreatedAt, &user.UpdatedAt)
 
 	if err != nil {
-		return "", nil, errors.New("invalid email or password")
+		return nil, errors.New("invalid email or password")
 	}
 
 	// Compare passwords
 	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password))
 	if err != nil {
-		return "", nil, errors.New("invalid email or password")
+		return nil, errors.New("invalid email or password")
 	}
 
-	// Generate JWT
-	tokenString, err := s.generateToken(user.ID, user.Role)
+	// Check if MFA is enabled
+	var mfaEnabled bool
+	_ = s.db.Pool.QueryRow(ctx, "SELECT is_enabled FROM _v_user_2fa WHERE user_id = $1", user.ID).Scan(&mfaEnabled)
+
+	if mfaEnabled {
+		// Return partial result, no token yet
+		return &AuthLoginResult{
+			MFARequired: true,
+			MFAStore:    user.ID, // For simplicity in this phase, using userID. In Phase 3, use a signed temp token.
+			User:        &user,
+		}, nil
+	}
+
+	// Not MFA enabled, generate full JWT and Session
+	tokenString, err := s.GenerateTokenForUser(ctx, user.ID, user.Role, "", "", false)
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
 
-	return tokenString, &user, nil
+	return &AuthLoginResult{
+		Token:       tokenString,
+		MFARequired: false,
+		User:        &user,
+	}, nil
 }
 
 func (s *AuthService) generateToken(userID, role string) (string, error) {
@@ -105,9 +135,29 @@ func (s *AuthService) generateToken(userID, role string) (string, error) {
 	return token.SignedString([]byte(s.jwtSecret))
 }
 
-// GenerateTokenForUser exposes internal token generation logic
-func (s *AuthService) GenerateTokenForUser(userID, role string) (string, error) {
-	return s.generateToken(userID, role)
+// GenerateTokenForUser exposes internal token generation logic and creates a session
+func (s *AuthService) GenerateTokenForUser(ctx context.Context, userID, role, ip, ua string, isMFA bool) (string, error) {
+	tokenString, err := s.generateToken(userID, role)
+	if err != nil {
+		return "", err
+	}
+
+	// Create Session
+	hash := sha256.Sum256([]byte(tokenString))
+	tokenHash := hex.EncodeToString(hash[:])
+
+	expiresAt := time.Now().Add(time.Hour * 72)
+
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO _v_sessions (user_id, token_hash, ip_address, user_agent, is_mfa_verified, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, userID, tokenHash, ip, ua, isMFA, expiresAt)
+
+	if err != nil {
+		return "", fmt.Errorf("failed to create session: %w", err)
+	}
+
+	return tokenString, nil
 }
 
 // RequestPasswordReset generates a reset token and saves it
@@ -290,11 +340,45 @@ func (s *AuthService) HandleOAuthLogin(ctx context.Context, provider, providerID
 		}
 	}
 
-	// 5. Generate JWT
-	tokenString, err := s.generateToken(user.ID, user.Role)
+	// 5. Generate JWT and Session
+	tokenString, err := s.GenerateTokenForUser(ctx, user.ID, user.Role, "", "", false)
 	if err != nil {
 		return "", nil, err
 	}
 
 	return tokenString, &user, nil
+}
+
+// ListSessions returns all active sessions for a user
+func (s *AuthService) ListSessions(ctx context.Context, userID string) ([]Session, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, user_id, ip_address, user_agent, is_mfa_verified, expires_at, created_at, last_used_at
+		FROM _v_sessions
+		WHERE user_id = $1 AND expires_at > NOW()
+		ORDER BY last_used_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []Session
+	for rows.Next() {
+		var sess Session
+		err := rows.Scan(&sess.ID, &sess.UserID, &sess.IPAddress, &sess.UserAgent, &sess.IsMFAVerified, &sess.ExpiresAt, &sess.CreatedAt, &sess.LastUsedAt)
+		if err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, sess)
+	}
+	return sessions, nil
+}
+
+// RevokeSession deletes a session
+func (s *AuthService) RevokeSession(ctx context.Context, sessionID, userID string) error {
+	_, err := s.db.Pool.Exec(ctx, `
+		DELETE FROM _v_sessions
+		WHERE id = $1 AND user_id = $2
+	`, sessionID, userID)
+	return err
 }

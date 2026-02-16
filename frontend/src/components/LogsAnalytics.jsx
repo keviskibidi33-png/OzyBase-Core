@@ -14,8 +14,10 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
     const [pollingInterval, setPollingInterval] = useState(5000);
     const [logLimit, setLogLimit] = useState(50);
     const [statusFilter, setStatusFilter] = useState('all');
+    const [searchQuery, setSearchQuery] = useState('');
     const [lastClearedTime, setLastClearedTime] = useState(() => Number(localStorage.getItem('ozy_logs_clear_time')) || 0);
     const [lastSyncTime, setLastSyncTime] = useState(null);
+    const [selectedLog, setSelectedLog] = useState(null);
     const generationRef = useRef(0);
     const skipNextFetchRef = useRef(false); // Only skip ONE cycle after clear
     const latestServerTimeRef = useRef(0);
@@ -67,7 +69,17 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
                     return;
                 }
 
-                setLogs(logData);
+                // 🧹 Filter at fetch time: never let cleared logs enter state
+                const clearTime = Number(localStorage.getItem('ozy_logs_clear_time')) || 0;
+                if (clearTime > 0) {
+                    const filtered = logData.filter(log => {
+                        if (!log.timestamp) return true;
+                        return new Date(log.timestamp).getTime() > clearTime;
+                    });
+                    setLogs(filtered);
+                } else {
+                    setLogs(logData);
+                }
             }
         } catch (e) { console.error(e); }
     }, [view, logLimit, statusFilter]);
@@ -81,6 +93,22 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
             }
         } catch (e) { console.error(e); }
     }, []);
+
+    const handleExport = async () => {
+        try {
+            const res = await fetchWithAuth('/api/project/logs/export');
+            if (res.ok) {
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `ozybase_logs_${new Date().toISOString().split('T')[0]}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+            }
+        } catch (e) { console.error("Export failed", e); }
+    };
 
     // 🔄 Reliable polling with setInterval (never breaks, unlike recursive setTimeout)
     useEffect(() => {
@@ -206,17 +234,14 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
                 </div>
                 <div className="flex-1 overflow-auto p-4 space-y-1 custom-scrollbar">
                     {logs.filter(log => {
-                        if (lastClearedTime === 0) return true;
-                        if (!log.timestamp) return true;
-                        const logTime = new Date(log.timestamp).getTime();
-                        const isVisible = logTime > lastClearedTime; 
-                        
-                        if (!isVisible) {
-                            console.debug(`🚫 [Filtered Out] Log ${log.id} (${log.path}) | LogTime: ${logTime} | Limit: ${lastClearedTime}`);
-                        }
-                        return isVisible;
+                        if (searchQuery && !log.path?.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+                        return true;
                     }).map((log) => (
-                        <div key={log.id} className="flex gap-4 group hover:bg-zinc-900/50 -mx-4 px-4 py-0.5">
+                        <div 
+                            key={log.id} 
+                            onClick={() => setSelectedLog(log)}
+                            className="flex gap-4 group hover:bg-zinc-900/50 -mx-4 px-4 py-0.5 cursor-pointer"
+                        >
                             <span className="text-zinc-600 shrink-0">[{log.time}]</span>
                             <span className={`shrink-0 font-bold ${log.method === 'GET' ? 'text-blue-400' : 'text-purple-400'}`}>{log.method}</span>
                             <span className="text-zinc-300 truncate">{log.path}</span>
@@ -225,16 +250,10 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
                         </div>
                     ))}
                     {(() => {
-                        const visibleLogs = logs.filter(log => {
-                            if (lastClearedTime === 0) return true;
-                            if (!log.timestamp) return true;
-                            return new Date(log.timestamp).getTime() > lastClearedTime;
-                        });
-
-                        if (visibleLogs.length === 0 && !isLivePaused) {
+                        if (logs.length === 0 && !isLivePaused) {
                             return (
                                 <div className="text-zinc-700 italic py-20 text-center uppercase tracking-tighter animate-pulse">
-                                    {logs.length === 0 ? "Waiting for traffic..." : "All previous logs cleared. Watching for new events..."}
+                                    {lastClearedTime > 0 ? "All previous logs cleared. Watching for new events..." : "Waiting for traffic..."}
                                 </div>
                             );
                         }
@@ -322,17 +341,89 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
                             {trafficStats.map((stat, i) => (
                                 <div 
                                     key={i} 
-                                    title={`${stat.requests} requests`}
-                                    className="flex-1 bg-indigo-500/20 hover:bg-indigo-500 rounded-t-md transition-all cursor-crosshair group/bar relative" 
-                                    style={{ height: `${(stat.requests / maxTraffic) * 100}%` }} 
+                                    title={`${stat.requests} reqs (${stat.errors} errs) | ${Math.round(stat.avg_latency)}ms`}
+                                    className="flex-1 bg-zinc-900 rounded-t-lg transition-all cursor-crosshair group/bar relative border border-zinc-800/50 hover:border-indigo-500/50" 
+                                    style={{ height: `${Math.max((stat.requests / maxTraffic) * 100, 5)}%` }} 
                                 >
-                                    <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-indigo-500 text-black text-[9px] font-black px-1.5 py-0.5 rounded opacity-0 group-hover/bar:opacity-100 transition-opacity">
-                                        {stat.requests}
+                                    {/* Success Bar */}
+                                    <div 
+                                        className="absolute bottom-0 left-0 right-0 bg-indigo-500/40 group-hover/bar:bg-indigo-500 transition-all rounded-t-md"
+                                        style={{ height: `${((stat.requests - stat.errors) / stat.requests) * 100}%` }}
+                                    />
+                                    {/* Error Bar */}
+                                    <div 
+                                        className="absolute top-0 left-0 right-0 bg-red-500/60 group-hover/bar:bg-red-500 transition-all rounded-t-md"
+                                        style={{ height: `${(stat.errors / stat.requests) * 100}%` }}
+                                    />
+                                    
+                                    <div className="absolute -top-12 left-1/2 -translate-x-1/2 bg-black border border-zinc-800 text-white text-[9px] font-black px-2 py-1 rounded-lg opacity-0 group-hover/bar:opacity-100 transition-all shadow-xl pointer-events-none whitespace-nowrap z-10">
+                                        <div className="text-indigo-400">{stat.requests} REQUESTS</div>
+                                        {stat.errors > 0 && <div className="text-red-500">{stat.errors} ERRORS</div>}
+                                        <div className="text-zinc-500 mt-1 pt-1 border-t border-zinc-800">{Math.round(stat.avg_latency)}ms avg</div>
                                     </div>
                                 </div>
                             ))}
                         </div>
                     </div>
+                    <div className="p-8 bg-[#0a0a0a] border border-[#2e2e2e] rounded-3xl shadow-2xl flex flex-col">
+                        <h3 className="text-lg font-black text-white flex items-center gap-2 mb-8 uppercase tracking-tighter italic">
+                            <Shield size={20} className="text-red-400" /> Status Health
+                        </h3>
+                        <div className="flex-1 flex flex-col justify-center items-center space-y-6">
+                            <div className="relative w-32 h-32 flex items-center justify-center">
+                                <svg className="w-full h-full -rotate-90">
+                                    <circle cx="64" cy="64" r="58" fill="none" stroke="#18181b" strokeWidth="12" />
+                                    {(() => {
+                                        const totalReqs = trafficStats.reduce((acc, s) => acc + s.requests, 0);
+                                        const totalErrs = trafficStats.reduce((acc, s) => acc + s.errors, 0);
+                                        const errorRate = totalReqs > 0 ? (totalErrs / totalReqs) : 0;
+                                        const circumference = 2 * Math.PI * 58;
+                                        return (
+                                            <>
+                                                <circle 
+                                                    cx="64" cy="64" r="58" fill="none" stroke="#10b981" strokeWidth="12" 
+                                                    strokeDasharray={circumference}
+                                                    strokeDashoffset={circumference * errorRate}
+                                                />
+                                                <circle 
+                                                    cx="64" cy="64" r="58" fill="none" stroke="#ef4444" strokeWidth="12" 
+                                                    strokeDasharray={circumference}
+                                                    strokeDashoffset={circumference * (1 - errorRate)}
+                                                    transform="rotate(360, 64, 64)"
+                                                />
+                                            </>
+                                        );
+                                    })()}
+                                </svg>
+                                <div className="absolute flex flex-col items-center">
+                                    <span className="text-xl font-black text-white leading-none">
+                                        {(() => {
+                                            const totalReqs = trafficStats.reduce((acc, s) => acc + s.requests, 0);
+                                            const totalErrs = trafficStats.reduce((acc, s) => acc + s.errors, 0);
+                                            return totalReqs > 0 ? Math.round(((totalReqs - totalErrs) / totalReqs) * 100) : 100;
+                                        })()}%
+                                    </span>
+                                    <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest mt-1">Success</span>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4 w-full">
+                                <div className="p-3 bg-emerald-500/5 rounded-2xl border border-emerald-500/10">
+                                    <div className="text-[8px] font-black text-zinc-500 uppercase tracking-widest mb-1">Total OK</div>
+                                    <div className="text-lg font-black text-emerald-500 leading-none">
+                                        {trafficStats.reduce((acc, s) => acc + (s.requests - s.errors), 0)}
+                                    </div>
+                                </div>
+                                <div className="p-3 bg-red-500/5 rounded-2xl border border-red-500/10">
+                                    <div className="text-[8px] font-black text-zinc-500 uppercase tracking-widest mb-1">Total Err</div>
+                                    <div className="text-lg font-black text-red-500 leading-none">
+                                        {trafficStats.reduce((acc, s) => acc + s.errors, 0)}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <div className="p-8 bg-[#0a0a0a] border border-[#2e2e2e] rounded-3xl shadow-2xl">
                         <h3 className="text-lg font-black text-white flex items-center gap-2 mb-8 uppercase tracking-tighter italic">
                             <Globe size={20} className="text-emerald-400" /> Geography
@@ -445,8 +536,16 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
 
                     <div className="flex items-center gap-2 px-3 py-1.5 bg-black/40 border border-[#2e2e2e] rounded-xl">
                         <Search size={12} className="text-zinc-600" />
-                        <input type="text" placeholder="Search paths..." className="bg-transparent border-none text-[10px] text-zinc-400 focus:outline-none w-40 font-bold uppercase tracking-widest placeholder:text-zinc-700" />
+                        <input type="text" placeholder="Search paths..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="bg-transparent border-none text-[10px] text-zinc-400 focus:outline-none w-40 font-bold uppercase tracking-widest placeholder:text-zinc-700" />
                     </div>
+
+                    <button 
+                        onClick={handleExport}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-black transition-all border border-emerald-500/20 shadow-lg shadow-emerald-500/5"
+                    >
+                        <Zap size={11} />
+                        Export CSV
+                    </button>
                 </div>
             </div>
             <table className="w-full text-left">
@@ -462,17 +561,14 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
                 </thead>
                 <tbody className="divide-y divide-[#2e2e2e]/30 font-mono text-[10px]">
                     {logs.filter(log => {
-                        if (lastClearedTime === 0) return true;
-                        if (!log.timestamp) return true;
-                        const logTime = new Date(log.timestamp).getTime();
-                        const isVisible = logTime > lastClearedTime;
-                        
-                        if (!isVisible) {
-                            console.debug(`🚫 [Filtered Out Explorer] Log ${log.id} (${log.path}) | LogTime: ${logTime} | Limit: ${lastClearedTime}`);
-                        }
-                        return isVisible;
+                        if (searchQuery && !log.path?.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+                        return true;
                     }).map((log) => (
-                        <tr key={log.id} className="hover:bg-indigo-500/5 transition-colors group">
+                        <tr 
+                            key={log.id} 
+                            onClick={() => setSelectedLog(log)}
+                            className="hover:bg-indigo-500/5 transition-colors group cursor-pointer"
+                        >
                             <td className="px-8 py-4 text-zinc-500 select-none whitespace-nowrap italic">{log.time}</td>
                             <td className="px-8 py-4">
                                 <span className={`px-2 py-0.5 rounded text-[9px] font-black italic ${log.method === 'GET' ? 'text-blue-400 bg-blue-400/10' : 'text-purple-400 bg-purple-400/10'}`}>{log.method}</span>
@@ -491,27 +587,16 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
                     ))}
                 </tbody>
             </table>
-            {(() => {
-                const visibleLogs = logs.filter(log => {
-                    if (lastClearedTime === 0) return true;
-                    if (!log.timestamp) return true;
-                    return new Date(log.timestamp).getTime() > lastClearedTime;
-                });
-
-                if (visibleLogs.length === 0) {
-                    return (
-                        <div className="py-40 text-center space-y-4">
-                            <div className="w-12 h-12 bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center justify-center mx-auto text-zinc-700">
-                                <History size={24} />
-                            </div>
-                            <p className="text-[10px] font-black text-zinc-700 uppercase tracking-widest italic">
-                                {logs.length === 0 ? "No entry logs detected yet." : "All previous logs cleared."}
-                            </p>
-                        </div>
-                    );
-                }
-                return null;
-            })()}
+            {logs.length === 0 && (
+                <div className="py-40 text-center space-y-4">
+                    <div className="w-12 h-12 bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center justify-center mx-auto text-zinc-700">
+                        <History size={24} />
+                    </div>
+                    <p className="text-[10px] font-black text-zinc-700 uppercase tracking-widest italic">
+                        {lastClearedTime > 0 ? "All previous logs cleared." : "No entry logs detected yet."}
+                    </p>
+                </div>
+            )}
         </div>
     );
 
@@ -549,9 +634,64 @@ const LogsAnalytics = ({ view = 'explorer' }) => {
                 {view === 'alerts' && renderAlerts()}
                 {view === 'metrics' && renderMetrics()}
             </div>
+
+            {selectedLog && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
+                    <div className="w-full max-w-2xl bg-[#0c0c0c] border border-[2e2e2e] rounded-[32px] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
+                        <div className="px-8 py-6 border-b border-[#2e2e2e] flex items-center justify-between bg-[#111111]">
+                            <div className="flex items-center gap-3">
+                                <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${selectedLog.status >= 400 ? 'bg-red-500/10 text-red-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
+                                    <Shield size={20} />
+                                </div>
+                                <div>
+                                    <h2 className="text-sm font-black text-white uppercase tracking-widest leading-none">Log Details</h2>
+                                    <p className="text-[9px] text-zinc-600 uppercase font-bold mt-1 tracking-widest">{selectedLog.id}</p>
+                                </div>
+                            </div>
+                            <button onClick={() => setSelectedLog(null)} className="p-2 hover:bg-zinc-800 rounded-xl transition-all">
+                                <X size={20} className="text-zinc-500" />
+                            </button>
+                        </div>
+                        <div className="p-8 space-y-6">
+                            <div className="grid grid-cols-2 gap-4">
+                                <DetailItem label="Method" value={selectedLog.method} highlight={selectedLog.method === 'GET' ? 'text-blue-400' : 'text-purple-400'} />
+                                <DetailItem label="Status" value={selectedLog.status} highlight={selectedLog.status >= 400 ? 'text-red-500' : 'text-emerald-500'} />
+                                <DetailItem label="Time" value={new Date(selectedLog.timestamp).toLocaleString()} />
+                                <DetailItem label="Latency" value={selectedLog.latency} />
+                                <DetailItem label="IP Address" value={selectedLog.ip || 'Localhost'} />
+                                <DetailItem label="Location" value={`${selectedLog.city || 'Unknown City'}, ${selectedLog.country || 'Unknown Country'}`} />
+                            </div>
+                            <div className="space-y-2">
+                                <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Resource Path</p>
+                                <div className="p-4 bg-black border border-[#2e2e2e] rounded-2xl font-mono text-xs text-indigo-400 break-all">
+                                    {selectedLog.path}
+                                </div>
+                            </div>
+                            {selectedLog.user_agent && (
+                                <div className="space-y-2">
+                                    <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">User Agent</p>
+                                    <div className="p-4 bg-black border border-[#2e2e2e] rounded-2xl font-mono text-[10px] text-zinc-500">
+                                        {selectedLog.user_agent}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        <div className="px-8 py-6 bg-[#111111] border-t border-[#2e2e2e] flex justify-end">
+                            <button onClick={() => setSelectedLog(null)} className="px-6 py-2 bg-zinc-800 hover:bg-zinc-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all">Close</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
+
+const DetailItem = ({ label, value, highlight }) => (
+    <div className="space-y-1">
+        <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{label}</p>
+        <p className={`text-xs font-bold ${highlight || 'text-zinc-300'}`}>{value || 'N/A'}</p>
+    </div>
+);
 
 export default LogsAnalytics;
 

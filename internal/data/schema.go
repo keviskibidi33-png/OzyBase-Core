@@ -4,14 +4,19 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // FieldSchema represents a single field in a collection schema
 type FieldSchema struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Required bool   `json:"required,omitempty"`
-	Default  any    `json:"default,omitempty"`
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	Required   bool   `json:"required,omitempty"`
+	Unique     bool   `json:"unique,omitempty"`
+	IsPrimary  bool   `json:"is_primary,omitempty"`
+	Default    any    `json:"default,omitempty"`
+	References string `json:"references,omitempty"` // format: "table.column"
 }
 
 // TypeMapping maps OzyBase types to PostgreSQL types
@@ -64,9 +69,29 @@ func BuildCreateTableSQL(tableName string, schema []FieldSchema) (string, error)
 	}
 
 	var columns []string
+	var primaryKeys []string
 
-	// Always add id as primary key
-	columns = append(columns, "id UUID PRIMARY KEY DEFAULT gen_random_uuid()")
+	// Check if any field is marked as primary
+	hasCustomPK := false
+	for _, field := range schema {
+		if field.IsPrimary {
+			hasCustomPK = true
+			primaryKeys = append(primaryKeys, field.Name)
+		}
+	}
+
+	// If no custom PK, and 'id' is not in schema, add default 'id'
+	foundIdInSchema := false
+	for _, field := range schema {
+		if field.Name == "id" {
+			foundIdInSchema = true
+			break
+		}
+	}
+
+	if !hasCustomPK && !foundIdInSchema {
+		columns = append(columns, "id UUID PRIMARY KEY DEFAULT gen_random_uuid()")
+	}
 
 	for _, field := range schema {
 		if !IsValidIdentifier(field.Name) {
@@ -80,8 +105,30 @@ func BuildCreateTableSQL(tableName string, schema []FieldSchema) (string, error)
 
 		col := fmt.Sprintf("%s %s", field.Name, pgType)
 
+		if field.IsPrimary && !strings.Contains(strings.Join(columns, ""), "PRIMARY KEY") {
+			// If it's the only PK or we use table-level PK for composite
+			// For now OzyBase supports single PK better in UI
+			if len(primaryKeys) == 1 {
+				col += " PRIMARY KEY"
+			}
+		}
+
 		if field.Required {
 			col += " NOT NULL"
+		}
+
+		if field.Unique {
+			col += " UNIQUE"
+		}
+
+		if field.References != "" {
+			refParts := strings.Split(field.References, ".")
+			if len(refParts) == 2 {
+				refTable, refCol := refParts[0], refParts[1]
+				if IsValidIdentifier(refTable) && IsValidIdentifier(refCol) {
+					col += fmt.Sprintf(" REFERENCES %s(%s) ON DELETE CASCADE", refTable, refCol)
+				}
+			}
 		}
 
 		if field.Default != nil {
@@ -397,5 +444,30 @@ func (db *DB) DeleteTable(ctx context.Context, tableName string) error {
 	// #nosec G201
 	sql := fmt.Sprintf("DROP TABLE IF EXISTS %s CASCADE", tableName)
 	_, err := db.Pool.Exec(ctx, sql)
+	return err
+}
+
+// EnableRLS enables Row Level Security on a table
+func (db *DB) EnableRLS(ctx context.Context, tx pgx.Tx, tableName string) error {
+	if !IsValidIdentifier(tableName) {
+		return fmt.Errorf("invalid table name")
+	}
+	// #nosec G201
+	_, err := tx.Exec(ctx, fmt.Sprintf("ALTER TABLE %s ENABLE ROW LEVEL SECURITY", tableName))
+	return err
+}
+
+// CreatePolicy creates a simple RLS policy.
+// For now, it target the 'auth.uid() = [column]' pattern.
+func (db *DB) CreatePolicy(ctx context.Context, tx pgx.Tx, tableName, policyName, rule string) error {
+	if !IsValidIdentifier(tableName) || !IsValidIdentifier(policyName) {
+		return fmt.Errorf("invalid identifiers")
+	}
+
+	// Supabase-like policy: CREATE POLICY [name] ON [table] USING ([rule])
+	// We allow SELECT, INSERT, UPDATE, DELETE for simplicity in this version
+	// #nosec G201
+	sql := fmt.Sprintf("CREATE POLICY %s ON %s FOR ALL USING (%s)", policyName, tableName, rule)
+	_, err := tx.Exec(ctx, sql)
 	return err
 }

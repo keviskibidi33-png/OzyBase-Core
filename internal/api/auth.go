@@ -12,12 +12,14 @@ import (
 
 type AuthService interface {
 	Signup(ctx context.Context, email, password string) (*core.User, error)
-	Login(ctx context.Context, email, password string) (string, *core.User, error)
+	Login(ctx context.Context, email, password string) (*core.AuthLoginResult, error)
 	RequestPasswordReset(ctx context.Context, email string) (string, error)
 	ConfirmPasswordReset(ctx context.Context, token, newPassword string) error
 	VerifyEmail(ctx context.Context, token string) error
 	UpdateUserRole(ctx context.Context, userID, newRole string) error
 	HandleOAuthLogin(ctx context.Context, provider, providerID, email string, data map[string]any) (string, *core.User, error)
+	ListSessions(ctx context.Context, userID string) ([]core.Session, error)
+	RevokeSession(ctx context.Context, sessionID, userID string) error
 }
 
 type AuthHandler struct {
@@ -65,14 +67,23 @@ func (h *AuthHandler) Login(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
 	}
 
-	token, user, err := h.authService.Login(c.Request().Context(), req.Email, req.Password)
+	result, err := h.authService.Login(c.Request().Context(), req.Email, req.Password)
 	if err != nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": err.Error()})
 	}
 
+	if result.MFARequired {
+		return c.JSON(http.StatusAccepted, map[string]any{
+			"mfa_required": true,
+			"mfa_store":    result.MFAStore,
+			"user":         result.User,
+			"message":      "2FA verification required",
+		})
+	}
+
 	return c.JSON(http.StatusOK, map[string]any{
-		"token": token,
-		"user":  user,
+		"token": result.Token,
+		"user":  result.User,
 	})
 }
 
@@ -192,4 +203,23 @@ func (h *AuthHandler) OAuthCallback(c echo.Context) error {
 		"token": token,
 		"user":  dbUser,
 	})
+}
+
+func (h *AuthHandler) ListSessions(c echo.Context) error {
+	userID := c.Get("user_id").(string)
+	sessions, err := h.authService.ListSessions(c.Request().Context(), userID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, sessions)
+}
+
+func (h *AuthHandler) RevokeSession(c echo.Context) error {
+	userID := c.Get("user_id").(string)
+	sessionID := c.Param("id")
+	err := h.authService.RevokeSession(c.Request().Context(), sessionID, userID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusNoContent)
 }

@@ -1,9 +1,11 @@
 export const fetchWithAuth = async (url, options = {}) => {
     const token = localStorage.getItem('ozy_token');
+    const workspaceId = localStorage.getItem('ozy_workspace_id');
 
     const headers = {
         'Content-Type': 'application/json',
         ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        ...(workspaceId ? { 'X-Workspace-Id': workspaceId } : {}),
         ...options.headers,
     };
 

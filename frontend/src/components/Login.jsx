@@ -11,6 +11,8 @@ const Login = ({ onLoginSuccess }) => {
     const [token, setToken] = useState('');
     const [newPassword, setNewPassword] = useState('');
     const [message, setMessage] = useState('');
+    const [mfaCode, setMfaCode] = useState('');
+    const [mfaUser, setMfaUser] = useState(null);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -27,10 +29,29 @@ const Login = ({ onLoginSuccess }) => {
                 });
 
                 const data = await res.json();
+                if (res.status === 202 && data.mfa_required) {
+                    setMfaUser(data.mfa_store); // Assuming backend sends userID in mfa_store
+                    setFlow('mfa');
+                    return;
+                }
+                
                 if (!res.ok) throw new Error(data.error || 'Login failed');
 
                 localStorage.setItem('ozy_token', data.token);
                 localStorage.setItem('ozy_user', JSON.stringify(data.user));
+                onLoginSuccess();
+            } else if (flow === 'mfa') {
+                const res = await fetch('/api/auth/2fa/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: mfaUser, code: mfaCode }),
+                });
+
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Verification failed');
+
+                localStorage.setItem('ozy_token', data.token);
+                localStorage.setItem('ozy_user', JSON.stringify(data.user)); // Backend should return user in verification too
                 onLoginSuccess();
             } else if (flow === 'request') {
                 const res = await fetch('/api/auth/reset-password/request', {
@@ -72,7 +93,7 @@ const Login = ({ onLoginSuccess }) => {
             } else {
                 setError("Failed to get auth URL");
             }
-        } catch (err) {
+        } catch {
             setError("OAuth initialization failed");
         }
     };
@@ -214,6 +235,34 @@ const Login = ({ onLoginSuccess }) => {
                             </>
                         )}
 
+                        {flow === 'mfa' && (
+                            <div className="space-y-4">
+                                <div className="text-center space-y-2">
+                                    <h3 className="text-sm font-bold text-white uppercase tracking-widest">Multi-Factor Authentication</h3>
+                                    <p className="text-[10px] text-zinc-500 font-medium">Please enter the 6-digit code from your authenticator app.</p>
+                                </div>
+                                <div className="relative group">
+                                    <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-600 transition-colors group-focus-within:text-primary" size={18} />
+                                    <input
+                                        type="text"
+                                        required
+                                        maxLength={6}
+                                        value={mfaCode}
+                                        onChange={(e) => setMfaCode(e.target.value)}
+                                        placeholder="000000"
+                                        className="w-full bg-[#111111] border border-[#2e2e2e] rounded-xl pl-12 pr-4 py-3 text-lg font-bold tracking-[0.5em] text-center text-primary placeholder:text-zinc-700 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all font-mono"
+                                    />
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setFlow('login')}
+                                    className="w-full text-[9px] font-black text-zinc-600 hover:text-primary transition-colors uppercase text-center"
+                                >
+                                    Cancel & Return
+                                </button>
+                            </div>
+                        )}
+
                         <button
                             type="submit"
                             disabled={loading}
@@ -223,7 +272,7 @@ const Login = ({ onLoginSuccess }) => {
                                 <Loader2 className="animate-spin" size={20} />
                             ) : (
                                 <>
-                                    {flow === 'login' ? 'Establish Link' : flow === 'request' ? 'Request Recovery' : 'Reset Identity'}
+                                    {flow === 'login' ? 'Establish Link' : flow === 'mfa' ? 'Verify Identity' : flow === 'request' ? 'Request Recovery' : 'Reset Identity'}
                                     <ArrowRight size={18} className="transition-transform group-hover:translate-x-1" />
                                 </>
                             )}

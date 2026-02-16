@@ -13,8 +13,10 @@ import {
     BadgeCheck,
     Mail,
     Activity,
-    User
+    User,
+    Search as SearchIcon
 } from 'lucide-react';
+import { fetchWithAuth } from '../utils/api';
 
 const AuthManager = () => {
     const [users, setUsers] = useState([]);
@@ -25,10 +27,13 @@ const AuthManager = () => {
         oauth: 0,
         rate: '99.9%'
     });
+    const [view, setView] = useState('users'); // 'users', 'sessions'
+    const [sessions, setSessions] = useState([]);
 
     useEffect(() => {
-        fetchUsers();
-    }, []);
+        if (view === 'users') fetchUsers();
+        else if (view === 'sessions') fetchSessions();
+    }, [view]);
 
     const handleRoleChange = async (userId, newRole) => {
         try {
@@ -74,6 +79,31 @@ const AuthManager = () => {
             console.error('Failed to fetch users:', error);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchSessions = async () => {
+        setLoading(true);
+        try {
+            const res = await fetchWithAuth('/api/auth/sessions'); // Assuming my backend implementation endpoint
+            const data = await res.json();
+            setSessions(data || []);
+        } catch (error) {
+            console.error('Failed to fetch sessions:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleRevokeSession = async (sessionId) => {
+        if (!confirm("Are you sure you want to terminate this session?")) return;
+        try {
+            const res = await fetchWithAuth(`/api/auth/sessions/${sessionId}`, { method: 'DELETE' });
+            if (res.ok) {
+                fetchSessions();
+            }
+        } catch (error) {
+            console.error('Revoke failed:', error);
         }
     };
 
@@ -129,25 +159,30 @@ const AuthManager = () => {
             <div className="p-8 flex-1 overflow-auto custom-scrollbar">
                 <div className="bg-[#111111] border border-[#2e2e2e] rounded-3xl overflow-hidden shadow-2xl">
                     <div className="px-6 py-4 border-b border-[#2e2e2e] bg-[#1a1a1a] flex items-center justify-between">
-                        <div className="flex gap-4">
-                            <div className="relative">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600" size={14} />
-                                <input
-                                    type="text"
-                                    placeholder="Find user by email or ID..."
-                                    className="bg-[#0c0c0c] border border-[#2e2e2e] rounded-xl pl-9 pr-6 py-2 text-xs text-zinc-300 focus:outline-none focus:border-primary/50 w-80 transition-all font-mono"
-                                />
-                            </div>
+                        <div className="flex gap-6">
+                            <button
+                                onClick={() => setView('users')}
+                                className={`text-[10px] font-black uppercase tracking-widest transition-all ${view === 'users' ? 'text-primary' : 'text-zinc-600 hover:text-zinc-400'}`}
+                            >
+                                User Accounts
+                            </button>
+                            <button
+                                onClick={() => setView('sessions')}
+                                className={`text-[10px] font-black uppercase tracking-widest transition-all ${view === 'sessions' ? 'text-primary' : 'text-zinc-600 hover:text-zinc-400'}`}
+                            >
+                                Active Sessions
+                            </button>
                         </div>
                         <button
-                            onClick={fetchUsers}
+                            onClick={view === 'users' ? fetchUsers : fetchSessions}
                             className="text-[10px] font-black uppercase text-zinc-500 hover:text-primary transition-colors"
                         >
                             Refresh Data
                         </button>
                     </div>
 
-                    <table className="w-full text-left">
+                    {view === 'users' ? (
+                        <table className="w-full text-left">
                         <thead>
                             <tr className="bg-[#0c0c0c] text-[10px] font-black uppercase tracking-[0.2em] text-zinc-600 border-b border-[#2e2e2e]">
                                 <th className="px-8 py-5">Identities</th>
@@ -217,6 +252,56 @@ const AuthManager = () => {
                             )}
                         </tbody>
                     </table>
+                    ) : (
+                    <table className="w-full text-left">
+                        <thead>
+                            <tr className="bg-[#0c0c0c] text-[10px] font-black uppercase tracking-[0.2em] text-zinc-600 border-b border-[#2e2e2e]">
+                                <th className="px-8 py-5">Session Info</th>
+                                <th className="px-8 py-5">Device / OS</th>
+                                <th className="px-8 py-5">IP Address</th>
+                                <th className="px-8 py-5">Last Active</th>
+                                <th className="px-8 py-5 text-right">Protection</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#2e2e2e]/50 text-zinc-400">
+                            {loading ? (
+                                <tr><td colSpan="5" className="px-8 py-10 text-center animate-pulse">Syncing sessions...</td></tr>
+                            ) : sessions.length === 0 ? (
+                                <tr><td colSpan="5" className="px-8 py-10 text-center text-zinc-600 uppercase text-[10px] font-black">No secondary sessions found</td></tr>
+                            ) : (
+                                sessions.map(s => (
+                                    <tr key={s.id} className="hover:bg-zinc-900/40 transition-colors group">
+                                        <td className="px-8 py-5">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-8 h-8 rounded bg-zinc-900 flex items-center justify-center text-zinc-600">
+                                                    <Activity size={14} />
+                                                </div>
+                                                <span className="text-xs font-bold text-zinc-200 uppercase tracking-tighter truncate max-w-[120px]">{s.id}</span>
+                                            </div>
+                                        </td>
+                                        <td className="px-8 py-5 text-[10px] font-bold text-zinc-500 uppercase truncate max-w-[200px]">
+                                            {s.user_agent || "Generic Agent / OzyBase CLI"}
+                                        </td>
+                                        <td className="px-8 py-5 font-mono text-xs text-zinc-500">
+                                            {s.ip_address}
+                                        </td>
+                                        <td className="px-8 py-5 text-[10px] font-black text-zinc-600 uppercase">
+                                            {new Date(s.last_used_at).toLocaleString()}
+                                        </td>
+                                        <td className="px-8 py-5 text-right">
+                                            <button 
+                                                onClick={() => handleRevokeSession(s.id)}
+                                                className="px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-500 text-[9px] font-black uppercase rounded hover:bg-red-500/20 transition-all opacity-0 group-hover:opacity-100"
+                                            >
+                                                Revoke
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
+                    )}
                 </div>
             </div>
         </div>

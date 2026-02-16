@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -97,6 +99,91 @@ func RLSMiddleware(db *data.DB) echo.MiddlewareFunc {
 
 			// Also wrap the Request Context
 			c.SetRequest(c.Request().WithContext(data.NewContext(c.Request().Context(), rlsCtx)))
+
+			return next(c)
+		}
+	}
+}
+
+// WorkspaceMiddleware ensures the user has access to the requested workspace
+func WorkspaceMiddleware(db *data.DB) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			workspaceID := c.Request().Header.Get("X-Workspace-Id")
+			if workspaceID == "" {
+				// We don't block if no workspace is provided (might be public or global API)
+				return next(c)
+			}
+
+			userID, _ := c.Get("user_id").(string)
+			if userID == "" {
+				// If not authenticated, they can't belong to a workspace
+				return next(c)
+			}
+
+			// Check membership
+			var role string
+			err := db.Pool.QueryRow(c.Request().Context(), `
+				SELECT role FROM _v_workspace_members
+				WHERE workspace_id = $1 AND user_id = $2
+			`, workspaceID, userID).Scan(&role)
+
+			if err != nil {
+				return c.JSON(http.StatusForbidden, map[string]string{"error": "access to this workspace is denied or workspace does not exist"})
+			}
+
+			// Inject workspace context
+			c.Set("workspace_id", workspaceID)
+			c.Set("workspace_role", role)
+
+			return next(c)
+		}
+	}
+}
+
+// APIKeyMiddleware validates OzyBase API keys (Enterprise Phase 1)
+func APIKeyMiddleware(db *data.DB) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// Skip if already authenticated by JWT
+			if c.Get("user_id") != nil {
+				return next(c)
+			}
+
+			key := c.Request().Header.Get("apikey")
+			if key == "" {
+				key = c.Request().Header.Get("X-Ozy-Key")
+			}
+
+			if key == "" {
+				return next(c) // Proceed for public routes or will fail in AccessMiddleware
+			}
+
+			// Validate Key
+			hash := sha256.Sum256([]byte(key))
+			keyHash := hex.EncodeToString(hash[:])
+
+			var role string
+			var id string
+			err := db.Pool.QueryRow(c.Request().Context(), `
+				UPDATE _v_api_keys 
+				SET last_used_at = NOW() 
+				WHERE key_hash = $1 AND is_active = true 
+				  AND (expires_at IS NULL OR expires_at > NOW())
+				RETURNING id, role
+			`, keyHash).Scan(&id, &role)
+
+			if err != nil {
+				// We don't block here, just don't set user context.
+				// AccessMiddleware will block if requirement is 'auth' or 'admin'
+				return next(c)
+			}
+
+			// Service roles are treated as admin if specifically configured,
+			// otherwise they are elevated system users.
+			c.Set("user_id", "api_key_"+id)
+			c.Set("role", role)
+			c.Set("is_api_key", true)
 
 			return next(c)
 		}

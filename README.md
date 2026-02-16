@@ -9,7 +9,7 @@
     <a href="https://goreportcard.com/report/github.com/Xangel0s/OzyBase"><img src="https://img.shields.io/badge/Go%20Report-A%2B-brightgreen.svg" alt="Go Report Card A+"></a>
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
     <a href="#"><img src="https://img.shields.io/badge/Single-Binary-blueviolet.svg" alt="Single Binary"></a>
-    <a href="#"><img src="https://img.shields.io/badge/v1.1.0-Enterprise-brightgreen.svg" alt="Version"></a>
+    <a href="#"><img src="https://img.shields.io/badge/v1.2.0-Enterprise-brightgreen.svg" alt="Version"></a>
   </p>
 </div>
 
@@ -21,13 +21,13 @@ OzyBase is a high-performance, single-binary BaaS that allows you to manage auth
 
 ### 📊 Comparative Performance
 
-| Metric | Supabase (Docker) | PocketBase | **OzyBase-Core** |
-|:---|:---:|:---:|:---:|
-| **Language** | Elixir/JS/Go | Go | **Go 🚀** |
-| **RAM at rest** | ~1.5 GB | ~20-50 MB | **< 30 MB ✅** |
-| **Binary size** | ~2 GB (Images) | ~40 MB | **< 15 MB 💎** |
-| **Database** | Postgres | SQLite | **Postgres (Native) 🐘** |
-| **Deployment** | Complex | Single Binary | **Single Binary 📦** |
+| Metric          | Supabase (Docker) |  PocketBase   |     **OzyBase-Core**     |
+| :-------------- | :---------------: | :-----------: | :----------------------: |
+| **Language**    |   Elixir/JS/Go    |      Go       |        **Go 🚀**         |
+| **RAM at rest** |      ~1.5 GB      |   ~20-50 MB   |      **< 30 MB ✅**      |
+| **Binary size** |  ~2 GB (Images)   |    ~40 MB     |      **< 15 MB 💎**      |
+| **Database**    |     Postgres      |    SQLite     | **Postgres (Native) 🐘** |
+| **Deployment**  |      Complex      | Single Binary |   **Single Binary 📦**   |
 
 ---
 
@@ -35,11 +35,14 @@ OzyBase is a high-performance, single-binary BaaS that allows you to manage auth
 
 OzyBase Core has evolved. The **v1.1.0-Enterprise** update brings mission-critical capabilities to your pocket backend:
 
-- **🔐 Native RLS Engine**: Real PostgreSQL **Row-Level Security** powered by JWT context. Enforce security policies directly in the database.
+- **🔐 Native RLS Engine**: Real PostgreSQL **Row-Level Security** with `auth.uid()` integration. Enforce security policies directly in the database.
+- **🏢 Multi-Tenancy (Workspaces)**: Complete isolation for projects with scoped collections, API keys, and configurations.
+- **🛡️ Security Depth**: Multi-Factor Authentication (MFA), Persistent Session Tracking, and Remote Revocation.
+- **📊 Advanced Observability**: Log Explorer with Trace ID tracking, Geolocation, and Donut charts for success rates.
 - **📂 Hybrid Storage**: Seamlessly switch between **Local Storage** and **S3-Compatible** backends (Minio, AWS, DigitalOcean).
 - **⚡ Distributed Realtime**: Real-time events synchronized across nodes via **Redis Pub/Sub** for horizontal scaling.
-- **📜 Ozy-Migrations**: Visual schema editor that automatically generates versioned SQL migrations and provides a `migrate-apply` CLI.
-- **📈 Prometheus Observability**: Built-in `/metrics` endpoint for real-time monitoring with Grafana.
+- **🧙 Table Creator 2.0**: UI-driven Foreign Keys, Custom Primary Keys, and Per-Table Realtime toggles.
+- **📈 Prometheus Observability**: Built-in `/metrics` endpoint (Go Stats + Custom Metrics) for real-time monitoring.
 - **🤝 OAuth & Social Sync**: Multi-provider support (GitHub & Google) out of the box with `goth`.
 
 ---
@@ -55,24 +58,30 @@ OzyBase Core has evolved. The **v1.1.0-Enterprise** update brings mission-critic
 ## 🚀 Quick Start (Production & Local)
 
 ### 1. Requirements
+
 OzyBase is **Install to Play**. You only need [Go 1.23+](https://go.dev/) if running from source, or download the binary for your platform.
 
 ### 2. Local Installation
+
 ```bash
 git clone https://github.com/Xangel0s/OzyBase
 cd OzyBase
 go run ./cmd/ozybase
 ```
-*The first run downloads the Embedded PostgreSQL engine (~20MB) and starts the Setup Wizard at `http://localhost:8090`.*
+
+_The first run downloads the Embedded PostgreSQL engine (~20MB) and starts the Setup Wizard at `http://localhost:8090`._
 
 ### 3. Docker Deployment (Recommended)
+
 ```bash
 docker pull xangel0s/ozybase:latest
 docker run -p 8090:8090 -v ozy_data:/app/data xangel0s/ozybase
 ```
-*Check our [Dockerfile](./Dockerfile) and [Deployment Guide](./docs/DEPLOYMENT.md) for advanced multi-node configurations.*
+
+_Check our [Dockerfile](./Dockerfile) and [Deployment Guide](./docs/DEPLOYMENT.md) for advanced multi-node configurations._
 
 ### 4. CLI Commands
+
 - `ozybase.exe reset-admin "newpassword"`: Reset access to the dashboard.
 - `ozybase.exe migrate-apply`: Sync pending SQL migrations from `./migrations`.
 - `ozybase.exe gen-types`: Export TypeScript interfaces from your DB.
@@ -84,15 +93,16 @@ docker run -p 8090:8090 -v ozy_data:/app/data xangel0s/ozybase
 Manage your data with a clean, Supabase-style interface:
 
 ```typescript
-import { createClient } from '@ozybase/sdk'
+import { createClient } from "@ozybase/sdk";
 
-const ozy = createClient('http://localhost:8090')
+const ozy = createClient("http://localhost:8090");
 
 // Realtime & Security in 3 lines
-ozy.from('orders')
-   .select('*')
-   .on('INSERT', (payload) => console.log(payload))
-   .subscribe()
+ozy
+  .from("orders")
+  .select("*")
+  .on("INSERT", (payload) => console.log(payload))
+  .subscribe();
 ```
 
 ---
@@ -100,7 +110,10 @@ ozy.from('orders')
 ## 🗺️ Roadmap & Community
 
 We are currently in **Fase 2: Management & Intelligence**.
-- [x] v1.1.0 Enterprise Readiness (RLS, S3, Redis).
+
+- [x] v1.2.0 Enterprise Readiness (Multi-Tenancy, MFA, Sessions, RLS).
+- [x] Advanced Observability & Audit Logs.
+- [x] Table Creator 2.0 (Relational Integrity).
 - [ ] **Ozy-AI**: Natural Language Querying (NLX) for SQL.
 - [ ] **Vector Support**: Native `pgvector` integration.
 - [ ] **MCP Implementation**: Context server for AI coding assistants.
@@ -108,6 +121,7 @@ We are currently in **Fase 2: Management & Intelligence**.
 ---
 
 ## 📚 Detailed Documentation
+
 - [🏗️ Full Roadmap & Status](./docs/ROADMAP.md)
 - [🛡️ Security Audit & Hardening](./docs/SECURITY_AUDIT.md)
 - [📦 Deployment & Multi-Arch Build](./docs/DEPLOYMENT.md)

@@ -117,14 +117,19 @@ func (db *DB) ListRecords(ctx context.Context, collectionName string, filters ma
 		}
 		qb.Paginate(limit, offset)
 
-		// 5. Execution - Count
-		importTime := time.Now()
-		countQuery, args := qb.BuildCount()
-		if err := tx.QueryRow(ctx, countQuery, args...).Scan(&result.Total); err != nil {
-			fmt.Printf("[DB ARCH] Count failed for %s: %v | Query: %s\n", collectionName, err, countQuery)
-			return err
+		// 5. Execution - Count (Optional for performance)
+		skipCount := filters["skip_count"] != nil
+		if !skipCount {
+			importTime := time.Now()
+			countQuery, args := qb.BuildCount()
+			if err := tx.QueryRow(ctx, countQuery, args...).Scan(&result.Total); err != nil {
+				fmt.Printf("[DB ARCH] Count failed for %s: %v | Query: %s\n", collectionName, err, countQuery)
+				return err
+			}
+			fmt.Printf("[PERF] %s: CountTime=%v\n", collectionName, time.Since(importTime))
+		} else {
+			result.Total = -1 // Indicator that count was skipped
 		}
-		countDuration := time.Since(importTime)
 
 		// 6. Execution - Data
 		dataTime := time.Now()
@@ -137,10 +142,7 @@ func (db *DB) ListRecords(ctx context.Context, collectionName string, filters ma
 		defer rows.Close()
 
 		result.Data, err = rowsToMaps(rows)
-		dataDuration := time.Since(dataTime)
-
-		fmt.Printf("[PERF] %s: Total=%d | DataCount=%d | CountTime=%v | DataTime=%v | Query=%s | Args=%v\n",
-			collectionName, result.Total, len(result.Data), countDuration, dataDuration, dataQuery, args)
+		fmt.Printf("[PERF] %s: DataTime=%v | DataCount=%d\n", collectionName, time.Since(dataTime), len(result.Data))
 
 		return err
 	})
@@ -247,38 +249,47 @@ func rowsToMaps(rows pgx.Rows) ([]map[string]any, error) {
 	return results, rows.Err()
 }
 
-// BulkInsertRecord inserts multiple records
+// BulkInsertRecord inserts multiple records using high-performance pgx.CopyFrom
 func (db *DB) BulkInsertRecord(ctx context.Context, collectionName string, records []map[string]any) error {
-	return db.WithTransactionAndRLS(ctx, func(tx pgx.Tx) error {
-		for _, data := range records {
-			var columns []string
-			var placeholders []string
-			var values []any
-			i := 1
-
-			for col, val := range data {
-				if !IsValidIdentifier(col) {
-					continue
-				}
-				if col == "id" || col == "created_at" || col == "updated_at" {
-					continue
-				}
-				columns = append(columns, col)
-				placeholders = append(placeholders, fmt.Sprintf("$%d", i))
-				values = append(values, val)
-				i++
-			}
-
-			if len(columns) == 0 {
-				continue
-			}
-			query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-				collectionName, strings.Join(columns, ", "), strings.Join(placeholders, ", "))
-			_, err := tx.Exec(ctx, query, values...)
-			if err != nil {
-				return err
-			}
-		}
+	if len(records) == 0 {
 		return nil
-	})
+	}
+
+	if !IsValidIdentifier(collectionName) {
+		return fmt.Errorf("invalid collection name: %s", collectionName)
+	}
+
+	// 1. Identify common columns (consistent across batch)
+	// We use the first record as a template
+	var columns []string
+	template := records[0]
+	for col := range template {
+		if !IsValidIdentifier(col) || col == "id" || col == "created_at" || col == "updated_at" {
+			continue
+		}
+		columns = append(columns, col)
+	}
+
+	if len(columns) == 0 {
+		return fmt.Errorf("no valid columns found for import")
+	}
+
+	// 2. Prepare data for CopyFrom
+	var rows [][]any
+	for _, data := range records {
+		var row []any
+		for _, col := range columns {
+			row = append(row, data[col])
+		}
+		rows = append(rows, row)
+	}
+
+	// 3. Execute CopyFrom
+	_, err := db.Pool.CopyFrom(
+		ctx,
+		pgx.Identifier{collectionName},
+		columns,
+		pgx.CopyFromRows(rows),
+	)
+	return err
 }

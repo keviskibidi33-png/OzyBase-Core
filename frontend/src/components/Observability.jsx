@@ -13,7 +13,7 @@ import {
     BarChart
 } from 'lucide-react';
 
-const Observability = () => {
+const Observability = ({ onViewSelect }) => {
     const [info, setInfo] = useState(null);
     const [logs, setLogs] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -144,7 +144,12 @@ const Observability = () => {
                             <Monitor size={16} className="text-zinc-500" />
                             <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white">Real-time Gateway Logs</h4>
                         </div>
-                        <button className="text-[9px] font-black uppercase text-primary tracking-widest hover:underline">View All Logs</button>
+                        <button 
+                            onClick={() => onViewSelect('logs')}
+                            className="text-[9px] font-black uppercase text-primary tracking-widest hover:underline"
+                        >
+                            View All Logs
+                        </button>
                     </div>
                     <div className="overflow-x-auto">
                         <table className="w-full text-left">

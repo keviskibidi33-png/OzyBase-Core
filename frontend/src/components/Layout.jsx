@@ -51,11 +51,14 @@ import ConnectionModal from './ConnectionModal';
 import NotificationCenter from './NotificationCenter';
 import AutoFixModal from './AutoFixModal';
 import ConfirmModal from './ConfirmModal';
+import WorkspaceSwitcher from './WorkspaceSwitcher';
 
-const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuViewSelect, tables = [], refreshTables }) => {
+const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuViewSelect, tables = [], refreshTables, onWorkspaceChange }) => {
     const [dbStatus, setDbStatus] = useState('Checking...');
-    const [user, setUser] = useState(null);
-    const [projectInfo, setProjectInfo] = useState(null);
+    const [user, setUser] = useState(() => {
+        const storedUser = localStorage.getItem('ozy_user');
+        return storedUser ? JSON.parse(storedUser) : null;
+    });
     const [isSidebarPinned, setIsSidebarPinned] = useState(false);
     const [isSidebarHovered, setIsSidebarHovered] = useState(false);
     const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false);
@@ -178,14 +181,11 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
             setIsBannerDismissed(false);
         }, 10 * 60 * 1000);
 
-        const storedUser = localStorage.getItem('ozy_user');
-        if (storedUser) setUser(JSON.parse(storedUser));
-
         return () => {
             clearInterval(healthInterval);
             clearInterval(bannerReminderInterval);
         };
-    }, []);
+    }, [refreshTables]);
 
     useEffect(() => {
         const handleClickOutside = (event) => {
@@ -468,6 +468,11 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
                                             <div className="flex items-center gap-3 truncate">
                                                 <Table2 size={14} className={selectedTable === t.name ? 'text-primary' : 'text-zinc-800 group-hover:text-zinc-500'} />
                                                 <span className="truncate">{t.name}</span>
+                                                {t.realtime_enabled && (
+                                                    <div className="flex items-center" title="Realtime Enabled">
+                                                        <Wifi size={10} className="text-primary animate-pulse" />
+                                                    </div>
+                                                )}
                                             </div>
                                             <div
                                                 onClick={(e) => handleDeleteTable(t.name, e)}
@@ -773,7 +778,7 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
                     <div className="flex items-center gap-2 text-[11px] font-bold tracking-tight">
                         <span className="text-zinc-600 hover:text-zinc-400 cursor-pointer transition-colors uppercase tracking-[0.1em]">OzyBase</span>
                         <span className="text-zinc-800 text-lg font-thin">/</span>
-                        <span className="text-zinc-600 hover:text-zinc-400 cursor-pointer transition-colors uppercase tracking-[0.1em]">{projectInfo?.database || 'Production'}</span>
+                        <WorkspaceSwitcher onWorkspaceChange={onWorkspaceChange} />
                         <span className="text-zinc-800 text-lg font-thin">/</span>
                         <span className="bg-zinc-900 text-primary border border-primary/20 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest shadow-[0_0_10px_rgba(254,254,0,0.05)]">
                             {selectedTable || selectedView}

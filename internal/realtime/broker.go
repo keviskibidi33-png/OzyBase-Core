@@ -4,10 +4,12 @@ import (
 	"sync"
 )
 
-// Event represents a realtime event data
+// Event represents a realtime event data matching Postgres trigger payload
 type Event struct {
-	Table string `json:"table"`
-	Data  any    `json:"data"`
+	Table  string `json:"table"`
+	Action string `json:"action"`
+	Record any    `json:"record"`
+	Old    any    `json:"old,omitempty"`
 }
 
 // Broker manages connected clients and broadcasts events

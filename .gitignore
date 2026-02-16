@@ -46,3 +46,9 @@ Thumbs.db
 
 # Embedded PostgreSQL Data
 ozy_data/
+
+# Server Logs
+*.log
+server_diag.log
+server_new.log
+server.log

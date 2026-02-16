@@ -2,12 +2,15 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -67,6 +70,7 @@ type Handler struct {
 	PubSub       realtime.PubSub
 	Migrations   *migrations.Generator
 	Applier      *migrations.Applier
+	StartTime    time.Time
 }
 
 // NewHandler creates a new Handler with the given dependencies
@@ -80,10 +84,9 @@ func NewHandler(db *data.DB, broker *realtime.Broker, webhooks *realtime.Webhook
 		RamHistory:      make([]float64, 60),
 		Logs:            make([]LogEntry, 0, 100),
 	}
-	// Start history rotator
+	// Start background workers
 	go m.rotateHistory(db)
-
-	return &Handler{
+	h := &Handler{
 		DB:           db,
 		Metrics:      m,
 		Broker:       broker,
@@ -95,13 +98,27 @@ func NewHandler(db *data.DB, broker *realtime.Broker, webhooks *realtime.Webhook
 		PubSub:       ps,
 		Migrations:   migrator,
 		Applier:      applier,
+		StartTime:    time.Now(),
 	}
+	go h.StartLogCleaner(context.Background())
+
+	return h
 }
 
-// AddLog adds a new log entry to the metrics
+// AddLog adds a new log entry to the metrics and updates counters
 func (m *Metrics) AddLog(entry LogEntry) {
 	m.Lock()
 	defer m.Unlock()
+
+	// Update counters based on path
+	path := strings.ToLower(entry.Path)
+	if strings.Contains(path, "/api/auth/") || strings.Contains(path, "/api/project/security") {
+		m.AuthRequests++
+	} else if strings.Contains(path, "/api/storage/") {
+		m.StorageRequests++
+	} else {
+		m.DbRequests++
+	}
 
 	// Prepend to show latest first
 	m.Logs = append([]LogEntry{entry}, m.Logs...)
@@ -145,6 +162,37 @@ func (m *Metrics) rotateHistory(db *data.DB) {
 		}
 
 		m.Unlock()
+	}
+}
+
+// StartLogCleaner removes logs older than 30 days every 24 hours
+func (h *Handler) StartLogCleaner(ctx context.Context) {
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	// Run once at startup
+	h.cleanOldLogs(ctx)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			h.cleanOldLogs(ctx)
+		}
+	}
+}
+
+func (h *Handler) cleanOldLogs(ctx context.Context) {
+	// 30 days retention
+	res, err := h.DB.Pool.Exec(ctx, "DELETE FROM _v_audit_logs WHERE created_at < NOW() - INTERVAL '30 days'")
+	if err != nil {
+		fmt.Printf("⚠️ [Log Cleaner] Failed to purge old logs: %v\n", err)
+		return
+	}
+	count := res.RowsAffected()
+	if count > 0 {
+		fmt.Printf("🧹 [Log Cleaner] Purged %d logs older than 30 days\n", count)
 	}
 }
 
@@ -352,6 +400,53 @@ func (h *Handler) GetLogs(c echo.Context) error {
 		"logs":        logs,
 		"server_time": time.Now().UTC(),
 	})
+}
+
+// ExportLogs handles GET /api/project/logs/export
+func (h *Handler) ExportLogs(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	// Fetch last 1000 logs for export
+	rows, err := h.DB.Pool.Query(ctx, `
+		SELECT created_at, method, path, status, latency_ms, ip_address, country, city, user_agent 
+		FROM _v_audit_logs 
+		ORDER BY created_at DESC 
+		LIMIT 1000
+	`)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	defer rows.Close()
+
+	var buf bytes.Buffer
+	writer := csv.NewWriter(&buf)
+
+	// Write header
+	_ = writer.Write([]string{"Timestamp", "Method", "Path", "Status", "Latency", "IP", "Country", "City", "UserAgent"})
+
+	for rows.Next() {
+		var createdAt time.Time
+		var method, path, ip, country, city, userAgent string
+		var status int
+		var latency int64
+		if err := rows.Scan(&createdAt, &method, &path, &status, &latency, &ip, &country, &city, &userAgent); err == nil {
+			_ = writer.Write([]string{
+				createdAt.Format(time.RFC3339),
+				method,
+				path,
+				strconv.Itoa(status),
+				fmt.Sprintf("%dms", latency),
+				ip,
+				country,
+				city,
+				userAgent,
+			})
+		}
+	}
+	writer.Flush()
+
+	c.Response().Header().Set(echo.HeaderContentDisposition, "attachment; filename=ozy_logs_export.csv")
+	return c.Blob(http.StatusOK, "text/csv", buf.Bytes())
 }
 
 // GetSecurityPolicies handles GET /api/project/security/policies

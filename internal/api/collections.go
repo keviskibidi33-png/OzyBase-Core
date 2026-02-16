@@ -10,31 +10,36 @@ import (
 	"time"
 
 	"github.com/Xangel0s/OzyBase/internal/data"
+	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 )
 
 // Collection represents a collection in the system
 type Collection struct {
-	ID         string             `json:"id"`
-	Name       string             `json:"name"`
-	IsSystem   bool               `json:"is_system"`
-	Schema     []data.FieldSchema `json:"schema"`
-	ListRule   string             `json:"list_rule"`
-	CreateRule string             `json:"create_rule"`
-	RlsEnabled bool               `json:"rls_enabled"`
-	RlsRule    string             `json:"rls_rule"`
-	CreatedAt  time.Time          `json:"created_at"`
-	UpdatedAt  time.Time          `json:"updated_at"`
+	ID              string             `json:"id"`
+	Name            string             `json:"name"`
+	IsSystem        bool               `json:"is_system"`
+	Schema          []data.FieldSchema `json:"schema"`
+	ListRule        string             `json:"list_rule"`
+	CreateRule      string             `json:"create_rule"`
+	RlsEnabled      bool               `json:"rls_enabled"`
+	RlsRule         string             `json:"rls_rule"`
+	RealtimeEnabled bool               `json:"realtime_enabled"`
+	WorkspaceID     string             `json:"workspace_id,omitempty"`
+	CreatedAt       time.Time          `json:"created_at"`
+	UpdatedAt       time.Time          `json:"updated_at"`
 }
 
 // CreateCollectionRequest represents the request to create a new collection
 type CreateCollectionRequest struct {
-	Name       string             `json:"name"`
-	Schema     []data.FieldSchema `json:"schema"`
-	ListRule   string             `json:"list_rule"`   // "public", "auth", "admin"
-	CreateRule string             `json:"create_rule"` // "auth", "admin"
-	RlsEnabled bool               `json:"rls_enabled"`
-	RlsRule    string             `json:"rls_rule"`
+	Name            string             `json:"name"`
+	Schema          []data.FieldSchema `json:"schema"`
+	ListRule        string             `json:"list_rule"`   // "public", "auth", "admin"
+	CreateRule      string             `json:"create_rule"` // "auth", "admin"
+	RlsEnabled      bool               `json:"rls_enabled"`
+	RlsRule         string             `json:"rls_rule"`
+	RealtimeEnabled bool               `json:"realtime_enabled"`
+	WorkspaceID     string             `json:"workspace_id"`
 }
 
 // CreateCollection handles POST /api/collections
@@ -86,17 +91,38 @@ func (h *Handler) CreateCollection(c echo.Context) error {
 		})
 	}
 
-	// Attach Realtime Trigger
-	triggerSQL := fmt.Sprintf(`
-		CREATE TRIGGER tr_notify_%s
-		AFTER INSERT OR UPDATE OR DELETE ON %s
-		FOR EACH ROW EXECUTE FUNCTION notify_event();
-	`, req.Name, req.Name)
+	// Attach Realtime Trigger IF ENABLED
+	var triggerSQL string
+	if req.RealtimeEnabled {
+		triggerSQL = fmt.Sprintf(`
+			CREATE TRIGGER tr_notify_%s
+			AFTER INSERT OR UPDATE OR DELETE ON %s
+			FOR EACH ROW EXECUTE FUNCTION notify_event();
+		`, req.Name, req.Name)
 
-	if _, err := tx.Exec(ctx, triggerSQL); err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{
-			"error": "Failed to attach realtime trigger: " + err.Error(),
-		})
+		if _, err := tx.Exec(ctx, triggerSQL); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{
+				"error": "Failed to attach realtime trigger: " + err.Error(),
+			})
+		}
+	}
+
+	// Native Postgres RLS Enforcement
+	if req.RlsEnabled {
+		if err := h.DB.EnableRLS(ctx, tx, req.Name); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{
+				"error": "Failed to enable native RLS: " + err.Error(),
+			})
+		}
+
+		if req.RlsRule != "" {
+			policyName := fmt.Sprintf("policy_ozy_%s", req.Name)
+			if err := h.DB.CreatePolicy(ctx, tx, req.Name, policyName, req.RlsRule); err != nil {
+				return c.JSON(http.StatusInternalServerError, map[string]string{
+					"error": "Failed to create RLS policy: " + err.Error(),
+				})
+			}
+		}
 	}
 
 	// Set defaults if empty
@@ -107,16 +133,23 @@ func (h *Handler) CreateCollection(c echo.Context) error {
 		req.CreateRule = "admin"
 	}
 
+	// Set Workspace from Context if missing
+	if req.WorkspaceID == "" {
+		if wsID, ok := c.Get("workspace_id").(string); ok {
+			req.WorkspaceID = wsID
+		}
+	}
+
 	// Store collection metadata
 	schemaJSON, _ := json.Marshal(req.Schema)
 	var collection Collection
 	err = tx.QueryRow(ctx, `
-		INSERT INTO _v_collections (name, schema_def, list_rule, create_rule, rls_enabled, rls_rule)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, name, list_rule, create_rule, rls_enabled, rls_rule, created_at, updated_at
-	`, req.Name, schemaJSON, req.ListRule, req.CreateRule, req.RlsEnabled, req.RlsRule).Scan(
+		INSERT INTO _v_collections (name, schema_def, list_rule, create_rule, rls_enabled, rls_rule, realtime_enabled, workspace_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, name, list_rule, create_rule, rls_enabled, rls_rule, realtime_enabled, workspace_id, created_at, updated_at
+	`, req.Name, schemaJSON, req.ListRule, req.CreateRule, req.RlsEnabled, req.RlsRule, req.RealtimeEnabled, req.WorkspaceID).Scan(
 		&collection.ID, &collection.Name, &collection.ListRule, &collection.CreateRule,
-		&collection.RlsEnabled, &collection.RlsRule, &collection.CreatedAt, &collection.UpdatedAt,
+		&collection.RlsEnabled, &collection.RlsRule, &collection.RealtimeEnabled, &collection.WorkspaceID, &collection.CreatedAt, &collection.UpdatedAt,
 	)
 
 	if err != nil {
@@ -133,7 +166,10 @@ func (h *Handler) CreateCollection(c echo.Context) error {
 	}
 
 	// 📜 Record Migration
-	fullMigrationSQL := fmt.Sprintf("%s\n\n%s", createSQL, triggerSQL)
+	fullMigrationSQL := createSQL
+	if triggerSQL != "" {
+		fullMigrationSQL += "\n\n" + triggerSQL
+	}
 	description := fmt.Sprintf("create_collection_%s", req.Name)
 	if _, err := h.Migrations.CreateMigration(description, fullMigrationSQL); err != nil {
 		log.Printf("⚠️ Warning: Failed to record migration: %v", err)
@@ -236,6 +272,56 @@ func (h *Handler) UpdateCollectionRules(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
 }
 
+// UpdateRealtimeToggle handles PATCH /api/collections/realtime
+func (h *Handler) UpdateRealtimeToggle(c echo.Context) error {
+	var req struct {
+		Name    string `json:"name"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return err
+	}
+
+	if !data.IsValidIdentifier(req.Name) {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid collection name"})
+	}
+
+	ctx := c.Request().Context()
+	tx, err := h.DB.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// 1. Update Metadata
+	_, err = tx.Exec(ctx, "UPDATE _v_collections SET realtime_enabled = $1 WHERE name = $2", req.Enabled, req.Name)
+	if err != nil {
+		return err
+	}
+
+	// 2. Manage Trigger
+	var triggerSQL string
+	if req.Enabled {
+		triggerSQL = fmt.Sprintf(`
+			CREATE TRIGGER tr_notify_%s
+			AFTER INSERT OR UPDATE OR DELETE ON %s
+			FOR EACH ROW EXECUTE FUNCTION notify_event();
+		`, req.Name, req.Name)
+	} else {
+		triggerSQL = fmt.Sprintf("DROP TRIGGER IF EXISTS tr_notify_%s ON %s", req.Name, req.Name)
+	}
+
+	if _, err := tx.Exec(ctx, triggerSQL); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update trigger: " + err.Error()})
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "updated", "realtime_enabled": fmt.Sprintf("%v", req.Enabled)})
+}
+
 // ListCollections handles GET /api/collections
 func (h *Handler) ListCollections(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
@@ -249,11 +335,17 @@ func (h *Handler) ListCollections(c echo.Context) error {
 		})
 	}
 
-	// Fetch metadata from _v_collections to match details
-	rows, err := h.DB.Pool.Query(ctx, `
-		SELECT name, schema_def, list_rule, create_rule, created_at, updated_at
-		FROM _v_collections
-	`)
+	// Fetch metadata from _v_collections scoped to workspace
+	workspaceID, _ := c.Get("workspace_id").(string)
+
+	query := "SELECT name, schema_def, list_rule, create_rule, created_at, updated_at, realtime_enabled, workspace_id FROM _v_collections"
+	var rows pgx.Rows
+	if workspaceID != "" {
+		query += " WHERE workspace_id = $1"
+		rows, err = h.DB.Pool.Query(ctx, query, workspaceID)
+	} else {
+		rows, err = h.DB.Pool.Query(ctx, query)
+	}
 
 	metaMap := make(map[string]Collection)
 	if err == nil {
@@ -261,7 +353,7 @@ func (h *Handler) ListCollections(c echo.Context) error {
 		for rows.Next() {
 			var col Collection
 			var schemaJSON []byte
-			if err := rows.Scan(&col.Name, &schemaJSON, &col.ListRule, &col.CreateRule, &col.CreatedAt, &col.UpdatedAt); err == nil {
+			if err := rows.Scan(&col.Name, &schemaJSON, &col.ListRule, &col.CreateRule, &col.CreatedAt, &col.UpdatedAt, &col.RealtimeEnabled, &col.WorkspaceID); err == nil {
 				if err := json.Unmarshal(schemaJSON, &col.Schema); err == nil {
 					metaMap[col.Name] = col
 				}

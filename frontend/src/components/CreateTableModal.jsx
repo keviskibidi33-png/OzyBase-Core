@@ -19,6 +19,20 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [csvRecords, setCsvRecords] = useState([]);
+    const [allTables, setAllTables] = useState([]); // For relations
+
+    React.useEffect(() => {
+        const fetchTables = async () => {
+            try {
+                const res = await fetchWithAuth('/api/collections');
+                if (res.ok) {
+                    const data = await res.json();
+                    setAllTables(data);
+                }
+            } catch (e) { console.error(e); }
+        };
+        if (isOpen) fetchTables();
+    }, [isOpen]);
 
     const handleCSVImport = (e) => {
         const file = e.target.files?.[0];
@@ -102,7 +116,15 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
     if (!isOpen) return null;
 
     const handleAddColumn = () => {
-        setColumns([...columns, { name: '', type: 'text', defaultValue: '', isPrimary: false }]);
+        setColumns([...columns, { 
+            name: '', 
+            type: 'text', 
+            defaultValue: '', 
+            isPrimary: false, 
+            unique: false, 
+            required: false, 
+            references: '' 
+        }]);
     };
 
     const handleRemoveColumn = (index) => {
@@ -124,7 +146,11 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
         const customColumns = columns.filter(c => !c.isSystem).map(c => ({
             name: c.name,
             type: c.type,
-            default: c.defaultValue || null
+            default: c.defaultValue || null,
+            required: !!c.required,
+            unique: !!c.unique,
+            is_primary: !!c.isPrimary,
+            references: c.references || null
         }));
 
         try {
@@ -134,7 +160,8 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
                     name,
                     schema: customColumns,
                     rls_enabled: isRLSEnabled,
-                    rls_rule: isRLSEnabled ? rlsRule : ''
+                    rls_rule: isRLSEnabled ? rlsRule : '',
+                    realtime_enabled: isRealtimeEnabled
                 })
             });
 
@@ -304,10 +331,13 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
                             {/* Header Row */}
                             <div className="grid grid-cols-12 gap-2 px-2 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
                                 <div className="col-span-1"></div>
-                                <div className="col-span-4">Name</div>
-                                <div className="col-span-3">Type</div>
-                                <div className="col-span-3">Default Value</div>
-                                <div className="col-span-1 text-center">Primary</div>
+                                <div className="col-span-3">Name</div>
+                                <div className="col-span-2">Type</div>
+                                <div className="col-span-2">Default Value</div>
+                                <div className="col-span-1 text-center">PK</div>
+                                <div className="col-span-1 text-center">UQ</div>
+                                <div className="col-span-1 text-center">NN</div>
+                                <div className="col-span-1 text-center">Rel</div>
                             </div>
 
                             {/* Column Rows */}
@@ -319,7 +349,7 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
                                             <div className="w-3 h-0.5 bg-current rounded-full"></div>
                                         </div>
                                     </div>
-                                    <div className="col-span-4 relative">
+                                    <div className="col-span-3 relative">
                                         <input
                                             type="text"
                                             value={col.name}
@@ -330,12 +360,12 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
                                         />
                                         {col.isSystem && <LinkIcon size={10} className="absolute right-0 top-1/2 -translate-y-1/2 text-zinc-600" />}
                                     </div>
-                                    <div className="col-span-3">
+                                    <div className="col-span-2">
                                         <select
                                             value={col.type}
                                             onChange={(e) => handleColumnChange(idx, 'type', e.target.value)}
                                             disabled={col.isSystem}
-                                            className={`w-full bg-[#111111] border border-[#2e2e2e] rounded px-2 py-1 text-[10px] text-zinc-300 focus:outline-none ${col.isSystem ? 'opacity-50' : ''}`}
+                                            className={`w-full bg-[#111111] border border-[#2e2e2e] rounded px-1 py-1 text-[10px] text-zinc-300 focus:outline-none ${col.isSystem ? 'opacity-50' : ''}`}
                                         >
                                             <option value="uuid">uuid</option>
                                             <option value="text">text</option>
@@ -343,30 +373,16 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
                                             <option value="int8">int8</option>
                                             <option value="int4">int4</option>
                                             <option value="int2">int2</option>
-                                            <option value="number">number (alias)</option>
                                             <option value="numeric">numeric</option>
                                             <option value="float8">float8</option>
-                                            <option value="float4">float4</option>
                                             <option value="bool">bool</option>
-                                            <option value="boolean">boolean (alias)</option>
-                                            <option value="timestamptz">timestamptz</option>
-                                            <option value="timestamp">timestamp</option>
+                                            <option value="timestamptz">timestampz</option>
                                             <option value="date">date</option>
-                                            <option value="time">time</option>
-                                            <option value="timetz">timetz</option>
-                                            <option value="interval">interval</option>
-                                            <option value="money">money</option>
                                             <option value="jsonb">jsonb</option>
-                                            <option value="json">json</option>
-                                            <option value="inet">inet (Networking)</option>
-                                            <option value="cidr">cidr (Networking)</option>
-                                            <option value="macaddr">macaddr (MAC Hardware)</option>
-                                            <option value="text_array">text[] (Array)</option>
-                                            <option value="int_array">int[] (Array)</option>
-                                            <option value="bytea">bytea (Binary)</option>
+                                            <option value="text_array">text[]</option>
                                         </select>
                                     </div>
-                                    <div className="col-span-3">
+                                    <div className="col-span-2">
                                         <input
                                             type="text"
                                             value={col.defaultValue || ''}
@@ -376,19 +392,59 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
                                             placeholder="NULL"
                                         />
                                     </div>
-                                    <div className="col-span-1 flex justify-center items-center gap-2">
-                                        {col.isPrimary ? (
-                                            <div className="bg-green-500/20 p-0.5 rounded">
-                                                <Check size={12} className="text-green-500" />
-                                            </div>
-                                        ) : (
-                                            !col.isSystem && (
-                                                <button onClick={() => handleRemoveColumn(idx)} className="text-zinc-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
-                                                    <X size={12} />
-                                                </button>
-                                            )
+                                    <div className="col-span-1 flex justify-center">
+                                        <input 
+                                            type="checkbox" 
+                                            checked={col.isPrimary} 
+                                            disabled={col.isSystem}
+                                            onChange={(e) => handleColumnChange(idx, 'isPrimary', e.target.checked)}
+                                            className="accent-primary"
+                                        />
+                                    </div>
+                                    <div className="col-span-1 flex justify-center">
+                                        <input 
+                                            type="checkbox" 
+                                            checked={col.unique} 
+                                            disabled={col.isSystem}
+                                            onChange={(e) => handleColumnChange(idx, 'unique', e.target.checked)}
+                                            className="accent-primary"
+                                        />
+                                    </div>
+                                    <div className="col-span-1 flex justify-center">
+                                        <input 
+                                            type="checkbox" 
+                                            checked={col.required} 
+                                            disabled={col.isSystem}
+                                            onChange={(e) => handleColumnChange(idx, 'required', e.target.checked)}
+                                            className="accent-primary"
+                                        />
+                                    </div>
+                                    <div className="col-span-1 flex justify-center items-center gap-1 group/rel relative">
+                                        {!col.isSystem && (
+                                            <button 
+                                                onClick={() => handleRemoveColumn(idx)} 
+                                                className="text-zinc-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 mr-1"
+                                                title="Remove Column"
+                                            >
+                                                <Trash2 size={12} />
+                                            </button>
                                         )}
-                                        {col.isSystem && <Settings size={12} className="text-zinc-700" />}
+                                        <LinkIcon 
+                                            size={14} 
+                                            className={`cursor-pointer hover:text-primary transition-colors ${col.references ? 'text-primary' : 'text-zinc-700'}`} 
+                                            title={col.references ? `Ref: ${col.references}` : "Add Relation"}
+                                            onClick={() => {
+                                                if (col.isSystem) return;
+                                                const suggestions = allTables.map(t => t.name).join(', ');
+                                                const refs = prompt(`Enter reference (table.column). \nExisting tables: ${suggestions}`, col.references || "");
+                                                if (refs !== null) handleColumnChange(idx, 'references', refs);
+                                            }}
+                                        />
+                                        {col.references && (
+                                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 bg-zinc-900 border border-zinc-800 text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover/rel:opacity-100 transition-opacity pointer-events-none whitespace-nowrap mb-1 z-10">
+                                                {col.references}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             ))}

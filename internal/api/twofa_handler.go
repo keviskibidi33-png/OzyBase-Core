@@ -8,11 +8,15 @@ import (
 )
 
 type TwoFactorHandler struct {
-	service *core.TwoFactorService
+	service     *core.TwoFactorService
+	authService *core.AuthService
 }
 
-func NewTwoFactorHandler(service *core.TwoFactorService) *TwoFactorHandler {
-	return &TwoFactorHandler{service: service}
+func NewTwoFactorHandler(service *core.TwoFactorService, authService *core.AuthService) *TwoFactorHandler {
+	return &TwoFactorHandler{
+		service:     service,
+		authService: authService,
+	}
 }
 
 // Setup2FA generates a new 2FA secret and QR code
@@ -98,5 +102,21 @@ func (h *TwoFactorHandler) Verify2FA(c echo.Context) error {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid code"})
 	}
 
-	return c.JSON(http.StatusOK, map[string]bool{"valid": true})
+	// Fetch user role for token generation
+	var role string
+	err = h.authService.DB().Pool.QueryRow(c.Request().Context(), "SELECT role FROM _v_users WHERE id = $1", req.UserID).Scan(&role)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "user not found"})
+	}
+
+	// Generate full JWT and Session
+	token, err := h.authService.GenerateTokenForUser(c.Request().Context(), req.UserID, role, c.RealIP(), c.Request().UserAgent(), true)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to generate token"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"token": token,
+		"valid": true,
+	})
 }

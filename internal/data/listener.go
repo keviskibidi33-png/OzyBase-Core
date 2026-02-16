@@ -47,10 +47,11 @@ func ListenDB(ctx context.Context, databaseURL string, broker *realtime.Broker) 
 			}
 
 			// Ideally the payload should contain info about which table it came from
-			// For now let's assume the trigger sends the whole record
 			broker.Broadcast(realtime.Event{
-				Table: "unknown", // We could improve the trigger to include table name
-				Data:  payload,
+				Table:  payload["table"].(string),
+				Action: payload["action"].(string),
+				Record: payload["record"],
+				Old:    payload["old"],
 			})
 		}
 	}

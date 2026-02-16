@@ -278,6 +278,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 	e.Use(api.SecurityHeadersDefault())
 	e.Use(middleware.BodyLimit(cfg.BodyLimit))
 	e.Use(api.PrometheusMiddleware()) // 📊 Stats
+	e.Use(api.APIKeyMiddleware(h.DB)) // 🔐 API Key Auth (Enterprise Phase 1)
 	e.Use(api.RLSMiddleware(h.DB))    // 🛡️ RLS Context Injection
 	e.Use(middleware.CSRFWithConfig(middleware.CSRFConfig{
 		TokenLookup: "header:X-CSRF-Token",
@@ -285,15 +286,14 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		CookieName:  "_ozy_csrf",
 		CookiePath:  "/",
 		Skipper: func(c echo.Context) bool {
-			// Skip CSRF for API requests with Bearer token (since they are already protected by JWT)
-			// or for specific public endpoints if needed.
+			// Skip CSRF for API requests with Bearer token or API keys
 			authHeader := c.Request().Header.Get("Authorization")
-			if strings.HasPrefix(authHeader, "Bearer ") {
+			if strings.HasPrefix(authHeader, "Bearer ") || c.Get("is_api_key") == true {
 				return true
 			}
 			// Skip CSRF for login endpoint
 			path := c.Request().URL.Path
-			if path == "/api/auth/login" || path == "/api/system/status" || path == "/api/system/setup" {
+			if path == "/api/auth/login" || path == "/api/system/status" || path == "/api/system/setup" || path == "/api/project/metrics" {
 				return true
 			}
 			return false
@@ -308,12 +308,14 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 	h.Auth = authService // Inject dependency for System Setup
 	authHandler := api.NewAuthHandler(authService)
 	twoFactorService := core.NewTwoFactorService(h.DB)
-	twoFactorHandler := api.NewTwoFactorHandler(twoFactorService)
+	twoFactorHandler := api.NewTwoFactorHandler(twoFactorService, authService)
 	realtimeHandler := api.NewRealtimeHandler(h.Broker)
 	fileHandler := api.NewFileHandler(h.DB, "./data/storage")
 	functionsHandler := api.NewFunctionsHandler(h.DB, "./functions")
 	webhookHandler := api.NewWebhookHandler(h.DB)
 	cronHandler := api.NewCronHandler(h.DB, cronMgr)
+	workspaceService := core.NewWorkspaceService(h.DB)
+	workspaceHandler := api.NewWorkspaceHandler(workspaceService)
 
 	// API Groups and Middlewares
 	authRequired := api.AuthMiddleware(cfg.JWTSecret, false)
@@ -325,10 +327,26 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 
 	apiGroup := e.Group("/api")
 	apiGroup.Use(api.MetricsMiddleware(h))
+	apiGroup.Use(api.WorkspaceMiddleware(h.DB)) // 🏢 Multi-Tenancy isolation
 	{
 		apiGroup.GET("/health", h.Health)
+		apiGroup.GET("/project/metrics", h.GetPrometheusMetrics) // 📊 Enterprise Phase 1
 		apiGroup.GET("/project/stats", h.GetStats, authRequired)
 		apiGroup.GET("/realtime", realtimeHandler.Stream)
+
+		// Workspaces
+		workspacesGroup := apiGroup.Group("/workspaces", authRequired)
+		workspacesGroup.POST("", workspaceHandler.Create)
+		workspacesGroup.GET("", workspaceHandler.List)
+
+		// ... (Auth/System/etc) ...
+
+		// API Keys (Enterprise Phase 1)
+		keysGroup := apiGroup.Group("/project/keys", authRequired)
+		keysGroup.GET("", h.ListAPIKeys)
+		keysGroup.POST("", h.CreateAPIKey)
+		keysGroup.DELETE("/:id", h.DeleteAPIKey)
+		keysGroup.PATCH("/:id/toggle", h.ToggleAPIKey)
 
 		// Auth
 		authGroup := apiGroup.Group("/auth")
@@ -343,6 +361,10 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		// Social Login
 		authGroup.GET("/login/:provider", authHandler.GetOAuthURL)
 		authGroup.GET("/callback/:provider", authHandler.OAuthCallback)
+
+		// Sessions (Enterprise Phase 2)
+		authGroup.GET("/sessions", authHandler.ListSessions, authRequired)
+		authGroup.DELETE("/sessions/:id", authHandler.RevokeSession, authRequired)
 
 		// System Setup (Public, but protected by logic inside)
 		apiGroup.GET("/system/status", h.GetSystemStatus)
@@ -375,6 +397,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		collectionsGroup.GET("/schemas", h.ListSchemas)
 		collectionsGroup.GET("/visualize", h.GetVisualizeSchema)
 		collectionsGroup.PATCH("/rules", h.UpdateCollectionRules)
+		collectionsGroup.PATCH("/realtime", h.UpdateRealtimeToggle)
 
 		// Tables (Alias for Frontend compatibility)
 		tablesGroup := apiGroup.Group("/tables", authRequired)
@@ -407,6 +430,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		// Security Dashboard Routes
 		apiGroup.POST("/project/health/fix", h.FixHealthIssues, authRequired)
 		apiGroup.GET("/project/logs", h.GetLogs, authRequired)
+		apiGroup.GET("/project/logs/export", h.ExportLogs, authRequired)
 		apiGroup.GET("/security/firewall", h.ListIPRules, authRequired)
 		apiGroup.POST("/security/firewall", h.CreateIPRule, authRequired)
 		apiGroup.DELETE("/security/firewall/:id", h.DeleteIPRule, authRequired)

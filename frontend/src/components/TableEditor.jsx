@@ -25,7 +25,9 @@ import {
     Layers,
     Cpu,
     Lock,
-    GripVertical
+    GripVertical,
+    Wifi,
+    Settings
 } from 'lucide-react';
 
 import AddRowModal from './AddRowModal';
@@ -81,6 +83,8 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
     const debouncedSearch = useDebounce(searchTerm, 500);
     const [confirmDeleteId, setConfirmDeleteId] = useState(null);
     const [alertMessage, setAlertMessage] = useState(null);
+    const [realtimeEnabled, setRealtimeEnabled] = useState(false);
+    const [isRealtimeLoading, setIsRealtimeLoading] = useState(false);
 
     // Pagination State
     const [pageSize, setPageSize] = useState(100);
@@ -158,9 +162,34 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
     useEffect(() => {
         if (tableName) {
             fetchData();
+            fetchRealtimeStatus();
             setEditingCell(null); // Clear editing state when table changes
         }
-    }, [tableName, fetchData]);
+    }, [tableName, fetchData, fetchRealtimeStatus]);
+
+    const fetchRealtimeStatus = useCallback(async () => {
+        if (!tableName) return;
+        try {
+            const res = await fetchWithAuth('/api/collections');
+            const collections = await res.json();
+            const current = collections.find(c => c.name === tableName);
+            if (current) setRealtimeEnabled(current.realtime_enabled);
+        } catch (e) { console.error(e); }
+    }, [tableName]);
+
+    const toggleRealtime = async () => {
+        setIsRealtimeLoading(true);
+        try {
+            const res = await fetchWithAuth('/api/collections/realtime', {
+                method: 'PATCH',
+                body: JSON.stringify({ name: tableName, enabled: !realtimeEnabled })
+            });
+            if (res.ok) {
+                setRealtimeEnabled(!realtimeEnabled);
+            }
+        } catch (e) { console.error(e); }
+        setIsRealtimeLoading(false);
+    };
 
     // --- Column Resize Handlers ---
     const handleResizeStart = (e, colName) => {
@@ -539,6 +568,21 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                     >
                         <Columns3 size={14} />
                         Columns
+                    </button>
+
+                    <div className="h-4 w-[1px] bg-[#2e2e2e] mx-2" />
+                    
+                    <button
+                        onClick={toggleRealtime}
+                        disabled={isRealtimeLoading || !tableName || tableName.startsWith('_v_')}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-[10px] font-black uppercase tracking-widest shrink-0 ${
+                            realtimeEnabled 
+                                ? 'bg-primary/10 border-primary/30 text-primary' 
+                                : 'bg-[#111111] border-[#2e2e2e] text-zinc-500 hover:text-zinc-300'
+                        } ${(isRealtimeLoading || tableName?.startsWith('_v_')) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                        <Wifi size={14} className={realtimeEnabled ? "animate-pulse" : ""} />
+                        Realtime {realtimeEnabled ? 'On' : 'Off'}
                     </button>
                 </div>
 

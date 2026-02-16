@@ -8,6 +8,11 @@ import (
 
 func (db *DB) RunMigrations(ctx context.Context) error {
 	migrations := []string{
+		`CREATE SCHEMA IF NOT EXISTS auth`,
+		`CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid AS $$
+			SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid;
+		$$ LANGUAGE SQL STABLE`,
+
 		// Internal schemas and tables
 		`CREATE TABLE IF NOT EXISTS _v_users (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -76,6 +81,7 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 			delete_rule VARCHAR(50) DEFAULT 'admin',
 			rls_enabled BOOLEAN DEFAULT FALSE,
 			rls_rule TEXT DEFAULT 'auth.uid() = owner_id',
+			realtime_enabled BOOLEAN DEFAULT FALSE,
 			created_at TIMESTAMPTZ DEFAULT NOW(),
 			updated_at TIMESTAMPTZ DEFAULT NOW()
 		)`,
@@ -107,6 +113,9 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 			user_agent TEXT,
 			created_at TIMESTAMPTZ DEFAULT NOW()
 		)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON _v_audit_logs(created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_status ON _v_audit_logs(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_path ON _v_audit_logs(path)`,
 
 		// IP Geolocation Cache
 		`CREATE TABLE IF NOT EXISTS _v_ip_geo (
@@ -242,6 +251,66 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS delete_rule VARCHAR(50) DEFAULT 'admin'`,
 		`ALTER TABLE _v_security_alerts ADD COLUMN IF NOT EXISTS message TEXT`,
 		`ALTER TABLE _v_security_alerts ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS realtime_enabled BOOLEAN DEFAULT FALSE`,
+
+		// API Keys (Enterprise Phase 1)
+		`CREATE TABLE IF NOT EXISTS _v_api_keys (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			name VARCHAR(255) NOT NULL,
+			key_hash TEXT UNIQUE NOT NULL,
+			prefix VARCHAR(10) NOT NULL, -- OZY_... for visibility
+			role VARCHAR(20) DEFAULT 'anon', -- 'anon' or 'service_role'
+			is_active BOOLEAN DEFAULT TRUE,
+			expires_at TIMESTAMPTZ,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			last_used_at TIMESTAMPTZ
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_keys_active ON _v_api_keys(is_active)`,
+
+		// Metrics Cache (Prometheus)
+		`CREATE TABLE IF NOT EXISTS _v_metrics_cache (
+			id VARCHAR(100) PRIMARY KEY,
+			value DOUBLE PRECISION NOT NULL,
+			labels JSONB DEFAULT '{}',
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+
+		// Workspaces (Enterprise Phase 2)
+		`CREATE TABLE IF NOT EXISTS _v_workspaces (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			name VARCHAR(255) NOT NULL,
+			slug VARCHAR(255) UNIQUE NOT NULL,
+			config JSONB DEFAULT '{}',
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+
+		// Workspace Membership
+		`CREATE TABLE IF NOT EXISTS _v_workspace_members (
+			workspace_id UUID REFERENCES _v_workspaces(id) ON DELETE CASCADE,
+			user_id UUID REFERENCES _v_users(id) ON DELETE CASCADE,
+			role VARCHAR(20) DEFAULT 'member', -- 'owner', 'admin', 'member', 'viewer'
+			joined_at TIMESTAMPTZ DEFAULT NOW(),
+			PRIMARY KEY (workspace_id, user_id)
+		)`,
+
+		// Session Tracking (Security Depth)
+		`CREATE TABLE IF NOT EXISTS _v_sessions (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id UUID REFERENCES _v_users(id) ON DELETE CASCADE,
+			token_hash TEXT UNIQUE NOT NULL,
+			ip_address VARCHAR(45),
+			user_agent TEXT,
+			is_mfa_verified BOOLEAN DEFAULT FALSE,
+			expires_at TIMESTAMPTZ NOT NULL,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			last_used_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_user ON _v_sessions(user_id)`,
+
+		// Scoping existing items to workspaces (Evolution)
+		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES _v_workspaces(id) ON DELETE CASCADE`,
+		`ALTER TABLE _v_api_keys ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES _v_workspaces(id) ON DELETE CASCADE`,
 	}
 
 	for i, migration := range migrations {
