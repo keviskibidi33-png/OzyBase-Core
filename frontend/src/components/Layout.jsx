@@ -55,7 +55,7 @@ import WorkspaceSwitcher from './WorkspaceSwitcher';
 
 const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuViewSelect, tables = [], refreshTables, onWorkspaceChange }) => {
     const [dbStatus, setDbStatus] = useState('Checking...');
-    const [user, setUser] = useState(() => {
+    const [user] = useState(() => {
         const storedUser = localStorage.getItem('ozy_user');
         return storedUser ? JSON.parse(storedUser) : null;
     });
@@ -141,11 +141,6 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
             .then(data => setDbStatus(data.database === 'connected' ? 'Connected' : 'Degraded'))
             .catch(() => setDbStatus('Disconnected'));
 
-        // Load Project Info
-        fetchWithAuth('/api/project/info')
-            .then(res => res.json())
-            .then(data => setProjectInfo(data))
-            .catch(err => console.error("Failed to load project info", err));
 
         // Load tables
         refreshTables();

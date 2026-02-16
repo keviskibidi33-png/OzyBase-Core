@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { fetchWithAuth } from '../utils/api';
 import {
     LayoutGrid,
     Globe,
@@ -34,6 +33,7 @@ const Integrations = ({ page = 'wrappers' }) => {
         if (page === 'cron') fetchCron();
         if (page === 'vault') fetchVault();
         if (page === 'wrappers') fetchWrappers();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [page]);
 
     const fetchWrappers = async () => {

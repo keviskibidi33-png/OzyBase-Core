@@ -286,44 +286,39 @@ func MetricsMiddleware(h *Handler) echo.MiddlewareFunc {
 
 			// Handle userID as UUID: convert "" to nil for Postgres safety
 			rawUserID := c.Get("user_id")
-			var userID any
+			var userIDPtr *string
 			if s, ok := rawUserID.(string); ok && s != "" {
-				userID = s
+				userIDPtr = &s
 			} else {
-				userID = nil
+				userIDPtr = nil
 			}
 
+			// 🚀 [Async Audit] Use the high-performance worker
 			go func() {
 				geo, _ := h.Geo.GetLocation(context.Background(), ip)
 
-				entry := LogEntry{
-					ID:        fmt.Sprintf("%d", time.Now().UTC().UnixNano()),
-					Time:      stop.Format("15:04:05"),
+				entry := data.AuditLog{
+					UserID:    userIDPtr,
+					IP:        ip,
 					Method:    c.Request().Method,
 					Path:      path,
 					Status:    status,
-					Latency:   fmt.Sprintf("%v", latency.Truncate(time.Millisecond)),
-					IP:        ip,
+					Latency:   latency.Milliseconds(),
 					Country:   geo.Country,
 					City:      geo.City,
-					Timestamp: stop,
+					UserAgent: c.Request().UserAgent(),
+					CreatedAt: stop,
 				}
-				h.Metrics.AddLog(entry)
+
+				// Push to non-blocking buffer
+				if h.Audit != nil {
+					h.Audit.Log(entry)
+				}
 
 				// Check for Geo Breach
 				isBreach, _ := h.Geo.CheckBreach(context.Background(), ip, geo.Country)
-
-				// Persist to DB with explicit timestamp to align with server_time
-				_, err := h.DB.Pool.Exec(context.Background(), `
-					INSERT INTO _v_audit_logs (user_id, ip_address, method, path, status, latency_ms, country, city, user_agent, created_at)
-					VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-				`, userID, ip, entry.Method, entry.Path, entry.Status, latency.Milliseconds(), geo.Country, geo.City, c.Request().UserAgent(), stop)
-
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "❌ [Audit Error] Failed to insert log: %v (Path: %s, User: %v)\n", err, path, userID)
-				}
-
 				if isBreach {
+					// ... existing logic ...
 					details, _ := json.Marshal(map[string]any{
 						"ip":      ip,
 						"country": geo.Country,

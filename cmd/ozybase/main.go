@@ -108,12 +108,17 @@ func run() error {
 	// Setup Mailer
 	mailSvc := mailer.NewLogMailer()
 
+	// 📝 Setup Audit Service (Go Best Practice: Async Logging)
+	auditService := core.NewAuditService(db)
+	auditService.Start()
+	defer auditService.Stop()
+
 	// 📜 Initialize Migrations Generator & Applier
 	migrator := migrations.NewGenerator("./migrations")
 	applier := migrations.NewApplier(db.Pool, "./migrations")
 
 	// Initialize Server Components
-	h := api.NewHandler(db, broker, dispatcher, mailSvc, storageSvc, ps, migrator, applier)
+	h := api.NewHandler(db, broker, dispatcher, mailSvc, storageSvc, ps, migrator, applier, auditService)
 
 	// Start Log Export Worker
 	go h.StartLogExporter(context.Background())

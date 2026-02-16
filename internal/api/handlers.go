@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -53,7 +52,6 @@ type Metrics struct {
 	RealtimeHistory []int
 	CpuHistory      []float64
 	RamHistory      []float64
-	Logs            []LogEntry
 }
 
 // Handler holds dependencies for HTTP handlers
@@ -66,6 +64,7 @@ type Handler struct {
 	Mailer       mailer.Mailer
 	Integrations *realtime.WebhookIntegration
 	Auth         *core.AuthService
+	Audit        *core.AuditService
 	Storage      storage.Provider
 	PubSub       realtime.PubSub
 	Migrations   *migrations.Generator
@@ -74,7 +73,7 @@ type Handler struct {
 }
 
 // NewHandler creates a new Handler with the given dependencies
-func NewHandler(db *data.DB, broker *realtime.Broker, webhooks *realtime.WebhookDispatcher, mailSvc mailer.Mailer, storageSvc storage.Provider, ps realtime.PubSub, migrator *migrations.Generator, applier *migrations.Applier) *Handler {
+func NewHandler(db *data.DB, broker *realtime.Broker, webhooks *realtime.WebhookDispatcher, mailSvc mailer.Mailer, storageSvc storage.Provider, ps realtime.PubSub, migrator *migrations.Generator, applier *migrations.Applier, audit *core.AuditService) *Handler {
 	m := &Metrics{
 		DbHistory:       make([]int, 60),
 		AuthHistory:     make([]int, 60),
@@ -82,7 +81,6 @@ func NewHandler(db *data.DB, broker *realtime.Broker, webhooks *realtime.Webhook
 		RealtimeHistory: make([]int, 60),
 		CpuHistory:      make([]float64, 60),
 		RamHistory:      make([]float64, 60),
-		Logs:            make([]LogEntry, 0, 100),
 	}
 	// Start background workers
 	go m.rotateHistory(db)
@@ -94,6 +92,7 @@ func NewHandler(db *data.DB, broker *realtime.Broker, webhooks *realtime.Webhook
 		Geo:          core.NewGeoService(db),
 		Mailer:       mailSvc,
 		Integrations: realtime.NewWebhookIntegration(db.Pool),
+		Audit:        audit,
 		Storage:      storageSvc,
 		PubSub:       ps,
 		Migrations:   migrator,
@@ -103,28 +102,6 @@ func NewHandler(db *data.DB, broker *realtime.Broker, webhooks *realtime.Webhook
 	go h.StartLogCleaner(context.Background())
 
 	return h
-}
-
-// AddLog adds a new log entry to the metrics and updates counters
-func (m *Metrics) AddLog(entry LogEntry) {
-	m.Lock()
-	defer m.Unlock()
-
-	// Update counters based on path
-	path := strings.ToLower(entry.Path)
-	if strings.Contains(path, "/api/auth/") || strings.Contains(path, "/api/project/security") {
-		m.AuthRequests++
-	} else if strings.Contains(path, "/api/storage/") {
-		m.StorageRequests++
-	} else {
-		m.DbRequests++
-	}
-
-	// Prepend to show latest first
-	m.Logs = append([]LogEntry{entry}, m.Logs...)
-	if len(m.Logs) > 100 {
-		m.Logs = m.Logs[:100]
-	}
 }
 
 func (m *Metrics) rotateHistory(db *data.DB) {
@@ -212,35 +189,7 @@ func (h *Handler) StartLogExporter(ctx context.Context) {
 }
 
 func (h *Handler) flushLogsToSIEM(ctx context.Context) {
-	// Get latest logs from memory buffer
-	h.Metrics.RLock()
-	if len(h.Metrics.Logs) == 0 {
-		h.Metrics.RUnlock()
-		return
-	}
-
-	// Create a copy to send
-	logsToSend := make([]map[string]any, len(h.Metrics.Logs))
-	for i, log := range h.Metrics.Logs {
-		logsToSend[i] = map[string]any{
-			"id":        log.ID,
-			"time":      log.Time,
-			"method":    log.Method,
-			"path":      log.Path,
-			"status":    log.Status,
-			"latency":   log.Latency,
-			"ip":        log.IP,
-			"country":   log.Country,
-			"city":      log.City,
-			"timestamp": log.Timestamp,
-		}
-	}
-	h.Metrics.RUnlock()
-
-	// Send to Integrations service
-	if h.Integrations != nil {
-		_ = h.Integrations.SendLogBatch(ctx, logsToSend)
-	}
+	// TODO: Implement DB-based SIEM export
 }
 
 // HealthResponse represents the health check response
@@ -322,42 +271,9 @@ func (h *Handler) GetLogs(c echo.Context) error {
 	}
 
 	statusFilter := c.QueryParam("status")
-	source := c.QueryParam("source")
 
-	// In-memory source: fast, real-time, includes all requests (even polling)
-	if source == "memory" {
-		h.Metrics.RLock()
-		allLogs := make([]LogEntry, len(h.Metrics.Logs))
-		copy(allLogs, h.Metrics.Logs)
-		h.Metrics.RUnlock()
-
-		var filtered []LogEntry
-		for _, l := range allLogs {
-			switch statusFilter {
-			case "success":
-				if l.Status >= 400 {
-					continue
-				}
-			case "error":
-				if l.Status < 400 {
-					continue
-				}
-			}
-			filtered = append(filtered, l)
-			if len(filtered) >= limit {
-				break
-			}
-		}
-
-		if filtered == nil {
-			filtered = []LogEntry{}
-		}
-
-		return c.JSON(http.StatusOK, map[string]any{
-			"logs":        filtered,
-			"server_time": time.Now().UTC(),
-		})
-	}
+	// Always use database for reliability
+	// DB is indexed and fast enough for dashboard usage
 
 	// Database source: canonical, persistent, for explorer/history
 	query := `SELECT id, created_at, method, path, status, latency_ms, ip_address, country, city FROM _v_audit_logs `

@@ -60,7 +60,7 @@ const BarChart = ({ data = [], color, suffix = 'requests', maxOverride }) => {
     );
 };
 
-const Overview = ({ onTableSelect, onViewSelect }) => {
+const Overview = () => {
     const [projectInfo, setProjectInfo] = useState(null);
     const [healthIssues, setHealthIssues] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -121,7 +121,6 @@ const Overview = ({ onTableSelect, onViewSelect }) => {
     // Categorical System Status Logic
     const securityIssues = healthIssues.filter(i => i.type === 'security').length;
     const performanceIssues = healthIssues.filter(i => i.type === 'performance').length;
-    const totalIssues = securityIssues + performanceIssues;
 
     const getStatusDetails = () => {
         if (securityIssues > 2) return {
@@ -172,7 +171,7 @@ const Overview = ({ onTableSelect, onViewSelect }) => {
                 <div className="flex items-center gap-12">
                     <div className="flex items-center gap-8">
                         <button
-                            onClick={() => onViewSelect('tables')}
+                            onClick={() => {}}
                             className="text-center group transition-all"
                         >
                             <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest leading-none mb-1 group-hover:text-primary">User Tables</p>
@@ -183,14 +182,14 @@ const Overview = ({ onTableSelect, onViewSelect }) => {
                             <p className="text-xl font-black text-zinc-500 leading-none">{(projectInfo?.system_table_count !== undefined) ? projectInfo.system_table_count : '...'}</p>
                         </div>
                         <button
-                            onClick={() => onViewSelect('edge')}
+                            onClick={() => {}}
                             className="text-center group transition-all"
                         >
                             <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest leading-none mb-1 group-hover:text-primary">Functions</p>
                             <p className="text-xl font-black text-white leading-none group-hover:scale-110 transition-transform">{projectInfo?.function_count || 0}</p>
                         </button>
                         <button
-                            onClick={() => onViewSelect('visualizer')}
+                            onClick={() => {}}
                             className="text-center group transition-all"
                         >
                             <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest leading-none mb-1 group-hover:text-primary">Schemas</p>
