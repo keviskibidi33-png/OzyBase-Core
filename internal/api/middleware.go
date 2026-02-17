@@ -106,7 +106,7 @@ func RLSMiddleware(db *data.DB) echo.MiddlewareFunc {
 }
 
 // WorkspaceMiddleware ensures the user has access to the requested workspace
-func WorkspaceMiddleware(db *data.DB) echo.MiddlewareFunc {
+func WorkspaceMiddleware(db *data.DB, jwtSecret string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			workspaceID := c.Request().Header.Get("X-Workspace-Id")
@@ -115,9 +115,33 @@ func WorkspaceMiddleware(db *data.DB) echo.MiddlewareFunc {
 				return next(c)
 			}
 
+			// Try to get user_id from context first (set by APIKeyMiddleware)
 			userID, _ := c.Get("user_id").(string)
+
+			// If not set yet, extract directly from JWT (runs before authRequired)
 			if userID == "" {
-				// If not authenticated, they can't belong to a workspace
+				authHeader := c.Request().Header.Get("Authorization")
+				tokenParts := strings.Split(authHeader, " ")
+				if len(tokenParts) == 2 && strings.ToLower(tokenParts[0]) == "bearer" {
+					token, err := jwt.Parse(tokenParts[1], func(token *jwt.Token) (any, error) {
+						if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+							return nil, fmt.Errorf("unexpected signing method")
+						}
+						return []byte(jwtSecret), nil
+					})
+					if err == nil && token.Valid {
+						if claims, ok := token.Claims.(jwt.MapClaims); ok {
+							if uid, ok := claims["user_id"].(string); ok {
+								userID = uid
+							}
+						}
+					}
+				}
+			}
+
+			if userID == "" {
+				// If still not authenticated, they can't belong to a workspace
+				// Let downstream authRequired handle the 401
 				return next(c)
 			}
 

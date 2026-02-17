@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/Xangel0s/OzyBase/internal/data"
-	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 )
 
@@ -338,14 +337,9 @@ func (h *Handler) ListCollections(c echo.Context) error {
 	// Fetch metadata from _v_collections scoped to workspace
 	workspaceID, _ := c.Get("workspace_id").(string)
 
+	// Fetch metadata for ALL collections to correctly identify and hide tables from other workspaces
 	query := "SELECT name, schema_def, list_rule, create_rule, created_at, updated_at, realtime_enabled, workspace_id FROM _v_collections"
-	var rows pgx.Rows
-	if workspaceID != "" {
-		query += " WHERE workspace_id = $1"
-		rows, err = h.DB.Pool.Query(ctx, query, workspaceID)
-	} else {
-		rows, err = h.DB.Pool.Query(ctx, query)
-	}
+	rows, err := h.DB.Pool.Query(ctx, query)
 
 	metaMap := make(map[string]Collection)
 	if err == nil {
@@ -353,7 +347,11 @@ func (h *Handler) ListCollections(c echo.Context) error {
 		for rows.Next() {
 			var col Collection
 			var schemaJSON []byte
-			if err := rows.Scan(&col.Name, &schemaJSON, &col.ListRule, &col.CreateRule, &col.CreatedAt, &col.UpdatedAt, &col.RealtimeEnabled, &col.WorkspaceID); err == nil {
+			var wsID *string
+			if err := rows.Scan(&col.Name, &schemaJSON, &col.ListRule, &col.CreateRule, &col.CreatedAt, &col.UpdatedAt, &col.RealtimeEnabled, &wsID); err == nil {
+				if wsID != nil {
+					col.WorkspaceID = *wsID
+				}
 				if err := json.Unmarshal(schemaJSON, &col.Schema); err == nil {
 					metaMap[col.Name] = col
 				}
@@ -369,16 +367,31 @@ func (h *Handler) ListCollections(c echo.Context) error {
 		isSystem := strings.HasPrefix(lowerName, "_v_") || strings.HasPrefix(lowerName, "_ozy_")
 
 		if meta, ok := metaMap[tableName]; ok {
+			// If the table is managed by OzyBase:
+			// 1. If it belongs to the current workspace, show it.
+			// 2. If it belongs to ANOTHER workspace, HIDE it.
+			// 3. If it has no workspace (shared/global), show it.
+
+			if workspaceID != "" && meta.WorkspaceID != "" && meta.WorkspaceID != workspaceID {
+				// belongs to another workspace -> Skip
+				continue
+			}
+
 			meta.IsSystem = isSystem
 			result = append(result, meta)
 		} else {
-			// Basic entry for non-OzyBase managed tables or system tables
+			// Non-managed tables: tables in the physical DB but not in _v_collections
+			// When a workspace IS selected, only show system tables (admin needs them)
+			// Hide non-system unmanaged tables to enforce strict workspace isolation
+			if workspaceID != "" && !isSystem {
+				continue
+			}
 			result = append(result, Collection{
 				Name:       tableName,
 				IsSystem:   isSystem,
 				ListRule:   "public",
 				CreateRule: "admin",
-				Schema:     []data.FieldSchema{}, // Will be filled by dynamic introspection on select
+				Schema:     []data.FieldSchema{},
 			})
 		}
 	}

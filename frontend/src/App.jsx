@@ -1,4 +1,4 @@
-import React, { useState, useEffect, lazy, Suspense } from 'react'
+import React, { useState, useEffect, lazy, Suspense, useCallback } from 'react'
 import Layout from './components/Layout'
 import Login from './components/Login'
 import { fetchWithAuth } from './utils/api'
@@ -26,6 +26,8 @@ const TwoFactorAuth = lazy(() => import('./components/TwoFactorAuth'));
 const IntegrationsManager = lazy(() => import('./components/IntegrationsManager'));
 const SetupWizard = lazy(() => import('./components/SetupWizard'));
 const FirewallManager = lazy(() => import('./components/FirewallManager'));
+const WorkspaceManager = lazy(() => import('./components/WorkspaceManager'));
+const WorkspaceSettings = lazy(() => import('./components/WorkspaceSettings'));
 
 function App() {
     const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('ozy_token'));
@@ -36,21 +38,14 @@ function App() {
     const [tables, setTables] = useState([]);
     const [workspaceId, setWorkspaceId] = useState(localStorage.getItem('ozy_workspace_id'));
 
-    useEffect(() => {
-        checkSystemStatus();
-        if (isAuthenticated) {
-            loadTables();
-        }
-    }, [isAuthenticated, workspaceId]);
-
-    const loadTables = () => {
+    const loadTables = useCallback(() => {
         fetchWithAuth('/api/collections')
             .then(res => res.json())
             .then(data => setTables(Array.isArray(data) ? data : []))
             .catch(err => console.error("Failed to load tables", err));
-    };
+    }, []);
 
-    const checkSystemStatus = async () => {
+    const checkSystemStatus = useCallback(async () => {
         try {
             const res = await fetch('/api/system/status');
             if (res.ok) {
@@ -62,7 +57,14 @@ function App() {
         } finally {
             setCheckingSystem(false);
         }
-    };
+    }, []);
+
+    useEffect(() => {
+        checkSystemStatus();
+        if (isAuthenticated) {
+            loadTables();
+        }
+    }, [isAuthenticated, workspaceId, loadTables, checkSystemStatus]);
 
     useEffect(() => {
         const urlParams = new URLSearchParams(window.location.search);
@@ -71,6 +73,15 @@ function App() {
             localStorage.setItem('ozy_token', token);
             window.history.replaceState({}, document.title, window.location.pathname);
             setIsAuthenticated(true);
+        }
+    }, []);
+
+    const handleTableSelect = useCallback((tableName) => {
+        setSelectedTable(tableName);
+        if (tableName === '__visualizer__' || tableName === '__visualizer_system__') {
+            setSelectedView('visualizer');
+        } else if (tableName) {
+            setSelectedView('table');
         }
     }, []);
 
@@ -91,15 +102,6 @@ function App() {
     if (!isAuthenticated) {
         return <Login onLoginSuccess={() => setIsAuthenticated(true)} />;
     }
-
-    const handleTableSelect = (tableName) => {
-        setSelectedTable(tableName);
-        if (tableName === '__visualizer__' || tableName === '__visualizer_system__') {
-            setSelectedView('visualizer');
-        } else {
-            setSelectedView('table');
-        }
-    };
 
     const renderView = () => {
         switch (selectedView) {
@@ -174,6 +176,16 @@ function App() {
             case 'vault':
             case 'graphql':
                 return <Integrations page={selectedView === 'integrations' ? 'wrappers' : selectedView} />;
+            case 'workspaces':
+            case 'wm_overview':
+            case 'wm_shared':
+            case 'wm_templates':
+                return <WorkspaceManager onWorkspaceChange={(id) => setWorkspaceId(id)} onViewSelect={setSelectedView} view={selectedView.startsWith('wm_') ? selectedView : 'wm_overview'} />;
+            case 'workspace_settings':
+            case 'ws_general':
+            case 'ws_members':
+            case 'ws_danger':
+                return <WorkspaceSettings workspaceId={workspaceId} view={selectedView.startsWith('ws_') ? selectedView : 'ws_general'} />;
             default: return <Overview onTableSelect={handleTableSelect} />;
         }
     };
@@ -202,7 +214,7 @@ function App() {
                 {renderView()}
             </Suspense>
         </Layout>
-    )
+    );
 }
 
-export default App
+export default App;

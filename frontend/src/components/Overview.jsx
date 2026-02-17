@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Database,
     Zap,
@@ -25,7 +25,7 @@ const BarChart = ({ data = [], color, suffix = 'requests', maxOverride }) => {
     const [hoveredIndex, setHoveredIndex] = useState(null);
 
     // Scale data to fit 0-100% height
-    const maxVal = maxOverride || Math.max(...data, 10);
+    const maxVal = maxOverride || Math.max(...(Array.isArray(data) ? data : [0]), 10);
     const chartData = data && data.length > 0 ? data : new Array(12).fill(0);
 
     return (
@@ -69,6 +69,30 @@ const Overview = () => {
     const [showTimeMenu, setShowTimeMenu] = useState(false);
     const [showStatusMenu, setShowStatusMenu] = useState(false);
 
+    const loadData = useCallback(async () => {
+        try {
+            // Fetch project info and health issues in parallel
+            const [infoRes, healthRes] = await Promise.all([
+                fetchWithAuth('/api/project/info'),
+                fetchWithAuth('/api/project/health')
+            ]);
+
+            if (infoRes.ok) {
+                const info = await infoRes.json();
+                setProjectInfo(info);
+            }
+
+            if (healthRes.ok) {
+                const health = await healthRes.json();
+                setHealthIssues(Array.isArray(health) ? health : []);
+            }
+        } catch (err) {
+            console.error('Failed to load overview data:', err);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
     // Close menus on outside click
     useEffect(() => {
         const handleOutsideClick = () => {
@@ -82,47 +106,15 @@ const Overview = () => {
     }, [showTimeMenu, showStatusMenu]);
 
     useEffect(() => {
-        const loadData = async () => {
-            try {
-                // Fetch project info and health issues in parallel
-                const [infoRes, healthRes] = await Promise.all([
-                    fetchWithAuth('/api/project/info'),
-                    fetchWithAuth('/api/project/health')
-                ]);
-
-                if (infoRes.ok) {
-                    const info = await infoRes.json();
-                    setProjectInfo(info);
-                }
-
-                if (healthRes.ok) {
-                    const health = await healthRes.json();
-                    setHealthIssues(health);
-                }
-            } catch (err) {
-                console.error('Failed to load overview data:', err);
-            } finally {
-                setLoading(false);
-            }
-        };
         loadData();
         const interval = setInterval(loadData, 5000);
         return () => clearInterval(interval);
-    }, []);
+    }, [loadData]);
 
-    if (loading) {
-        return (
-            <div className="flex items-center justify-center h-full bg-[#111111]">
-                <Loader2 className="animate-spin text-primary" size={32} />
-            </div>
-        );
-    }
+    const securityIssues = useMemo(() => healthIssues.filter(i => i.type === 'security').length, [healthIssues]);
+    const performanceIssues = useMemo(() => healthIssues.filter(i => i.type === 'performance').length, [healthIssues]);
 
-    // Categorical System Status Logic
-    const securityIssues = healthIssues.filter(i => i.type === 'security').length;
-    const performanceIssues = healthIssues.filter(i => i.type === 'performance').length;
-
-    const getStatusDetails = () => {
+    const status = useMemo(() => {
         if (securityIssues > 2) return {
             label: 'VULNERABILITY DETECTED',
             color: 'bg-red-500',
@@ -151,9 +143,7 @@ const Overview = () => {
             desc: 'All core modules are performing within nominal parameters. System environment is stable.',
             type: 'estable'
         };
-    };
-
-    const status = getStatusDetails();
+    }, [securityIssues, performanceIssues, projectInfo]);
 
     return (
         <div className="flex flex-col h-full bg-[#111111] animate-in fade-in duration-500 overflow-y-auto custom-scrollbar p-10 font-sans">

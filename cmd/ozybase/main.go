@@ -298,7 +298,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 			}
 			// Skip CSRF for login endpoint
 			path := c.Request().URL.Path
-			if path == "/api/auth/login" || path == "/api/system/status" || path == "/api/system/setup" || path == "/api/project/metrics" {
+			if path == "/api/auth/login" || path == "/api/auth/signup" || path == "/api/system/status" || path == "/api/system/setup" || path == "/api/project/metrics" {
 				return true
 			}
 			return false
@@ -307,7 +307,14 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 
 	// Services and Handlers
 	// Setup Mailer
-	mailSvc := mailer.NewLogMailer()
+	var mailSvc mailer.Mailer
+	if cfg.SMTPHost != "" {
+		mailSvc = mailer.NewSMTPMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.SMTPFrom)
+		logger.Log.Info().Msg("📧 SMTP Mailer initialized")
+	} else {
+		mailSvc = mailer.NewLogMailer()
+		logger.Log.Info().Msg("📝 Log Mailer initialized (console only)")
+	}
 
 	authService := core.NewAuthService(h.DB, cfg.JWTSecret, mailSvc)
 	h.Auth = authService // Inject dependency for System Setup
@@ -320,7 +327,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 	webhookHandler := api.NewWebhookHandler(h.DB)
 	cronHandler := api.NewCronHandler(h.DB, cronMgr)
 	workspaceService := core.NewWorkspaceService(h.DB)
-	workspaceHandler := api.NewWorkspaceHandler(workspaceService)
+	workspaceHandler := api.NewWorkspaceHandler(workspaceService, mailSvc)
 
 	// API Groups and Middlewares
 	authRequired := api.AuthMiddleware(cfg.JWTSecret, false)
@@ -332,7 +339,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 
 	apiGroup := e.Group("/api")
 	apiGroup.Use(api.MetricsMiddleware(h))
-	apiGroup.Use(api.WorkspaceMiddleware(h.DB)) // 🏢 Multi-Tenancy isolation
+	apiGroup.Use(api.WorkspaceMiddleware(h.DB, cfg.JWTSecret)) // 🏢 Multi-Tenancy isolation
 	{
 		apiGroup.GET("/health", h.Health)
 		apiGroup.GET("/project/metrics", h.GetPrometheusMetrics) // 📊 Enterprise Phase 1
@@ -343,6 +350,11 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		workspacesGroup := apiGroup.Group("/workspaces", authRequired)
 		workspacesGroup.POST("", workspaceHandler.Create)
 		workspacesGroup.GET("", workspaceHandler.List)
+		workspacesGroup.PATCH("/:id", workspaceHandler.Update)
+		workspacesGroup.DELETE("/:id", workspaceHandler.Delete)
+		workspacesGroup.GET("/:id/members", workspaceHandler.ListMembers)
+		workspacesGroup.POST("/:id/members", workspaceHandler.AddMember)
+		workspacesGroup.DELETE("/:id/members/:userId", workspaceHandler.RemoveMember)
 
 		// ... (Auth/System/etc) ...
 

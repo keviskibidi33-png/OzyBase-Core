@@ -37,13 +37,8 @@ const AuthManager = () => {
 
     const handleRoleChange = async (userId, newRole) => {
         try {
-            const token = localStorage.getItem('ozy_token');
-            const res = await fetch(`/api/auth/users/${userId}/role`, {
+            const res = await fetchWithAuth(`/api/auth/users/${userId}/role`, {
                 method: 'PATCH',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
                 body: JSON.stringify({ role: newRole })
             });
             if (res.ok) {
@@ -60,12 +55,7 @@ const AuthManager = () => {
     const fetchUsers = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('ozy_token');
-            const res = await fetch('/api/tables/users?limit=1000', {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
+            const res = await fetchWithAuth('/api/tables/users?limit=1000');
             const result = await res.json();
             const usersList = result.data || [];
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Shield, Globe, MapPin, AlertTriangle, CheckCircle,
     TrendingUp, ShieldAlert, Activity, RefreshCw,
@@ -12,25 +12,34 @@ const SecurityDashboard = () => {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
 
-    const fetchData = async () => {
-        setRefreshing(true);
+    const fetchData = useCallback(async (isAutoRefresh = false) => {
+        if (!isAutoRefresh) setRefreshing(true);
         try {
             const res = await fetchWithAuth('/api/project/security/stats');
-            const data = await res.json();
-            setStats(data);
+            if (res.ok) {
+                const data = await res.json();
+                setStats(data);
+            }
         } catch (error) {
             console.error("Failed to fetch security stats", error);
         } finally {
             setLoading(false);
             setRefreshing(false);
         }
-    };
+    }, []);
 
     useEffect(() => {
         fetchData();
-        const interval = setInterval(fetchData, 30000); // 30s refresh
+        const interval = setInterval(() => fetchData(true), 30000); // 30s refresh
         return () => clearInterval(interval);
-    }, []);
+    }, [fetchData]);
+
+    const statsGrid = useMemo(() => [
+        { label: 'Total Checks', value: stats?.total_checks || 0, icon: Activity, color: 'text-blue-500', bg: 'bg-blue-500/10' },
+        { label: 'Blocked Threats', value: stats?.blocked_requests || 0, icon: ShieldAlert, color: 'text-red-500', bg: 'bg-red-500/10' },
+        { label: 'Health Score', value: '98%', icon: ShieldCheck, color: 'text-green-500', bg: 'bg-green-500/10' },
+        { label: 'Last Breach', value: stats?.last_breach_at ? new Date(stats.last_breach_at).toLocaleTimeString() : 'Never', icon: Zap, color: 'text-amber-500', bg: 'bg-amber-500/10' },
+    ], [stats]);
 
     if (loading) return (
         <div className="flex flex-col items-center justify-center h-full gap-4 text-zinc-500">
@@ -62,7 +71,7 @@ const SecurityDashboard = () => {
                     </div>
                 </div>
                 <button
-                    onClick={fetchData}
+                    onClick={() => fetchData()}
                     className={`p-3 bg-zinc-900 border border-[#2e2e2e] rounded-xl hover:border-primary/50 transition-all ${refreshing ? 'animate-spin' : ''}`}
                 >
                     <RefreshCw size={18} className="text-zinc-400" />
@@ -71,12 +80,7 @@ const SecurityDashboard = () => {
 
             {/* Quick Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {[
-                    { label: 'Total Checks', value: stats.total_checks, icon: Activity, color: 'text-blue-500', bg: 'bg-blue-500/10' },
-                    { label: 'Blocked Threats', value: stats.blocked_requests, icon: ShieldAlert, color: 'text-red-500', bg: 'bg-red-500/10' },
-                    { label: 'Health Score', value: '98%', icon: ShieldCheck, color: 'text-green-500', bg: 'bg-green-500/10' },
-                    { label: 'Last Breach', value: stats.last_breach_at ? new Date(stats.last_breach_at).toLocaleTimeString() : 'Never', icon: Zap, color: 'text-amber-500', bg: 'bg-amber-500/10' },
-                ].map((s, i) => (
+                {statsGrid.map((s, i) => (
                     <div key={i} className="p-6 bg-[#111111] border border-[#2e2e2e] rounded-3xl group hover:border-primary/20 transition-all relative overflow-hidden">
                         <div className={`absolute -right-4 -top-4 w-24 h-24 blur-3xl opacity-20 ${s.bg}`} />
                         <div className="relative flex items-center justify-between mb-4">

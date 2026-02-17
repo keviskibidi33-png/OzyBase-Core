@@ -12,13 +12,17 @@ import (
 )
 
 type Config struct {
-	DatabaseURL    string
-	Port           string
-	JWTSecret      string
-	AllowedOrigins []string
+	DatabaseURL string
+	Port        string
+	JWTSecret   string
+
+	// Security & Domains
+	AppDomain      string
+	SiteURL        string
 	RateLimitRPS   float64
 	RateLimitBurst int
 	BodyLimit      string
+	AllowedOrigins []string
 
 	// Storage
 	StorageProvider string
@@ -33,6 +37,13 @@ type Config struct {
 	RedisAddr      string
 	RedisPassword  string
 	RedisDB        int
+
+	// SMTP
+	SMTPHost string
+	SMTPPort string
+	SMTPUser string
+	SMTPPass string
+	SMTPFrom string
 }
 
 func Load() (*Config, error) {
@@ -67,7 +78,18 @@ func Load() (*Config, error) {
 		jwtSecret = getOrGenerateSecret()
 	}
 
-	origins := strings.Split(getEnv("ALLOWED_ORIGINS", "*"), ",")
+	siteURL := getEnv("SITE_URL", "http://localhost:8090")
+	appDomain := getEnv("APP_DOMAIN", "localhost")
+
+	originsStr := getEnv("ALLOWED_ORIGINS", "")
+	var origins []string
+	if originsStr == "" {
+		// Default to SiteURL + AppDomain variations if not specified
+		origins = []string{"http://localhost:5342", "http://localhost:3000", siteURL}
+	} else {
+		origins = strings.Split(originsStr, ",")
+	}
+
 	rps, _ := strconv.ParseFloat(getEnv("RATE_LIMIT_RPS", "20"), 64)
 	burst, _ := strconv.Atoi(getEnv("RATE_LIMIT_BURST", "20"))
 
@@ -77,6 +99,8 @@ func Load() (*Config, error) {
 		DatabaseURL:    dbURL,
 		Port:           getEnv("PORT", "8090"),
 		JWTSecret:      jwtSecret,
+		AppDomain:      appDomain,
+		SiteURL:        siteURL,
 		AllowedOrigins: origins,
 		RateLimitRPS:   rps,
 		RateLimitBurst: burst,
@@ -95,6 +119,13 @@ func Load() (*Config, error) {
 		RedisAddr:      os.Getenv("REDIS_ADDR"),
 		RedisPassword:  os.Getenv("REDIS_PASSWORD"),
 		RedisDB:        redisDB,
+
+		// SMTP
+		SMTPHost: os.Getenv("SMTP_HOST"),
+		SMTPPort: getEnv("SMTP_PORT", "587"),
+		SMTPUser: os.Getenv("SMTP_USER"),
+		SMTPPass: os.Getenv("SMTP_PASSWORD"),
+		SMTPFrom: os.Getenv("SMTP_FROM"),
 	}
 
 	return cfg, nil

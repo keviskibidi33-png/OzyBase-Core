@@ -3,7 +3,7 @@ import {
     ShieldCheck, Zap, Server, Globe, Lock,
     CheckCircle, ArrowRight, Database, Loader2
 } from 'lucide-react';
-import { fetchWithAuth } from '../utils/api';
+
 
 const SetupWizard = ({ onComplete }) => {
     const [step, setStep] = useState(1);

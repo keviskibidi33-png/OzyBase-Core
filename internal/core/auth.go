@@ -126,10 +126,16 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*AuthL
 }
 
 func (s *AuthService) generateToken(userID, role string) (string, error) {
+	// Generate a unique ID for this token to prevent collisions if generated in same second
+	b := make([]byte, 16)
+	rand.Read(b)
+	jti := hex.EncodeToString(b)
+
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"user_id": userID,
 		"role":    role,
 		"exp":     time.Now().Add(time.Hour * 72).Unix(),
+		"jti":     jti,
 	})
 
 	return token.SignedString([]byte(s.jwtSecret))

@@ -42,7 +42,9 @@ import {
     Server,
     Check,
     Trash2,
-    ShieldBan
+    ShieldBan,
+    AlertTriangle,
+    Briefcase
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
 
@@ -52,6 +54,95 @@ import NotificationCenter from './NotificationCenter';
 import AutoFixModal from './AutoFixModal';
 import ConfirmModal from './ConfirmModal';
 import WorkspaceSwitcher from './WorkspaceSwitcher';
+const PRIMARY_NAV = [
+    { id: 'overview', icon: Home, label: 'Home' },
+    { id: 'tables', icon: Table2, label: 'Table Editor' },
+    { id: 'database', icon: Database, label: 'Database' },
+    { id: 'sql', icon: Terminal, label: 'SQL Editor' },
+    { type: 'separator' },
+    { id: 'auth', icon: Lock, label: 'Authentication' },
+    { id: 'storage', icon: FolderOpen, label: 'Storage' },
+    { id: 'edge', icon: Zap, label: 'Edge Functions' },
+    { id: 'realtime', icon: MousePointer2, label: 'Realtime' },
+    { type: 'separator' },
+    { id: 'advisors', icon: Lightbulb, label: 'Advisors' },
+    { id: 'observability', icon: Telescope, label: 'Observability' },
+    { id: 'logs', icon: List, label: 'Logs' },
+    { id: 'docs', icon: FileText, label: 'API Docs' },
+    { id: 'integrations', icon: LayoutGrid, label: 'Integrations' },
+];
+
+const SUBMENUS = {
+    auth: [
+        { id: 'users', name: 'Users', icon: Users },
+        { id: 'providers', name: 'Providers', icon: Key },
+        { id: 'policies', name: 'Permissions', icon: Shield },
+        { id: 'two_factor', name: '2FA Settings', icon: ShieldCheck },
+        { id: 'security', name: 'Security Hub', icon: ShieldAlert },
+        { id: 'security_policies', name: 'Geo-Fencing', icon: Globe },
+        { id: 'firewall', name: 'IP Firewall', icon: ShieldBan },
+        { id: 'security_notifications', name: 'Alert Notifications', icon: Bell },
+        { id: 'integrations', name: 'Integrations & SIEM', icon: Activity },
+        { id: 'templates', name: 'Email Templates', icon: FileText },
+        { id: 'auth_settings', name: 'Auth Settings', icon: Settings }
+    ],
+    storage: [
+        { id: 'buckets', name: 'Buckets', icon: FolderOpen },
+        { id: 'storage_policies', name: 'Policies', icon: Shield },
+        { id: 'usage', name: 'Usage', icon: Activity },
+        { id: 'storage_settings', name: 'Settings', icon: Settings }
+    ],
+    edge: [
+        { id: 'functions', name: 'Functions', icon: Code },
+        { id: 'deployments', name: 'Deployments', icon: Zap },
+        { id: 'secrets', name: 'Env Variables', icon: Key },
+        { id: 'edge_logs', name: 'Edge Logs', icon: List }
+    ],
+    realtime: [
+        { id: 'inspector', name: 'Inspector', icon: Search },
+        { id: 'channels', name: 'Channels', icon: Activity },
+        { id: 'config', name: 'Configuration', icon: Settings }
+    ],
+    logs: [
+        { id: 'explorer', name: 'Log Explorer', icon: Search },
+        { id: 'live', name: 'Live Tail', icon: Activity },
+        { id: 'alerts', name: 'Security Alerts', icon: Bell },
+        { id: 'metrics', name: 'Traffic Analysis', icon: BarChart }
+    ],
+    docs: [
+        { id: 'intro', name: 'Getting Started', icon: Home },
+        { id: 'auth_api', name: 'Authentication', icon: Lock },
+        { id: 'db_api', name: 'Database & SQL', icon: Database },
+        { id: 'storage_api', name: 'Storage', icon: FolderOpen },
+        { id: 'realtime_api', name: 'Realtime', icon: MousePointer2 },
+        { id: 'edge_api', name: 'Edge Functions', icon: Zap },
+        { id: 'sdk', name: 'Client SDKs', icon: Code }
+    ],
+    settings: [
+        { id: 'general', name: 'General', icon: Settings },
+        { id: 'infrastructure', name: 'Infrastructure', icon: Server },
+        { id: 'billing', name: 'Billing', icon: CreditCard },
+        { id: 'api_keys', name: 'API Keys', icon: Key }
+    ],
+    integrations: [
+        { id: 'wrappers', name: 'Wrappers', icon: Globe },
+        { id: 'webhooks', name: 'Webhooks', icon: Zap },
+        { id: 'cron', name: 'Cron Jobs', icon: History },
+        { id: 'extensions', name: 'PG Extensions', icon: Cpu },
+        { id: 'vault', name: 'Vault', icon: Shield },
+        { id: 'graphql', name: 'GraphQL', icon: Code }
+    ],
+    workspace_settings: [
+        { id: 'ws_general', name: 'General', icon: Settings },
+        { id: 'ws_members', name: 'Team Members', icon: Users },
+        { id: 'ws_danger', name: 'Danger Zone', icon: AlertTriangle }
+    ],
+    workspaces: [
+        { id: 'wm_overview', name: 'My Projects', icon: Briefcase },
+        { id: 'wm_shared', name: 'Shared with me', icon: Users },
+        { id: 'wm_templates', name: 'Templates', icon: LayoutGrid }
+    ]
+};
 
 const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuViewSelect, tables = [], refreshTables, onWorkspaceChange }) => {
     const [dbStatus, setDbStatus] = useState('Checking...');
@@ -103,17 +194,17 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
         return { filteredUserTables: user, filteredSystemTables: system };
     }, [tables, explorerSearchTerm]);
 
-    const showToast = (message, type = 'success') => {
+    const showToast = React.useCallback((message, type = 'success') => {
         setToast({ message, type });
         setTimeout(() => setToast(null), 5000);
-    };
+    }, []);
 
-    const handleDeleteTable = (tableName, e) => {
+    const handleDeleteTable = React.useCallback((tableName, e) => {
         e.stopPropagation();
         setConfirmDeleteTable(tableName);
-    };
+    }, []);
 
-    const confirmTableDeletion = async () => {
+    const confirmTableDeletion = React.useCallback(async () => {
         const tableName = confirmDeleteTable;
         try {
             const res = await fetchWithAuth(`/api/collections/${tableName}`, {
@@ -132,7 +223,7 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
             console.error(err);
             showToast('Network error', 'error');
         }
-    };
+    }, [confirmDeleteTable, refreshTables, selectedTable, onTableSelect, showToast]);
 
     useEffect(() => {
         // Status check
@@ -200,7 +291,7 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
         };
     }, [isNotificationOpen, isUserDropdownOpen]);
 
-    const handleApplyFix = async (issue) => {
+    const handleApplyFix = React.useCallback(async (issue) => {
         try {
             const res = await fetchWithAuth('/api/project/health/fix', {
                 method: 'POST',
@@ -223,31 +314,15 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
             console.error(error);
             showToast('Network error or server unavailable', 'error');
         }
-    };
+    }, [showToast]);
 
-    const handleLogout = () => {
+    const handleLogout = React.useCallback(() => {
         localStorage.removeItem('ozy_token');
         localStorage.removeItem('ozy_user');
         window.location.reload();
-    };
+    }, []);
 
-    const primaryNav = [
-        { id: 'overview', icon: Home, label: 'Home' },
-        { id: 'tables', icon: Table2, label: 'Table Editor' },
-        { id: 'database', icon: Database, label: 'Database' },
-        { id: 'sql', icon: Terminal, label: 'SQL Editor' },
-        { type: 'separator' },
-        { id: 'auth', icon: Lock, label: 'Authentication' },
-        { id: 'storage', icon: FolderOpen, label: 'Storage' },
-        { id: 'edge', icon: Zap, label: 'Edge Functions' },
-        { id: 'realtime', icon: MousePointer2, label: 'Realtime' },
-        { type: 'separator' },
-        { id: 'advisors', icon: Lightbulb, label: 'Advisors' },
-        { id: 'observability', icon: Telescope, label: 'Observability' },
-        { id: 'logs', icon: List, label: 'Logs' },
-        { id: 'docs', icon: FileText, label: 'API Docs' },
-        { id: 'integrations', icon: LayoutGrid, label: 'Integrations' },
-    ];
+
 
     const isExpanded = isSidebarPinned || isSidebarHovered;
 
@@ -266,70 +341,10 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
         if (['intro', 'auth_api', 'db_api', 'storage_api', 'realtime_api', 'edge_api', 'sdk'].includes(selectedView)) currentModule = 'docs';
         if (['wrappers', 'webhooks', 'cron', 'extensions', 'vault', 'graphql'].includes(selectedView)) currentModule = 'integrations';
         if (['general', 'infrastructure', 'billing', 'api_keys'].includes(selectedView)) currentModule = 'settings';
+        if (['ws_general', 'ws_members', 'ws_danger'].includes(selectedView)) currentModule = 'workspace_settings';
+        if (['wm_overview', 'wm_shared', 'wm_templates'].includes(selectedView)) currentModule = 'workspaces';
 
-        const submenus = {
-            auth: [
-                { id: 'users', name: 'Users', icon: Users },
-                { id: 'providers', name: 'Providers', icon: Key },
-                { id: 'policies', name: 'Permissions', icon: Shield },
-                { id: 'two_factor', name: '2FA Settings', icon: ShieldCheck },
-                { id: 'security', name: 'Security Hub', icon: ShieldAlert },
-                { id: 'security_policies', name: 'Geo-Fencing', icon: Globe },
-                { id: 'firewall', name: 'IP Firewall', icon: ShieldBan },
-                { id: 'security_notifications', name: 'Alert Notifications', icon: Bell },
-                { id: 'integrations', name: 'Integrations & SIEM', icon: Activity },
-                { id: 'templates', name: 'Email Templates', icon: FileText },
-                { id: 'auth_settings', name: 'Auth Settings', icon: Settings }
-            ],
-            storage: [
-                { id: 'buckets', name: 'Buckets', icon: FolderOpen },
-                { id: 'storage_policies', name: 'Policies', icon: Shield },
-                { id: 'usage', name: 'Usage', icon: Activity },
-                { id: 'storage_settings', name: 'Settings', icon: Settings }
-            ],
-            edge: [
-                { id: 'functions', name: 'Functions', icon: Code },
-                { id: 'deployments', name: 'Deployments', icon: Zap },
-                { id: 'secrets', name: 'Env Variables', icon: Key },
-                { id: 'edge_logs', name: 'Edge Logs', icon: List }
-            ],
-            realtime: [
-                { id: 'inspector', name: 'Inspector', icon: Search },
-                { id: 'channels', name: 'Channels', icon: Activity },
-                { id: 'config', name: 'Configuration', icon: Settings }
-            ],
-            logs: [
-                { id: 'explorer', name: 'Log Explorer', icon: Search },
-                { id: 'live', name: 'Live Tail', icon: Activity },
-                { id: 'alerts', name: 'Security Alerts', icon: Bell },
-                { id: 'metrics', name: 'Traffic Analysis', icon: BarChart }
-            ],
-            docs: [
-                { id: 'intro', name: 'Getting Started', icon: Home },
-                { id: 'auth_api', name: 'Authentication', icon: Lock },
-                { id: 'db_api', name: 'Database & SQL', icon: Database },
-                { id: 'storage_api', name: 'Storage', icon: FolderOpen },
-                { id: 'realtime_api', name: 'Realtime', icon: MousePointer2 },
-                { id: 'edge_api', name: 'Edge Functions', icon: Zap },
-                { id: 'sdk', name: 'Client SDKs', icon: Code }
-            ],
-            settings: [
-                { id: 'general', name: 'General', icon: Settings },
-                { id: 'infrastructure', name: 'Infrastructure', icon: Server },
-                { id: 'billing', name: 'Billing', icon: CreditCard },
-                { id: 'api_keys', name: 'API Keys', icon: Key }
-            ],
-            integrations: [
-                { id: 'wrappers', name: 'Wrappers', icon: Globe },
-                { id: 'webhooks', name: 'Webhooks', icon: Zap },
-                { id: 'cron', name: 'Cron Jobs', icon: History },
-                { id: 'extensions', name: 'PG Extensions', icon: Cpu },
-                { id: 'vault', name: 'Vault', icon: Shield },
-                { id: 'graphql', name: 'GraphQL', icon: Code }
-            ]
-        };
-
-        const activeSubmenu = submenus[currentModule] || [
+        const activeSubmenu = SUBMENUS[currentModule] || [
             { id: 'general', name: 'Dashboard', icon: LayoutGrid },
             { id: 'status', name: 'System Status', icon: Activity }
         ];
@@ -666,8 +681,14 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
                     )}
                 </div>
 
+                <WorkspaceSwitcher 
+                    isExpanded={isExpanded}
+                    onWorkspaceChange={onWorkspaceChange} 
+                    onViewSelect={onMenuViewSelect} 
+                />
+
                 <div className="flex-1 flex flex-col gap-1 w-full overflow-y-auto scrollbar-hide px-2">
-                    {primaryNav.map((item, i) => {
+                    {PRIMARY_NAV.map((item, i) => {
                         if (item.type === 'separator') return <div key={i} className="h-[1px] bg-[#2e2e2e] my-2 mx-2 shrink-0" />;
 
                         const isActive = (item.id === 'tables' && (selectedView === 'tables' || selectedView === 'table')) ||
@@ -773,7 +794,7 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
                     <div className="flex items-center gap-2 text-[11px] font-bold tracking-tight">
                         <span className="text-zinc-600 hover:text-zinc-400 cursor-pointer transition-colors uppercase tracking-[0.1em]">OzyBase</span>
                         <span className="text-zinc-800 text-lg font-thin">/</span>
-                        <WorkspaceSwitcher onWorkspaceChange={onWorkspaceChange} />
+                        <span className="text-[11px] font-black text-white uppercase tracking-wider">PROJECT</span>
                         <span className="text-zinc-800 text-lg font-thin">/</span>
                         <span className="bg-zinc-900 text-primary border border-primary/20 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest shadow-[0_0_10px_rgba(254,254,0,0.05)]">
                             {selectedTable || selectedView}

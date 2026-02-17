@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import {
     Key,
     AtSign,
@@ -68,6 +68,24 @@ const MAX_COLUMN_WIDTH = 5000;
 const calculateMinColumnWidth = () => {
     return 60;
 };
+
+const SkeletonRow = ({ columns, getColumnWidth, rowHeight }) => (
+    <div className="flex border-b border-[#2e2e2e]/50" style={{ height: `${rowHeight}px` }}>
+        <div className="w-10 px-4 flex items-center shrink-0">
+            <div className="w-4 h-4 bg-zinc-800 rounded animate-pulse" />
+        </div>
+        {columns.map((col, i) => (
+            <div
+                key={i}
+                className="px-4 flex items-center shrink-0"
+                style={{ width: `${getColumnWidth(col.name, col.type)}px` }}
+            >
+                <div className="h-4 bg-zinc-800 rounded animate-pulse w-[80%]" />
+            </div>
+        ))}
+        <div className="w-20 px-4 flex items-center shrink-0" />
+    </div>
+);
 
 const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
     const [data, setData] = useState([]);
@@ -177,7 +195,7 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
         } catch (e) { console.error(e); }
     }, [tableName]);
 
-    const toggleRealtime = async () => {
+    const toggleRealtime = useCallback(async () => {
         setIsRealtimeLoading(true);
         try {
             const res = await fetchWithAuth('/api/collections/realtime', {
@@ -189,16 +207,16 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
             }
         } catch (e) { console.error(e); }
         setIsRealtimeLoading(false);
-    };
+    }, [tableName, realtimeEnabled]);
 
     // --- Column Resize Handlers ---
-    const handleResizeStart = (e, colName) => {
+    const handleResizeStart = useCallback((e, colName) => {
         e.preventDefault();
         e.stopPropagation();
         setResizingColumn(colName);
         resizeStartX.current = e.clientX;
         resizeStartWidth.current = columnWidths[colName] || getDefaultWidth(colName, schema.find(c => c.name === colName)?.type);
-    };
+    }, [columnWidths, schema]);
 
     useEffect(() => {
         if (!resizingColumn) return;
@@ -233,9 +251,9 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
     const containerRef = useRef(null);
     const ROW_HEIGHT = 45;
 
-    const handleScroll = (e) => {
+    const handleScroll = useCallback((e) => {
         setScrollTop(e.target.scrollTop);
-    };
+    }, []);
 
     const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 5);
     const endIndex = Math.min(data.length, startIndex + Math.ceil(600 / ROW_HEIGHT) + 10);
@@ -244,24 +262,24 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
     const bottomPadding = (data.length - endIndex) * ROW_HEIGHT;
 
     // --- Cell Editing Handlers ---
-    const handleCellClick = (rowId, colName) => {
+    const handleCellClick = useCallback((rowId, colName) => {
         // Don't allow editing id or created_at
         if (colName === 'id' || colName === 'created_at') return;
         setEditingCell({ rowId, colName });
-    };
+    }, []);
 
-    const handleCellSave = (rowId, colName, newValue) => {
+    const handleCellSave = useCallback((rowId, colName, newValue) => {
         setData(prev => prev.map(row =>
             row.id === rowId ? { ...row, [colName]: newValue } : row
         ));
         setEditingCell(null);
-    };
+    }, []);
 
-    const handleCellCancel = () => {
+    const handleCellCancel = useCallback(() => {
         setEditingCell(null);
-    };
+    }, []);
 
-    const handleCSVImport = async (e) => {
+    const handleCSVImport = useCallback(async (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
 
@@ -325,13 +343,13 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
             }
         };
         reader.readAsText(file);
-    };
+    }, [tableName, fetchData]);
 
-    const handleDeleteRow = (id) => {
+    const handleDeleteRow = useCallback((id) => {
         setConfirmDeleteId(id);
-    };
+    }, []);
 
-    const confirmRowDeletion = async () => {
+    const confirmRowDeletion = useCallback(async () => {
         const id = confirmDeleteId;
         try {
             const res = await fetchWithAuth(`/api/tables/${tableName}/rows/${id}`, {
@@ -346,9 +364,9 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
             console.error(err);
             setAlertMessage({ title: 'Error', message: 'Network error during deletion', type: 'danger' });
         }
-    };
+    }, [confirmDeleteId, tableName, fetchData]);
 
-    const handleExportCSV = () => {
+    const handleExportCSV = useCallback(() => {
         if (data.length === 0) return;
 
         const headers = ['id', ...schema.map(c => c.name), 'created_at'];
@@ -366,14 +384,14 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
         a.href = url;
         a.download = `${tableName}_export.csv`;
         a.click();
-    };
+    }, [data, schema, tableName]);
 
-    const handleEditRow = (row) => {
+    const handleEditRow = useCallback((row) => {
         setEditingRow(row);
         setIsModalOpen(true);
-    };
+    }, []);
 
-    const getTypeIcon = (type) => {
+    const getTypeIcon = useCallback((type) => {
         const t = (type || 'text').toLowerCase();
         if (t.includes('uuid')) return <Key size={14} className="text-primary" />;
         if (t.includes('text') || t.includes('char')) return <AtSign size={14} className="text-primary" />;
@@ -386,39 +404,23 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
         if (t.includes('macaddr')) return <Cpu size={14} className="text-primary" />;
         if (t.includes('json')) return <Code2 size={14} className="text-primary" />;
         return <Database size={14} className="text-primary" />;
-    };
+    }, []);
 
-    const standardColumns = [
+    const standardColumns = useMemo(() => [
         { name: 'id', type: 'uuid' },
         ...schema,
         { name: 'created_at', type: 'datetime' }
-    ];
+    ], [schema]);
 
     // Get column width with fallback to default
-    const getColumnWidth = (colName, colType) => {
+    const getColumnWidth = useCallback((colName, colType) => {
         return columnWidths[colName] || getDefaultWidth(colName, colType);
-    };
-
-    const SkeletonRow = () => (
-        <div className="flex border-b border-[#2e2e2e]/50" style={{ height: `${ROW_HEIGHT}px` }}>
-            <div className="w-10 px-4 flex items-center shrink-0">
-                <div className="w-4 h-4 bg-zinc-800 rounded animate-pulse" />
-            </div>
-            {standardColumns.map((col, i) => (
-                <div
-                    key={i}
-                    className="px-4 flex items-center shrink-0"
-                    style={{ width: `${getColumnWidth(col.name, col.type)}px` }}
-                >
-                    <div className="h-4 bg-zinc-800 rounded animate-pulse w-[80%]" />
-                </div>
-            ))}
-            <div className="w-20 px-4 flex items-center shrink-0" />
-        </div>
-    );
+    }, [columnWidths]);
 
     // Calculate total table width
-    const totalWidth = standardColumns.reduce((acc, col) => acc + getColumnWidth(col.name, col.type), 0) + 40 + 80; // +checkbox +actions
+    const totalWidth = useMemo(() => 
+        standardColumns.reduce((acc, col) => acc + getColumnWidth(col.name, col.type), 0) + 40 + 80, 
+    [standardColumns, getColumnWidth]);
 
     return (
         <div className="flex flex-col h-full w-full max-w-full overflow-hidden text-zinc-400 font-sans animate-in fade-in duration-500">
@@ -661,7 +663,14 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                     <div className="divide-y divide-[#2e2e2e]/50 font-mono">
                         {loading && data.length === 0 ? (
                             <div className="space-y-0">
-                                {[...Array(10)].map((_, i) => <SkeletonRow key={i} />)}
+                                {[...Array(10)].map((_, i) => (
+                                    <SkeletonRow
+                                        key={i}
+                                        columns={standardColumns}
+                                        getColumnWidth={getColumnWidth}
+                                        rowHeight={ROW_HEIGHT}
+                                    />
+                                ))}
                             </div>
                         ) : error ? (
                             <div className="py-32 text-center">

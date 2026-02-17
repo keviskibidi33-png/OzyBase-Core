@@ -1,11 +1,25 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { ChevronDown, Plus, LayoutGrid, Check, Settings, Briefcase } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { 
+    ChevronDown, 
+    Plus, 
+    LayoutGrid, 
+    Check, 
+    Settings, 
+    Briefcase, 
+    Search,
+    Globe,
+    Lock,
+    Users,
+    Building2,
+    Command
+} from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
 
-const WorkspaceSwitcher = ({ onWorkspaceChange }) => {
+const WorkspaceSwitcher = ({ onWorkspaceChange, onViewSelect, isExpanded }) => {
     const [workspaces, setWorkspaces] = useState([]);
     const [activeWorkspace, setActiveWorkspace] = useState(null);
     const [isOpen, setIsOpen] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
     const dropdownRef = useRef(null);
 
     const fetchWorkspaces = React.useCallback(async () => {
@@ -16,7 +30,7 @@ const WorkspaceSwitcher = ({ onWorkspaceChange }) => {
                 setWorkspaces(data || []);
                 
                 const storedId = localStorage.getItem('ozy_workspace_id');
-                const active = data.find(w => w.id === storedId) || data[0];
+                const active = (data && data.find) ? (data.find(w => w.id === storedId) || data[0]) : null;
                 
                 if (active) {
                     setActiveWorkspace(active);
@@ -28,10 +42,13 @@ const WorkspaceSwitcher = ({ onWorkspaceChange }) => {
         } catch (err) {
             console.error("Failed to load workspaces", err);
         }
-    }, [onWorkspaceChange]);
+    }, []);
 
     useEffect(() => {
-        fetchWorkspaces();
+        const init = async () => {
+            await fetchWorkspaces();
+        };
+        init();
         
         const handleClickOutside = (event) => {
             if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -50,55 +67,150 @@ const WorkspaceSwitcher = ({ onWorkspaceChange }) => {
         if (onWorkspaceChange) onWorkspaceChange(workspace.id);
     };
 
+    const filteredWorkspaces = useMemo(() => {
+        return workspaces.filter(w => 
+            w.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            w.slug.toLowerCase().includes(searchQuery.toLowerCase())
+        );
+    }, [workspaces, searchQuery]);
+
+    const getWorkspaceIcon = (name) => {
+        const firstChar = name.charAt(0).toUpperCase();
+        const colors = [
+            'bg-emerald-500/20 text-emerald-500 border-emerald-500/30',
+            'bg-blue-500/20 text-blue-500 border-blue-500/30',
+            'bg-purple-500/20 text-purple-500 border-purple-500/30',
+            'bg-amber-500/20 text-amber-500 border-amber-500/30',
+            'bg-rose-500/20 text-rose-500 border-rose-500/30'
+        ];
+        const colorIdx = (name.length % colors.length);
+        return { char: firstChar, style: colors[colorIdx] };
+    };
+
     return (
-        <div className="relative" ref={dropdownRef}>
-            <button
+        <div className={`relative w-full transition-all duration-300 ${isExpanded ? 'px-4 mb-6' : 'px-1 mb-4'}`} ref={dropdownRef}>
+            <div 
                 onClick={() => setIsOpen(!isOpen)}
-                className="flex items-center gap-2 px-3 py-1.5 bg-[#171717] hover:bg-zinc-800 border border-[#2e2e2e] rounded-xl transition-all group"
+                className={`group relative flex items-center transition-all cursor-pointer select-none ${
+                    isExpanded 
+                    ? `gap-4 p-3 rounded-2xl bg-[#0a0a0a] border hover:border-primary/30 hover:bg-[#111111] ${isOpen ? 'ring-2 ring-primary/20 border-primary/50 bg-[#111111]' : 'border-[#2e2e2e]'}`
+                    : `justify-center p-2 rounded-xl bg-transparent hover:bg-zinc-800/40 border border-transparent ${isOpen ? 'bg-zinc-800/60 border-primary/30' : ''}`
+                }`}
             >
-                <div className="w-5 h-5 rounded-lg bg-primary/10 flex items-center justify-center border border-primary/20">
-                    <Briefcase size={12} className="text-primary" />
+                {/* Icon Container */}
+                <div className={`rounded-xl flex items-center justify-center transition-all shrink-0 ${
+                    isExpanded 
+                    ? `w-12 h-12 ${activeWorkspace ? 'bg-primary/10 border border-primary/20 text-primary' : 'bg-[#1a1a1a] border border-[#2e2e2e] text-zinc-500'}`
+                    : `w-9 h-9 ${activeWorkspace ? 'bg-primary/20 border border-primary/30 text-primary' : 'bg-zinc-900 border border-zinc-800 text-zinc-600'}`
+                }`}>
+                    {activeWorkspace ? (
+                        <span className={`${isExpanded ? 'text-sm' : 'text-[10px]'} font-black uppercase`}>{activeWorkspace.name.charAt(0)}</span>
+                    ) : (
+                        <Briefcase size={isExpanded ? 20 : 16} />
+                    )}
                 </div>
-                <div className="flex flex-col items-start min-w-[100px] max-w-[150px]">
-                    <span className="text-[10px] font-black text-white uppercase tracking-wider truncate w-full">
-                        {activeWorkspace?.name || 'Select Workspace'}
-                    </span>
-                    <span className="text-[8px] font-bold text-zinc-600 uppercase tracking-widest">
-                        {activeWorkspace?.slug || 'Production'}
-                    </span>
-                </div>
-                <ChevronDown size={14} className={`text-zinc-600 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-            </button>
+
+                {/* Content - Hidden when collapsed */}
+                {isExpanded && (
+                    <div className="flex-1 min-w-0 animate-in fade-in slide-in-from-left-2 duration-300">
+                        <h3 className="text-[10px] font-black text-white uppercase tracking-[0.2em] leading-none mb-1.5 flex items-center gap-2">
+                            {isOpen ? 'Searching...' : 'Select Workspace'}
+                        </h3>
+                        <div className="flex items-center gap-2 text-zinc-500 group-hover:text-zinc-300 transition-colors">
+                            <Globe size={12} className="text-primary/50" />
+                            <span className="text-[11px] font-bold uppercase tracking-widest truncate">
+                                {activeWorkspace?.name || 'OZYBASE'}
+                            </span>
+                        </div>
+                    </div>
+                )}
+
+                {/* Shortcut Hint - Hidden when collapsed */}
+                {isExpanded && (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#050505] border border-[#2e2e2e] text-[10px] font-black text-zinc-600 shadow-inner animate-in fade-in zoom-in-95 duration-300">
+                        <Command size={10} />
+                        <span>K</span>
+                    </div>
+                )}
+
+                {/* Subtle Glow */}
+                {isExpanded && (
+                    <div className={`absolute inset-x-0 -bottom-px h-px bg-gradient-to-r from-transparent via-primary/20 to-transparent transition-opacity ${isOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} />
+                )}
+            </div>
 
             {isOpen && (
-                <div className="absolute top-full left-0 mt-2 w-64 bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl shadow-2xl z-[100] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                    <div className="p-3 border-b border-[#2e2e2e]">
-                        <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em] mb-3">Your Workspaces</h3>
-                        <div className="space-y-1">
-                            {workspaces.map(w => (
+                <div className={`absolute ${isExpanded ? 'top-[calc(100%+8px)] left-2 right-2' : 'top-0 left-[calc(100%+12px)] w-64'} bg-[#0c0c0c] border border-[#2e2e2e] rounded-2xl shadow-[0_20px_50px_-12px_rgba(0,0,0,0.8)] z-[200] overflow-hidden animate-in fade-in zoom-in-95 slide-in-from-top-4 duration-300 backdrop-blur-xl`}>
+                    {/* Search Bar */}
+                    <div className="p-3 border-b border-[#2e2e2e] bg-[#111111]/50">
+                        <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600" size={14} />
+                            <input
+                                autoFocus
+                                type="text"
+                                placeholder="Search workspaces..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="w-full bg-zinc-900/50 border border-zinc-800/50 rounded-lg pl-9 pr-4 py-2 text-[10px] font-bold text-white placeholder-zinc-600 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all"
+                            />
+                        </div>
+                    </div>
+
+                    {/* Workspace List */}
+                    <div className="max-h-[300px] overflow-y-auto custom-scrollbar p-2 space-y-1">
+                        <h3 className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.2em] px-3 py-2">Your Projects</h3>
+                        
+                        {filteredWorkspaces.length === 0 ? (
+                            <div className="py-8 px-4 text-center">
+                                <p className="text-[10px] font-bold text-zinc-600 uppercase">No workspaces found</p>
+                            </div>
+                        ) : (
+                            filteredWorkspaces.map(w => (
                                 <button
                                     key={w.id}
                                     onClick={() => handleSelect(w)}
-                                    className={`w-full flex items-center justify-between p-2 rounded-lg transition-all ${activeWorkspace?.id === w.id ? 'bg-primary/10 border border-primary/20' : 'hover:bg-zinc-800 border border-transparent'}`}
+                                    className={`w-full flex items-center justify-between p-2.5 rounded-xl transition-all group ${activeWorkspace?.id === w.id ? 'bg-primary/5 border border-primary/20' : 'hover:bg-zinc-900 border border-transparent'}`}
                                 >
                                     <div className="flex items-center gap-3">
-                                        <div className={`w-8 h-8 rounded flex items-center justify-center text-xs font-bold ${activeWorkspace?.id === w.id ? 'bg-primary text-black' : 'bg-zinc-800 text-zinc-500'}`}>
-                                            {w.name.substring(0, 2).toUpperCase()}
+                                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black border transition-transform group-hover:scale-110 ${getWorkspaceIcon(w.name).style}`}>
+                                            {getWorkspaceIcon(w.name).char}
                                         </div>
                                         <div className="flex flex-col items-start">
-                                            <span className={`text-xs font-bold ${activeWorkspace?.id === w.id ? 'text-white' : 'text-zinc-400'}`}>{w.name}</span>
-                                            <span className="text-[9px] text-zinc-600 uppercase font-bold tracking-tighter">{w.slug}</span>
+                                            <span className={`text-[11px] font-black leading-tight ${activeWorkspace?.id === w.id ? 'text-white' : 'text-zinc-400 group-hover:text-zinc-200'}`}>{w.name}</span>
+                                            <span className="text-[8px] text-zinc-600 uppercase font-black tracking-widest">{w.slug}</span>
                                         </div>
                                     </div>
-                                    {activeWorkspace?.id === w.id && <Check size={14} className="text-primary" />}
+                                    {activeWorkspace?.id === w.id && (
+                                        <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center">
+                                            <Check size={10} className="text-black" />
+                                        </div>
+                                    )}
                                 </button>
-                            ))}
-                        </div>
+                            ))
+                        )}
                     </div>
-                    <div className="p-2 bg-[#111111]">
-                        <button className="w-full flex items-center gap-2 px-3 py-2 text-[10px] font-bold text-zinc-500 hover:text-white transition-colors uppercase tracking-widest">
-                            <Plus size={14} />
-                            Create new workspace
+
+                    {/* Footer Actions */}
+                    <div className="p-2 border-t border-[#2e2e2e] bg-[#080808]">
+                        <button 
+                            onClick={() => {
+                                setIsOpen(false);
+                                if (onViewSelect) onViewSelect('workspace_settings');
+                            }}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 text-[10px] font-black text-zinc-500 hover:text-white hover:bg-zinc-900/50 rounded-xl transition-all uppercase tracking-widest group"
+                        >
+                            <Settings size={14} className="group-hover:rotate-45 transition-transform" />
+                            Workspace Settings
+                        </button>
+                        <button 
+                            onClick={() => {
+                                setIsOpen(false);
+                                if (onViewSelect) onViewSelect('workspaces');
+                            }}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 text-[10px] font-black text-zinc-500 hover:text-white hover:bg-zinc-900/50 rounded-xl transition-all uppercase tracking-widest group"
+                        >
+                            <LayoutGrid size={14} className="group-hover:scale-110 transition-transform" />
+                            All Workspaces
                         </button>
                     </div>
                 </div>
