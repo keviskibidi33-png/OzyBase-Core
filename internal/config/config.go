@@ -63,7 +63,7 @@ func Load() (*Config, error) {
 	required := []string{"DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME"}
 	allSet := true
 	for _, env := range required {
-		if os.Getenv(env) == "" {
+		if readEnv(env) == "" {
 			allSet = false
 			break
 		}
@@ -72,18 +72,18 @@ func Load() (*Config, error) {
 	var dbURL string
 	if allSet {
 		dbURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
-			os.Getenv("DB_USER"),
-			os.Getenv("DB_PASSWORD"),
-			os.Getenv("DB_HOST"),
-			os.Getenv("DB_PORT"),
-			os.Getenv("DB_NAME"),
+			readEnv("DB_USER"),
+			readEnv("DB_PASSWORD"),
+			readEnv("DB_HOST"),
+			readEnv("DB_PORT"),
+			readEnv("DB_NAME"),
 			getEnv("DB_SSLMODE", "disable"),
 		)
 	} else {
-		dbURL = os.Getenv("DATABASE_URL")
+		dbURL = readEnv("DATABASE_URL")
 	}
 
-	jwtSecret := os.Getenv("JWT_SECRET")
+	jwtSecret := readEnv("JWT_SECRET")
 	generatedJWTSecret := false
 	if jwtSecret == "" {
 		jwtSecret = getOrGenerateSecret()
@@ -117,23 +117,23 @@ func Load() (*Config, error) {
 		// Storage
 		StorageProvider: getEnv("OZY_STORAGE_PROVIDER", "local"),
 		StoragePath:     getEnv("OZY_STORAGE_PATH", "./data/storage"),
-		S3Endpoint:      os.Getenv("S3_ENDPOINT"),
-		S3AccessKey:     os.Getenv("S3_ACCESS_KEY"),
-		S3SecretKey:     os.Getenv("S3_SECRET_KEY"),
+		S3Endpoint:      readEnv("S3_ENDPOINT"),
+		S3AccessKey:     readEnv("S3_ACCESS_KEY"),
+		S3SecretKey:     readEnv("S3_SECRET_KEY"),
 		S3UseSSL:        getEnv("S3_USE_SSL", "false") == "true",
 
 		// Realtime
 		RealtimeBroker: getEnv("OZY_REALTIME_BROKER", "local"),
-		RedisAddr:      os.Getenv("REDIS_ADDR"),
-		RedisPassword:  os.Getenv("REDIS_PASSWORD"),
+		RedisAddr:      readEnv("REDIS_ADDR"),
+		RedisPassword:  readEnv("REDIS_PASSWORD"),
 		RedisDB:        redisDB,
 
 		// SMTP
-		SMTPHost: os.Getenv("SMTP_HOST"),
+		SMTPHost: readEnv("SMTP_HOST"),
 		SMTPPort: getEnv("SMTP_PORT", "587"),
-		SMTPUser: os.Getenv("SMTP_USER"),
-		SMTPPass: os.Getenv("SMTP_PASSWORD"),
-		SMTPFrom: os.Getenv("SMTP_FROM"),
+		SMTPUser: readEnv("SMTP_USER"),
+		SMTPPass: readEnv("SMTP_PASSWORD"),
+		SMTPFrom: readEnv("SMTP_FROM"),
 	}
 
 	if warnings, err := validateSecurity(cfg, debug, strictSecurity); err != nil {
@@ -161,10 +161,39 @@ func getOrGenerateSecret() string {
 }
 
 func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
+	if value := readEnv(key); value != "" {
 		return value
 	}
 	return defaultValue
+}
+
+func readEnv(key string) string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return ""
+	}
+	if isCoolifySetPlaceholder(value, key) {
+		return ""
+	}
+	return value
+}
+
+func isCoolifySetPlaceholder(value, key string) bool {
+	v := strings.ToLower(strings.TrimSpace(value))
+	k := strings.ToLower(strings.TrimSpace(key))
+
+	candidates := []string{
+		"set_" + k,
+		"set " + k,
+		"set-" + k,
+		"set:" + k,
+	}
+	for _, c := range candidates {
+		if v == c {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveAllowedOrigins(originsStr, siteURL, appDomain string, debug bool) ([]string, bool) {
