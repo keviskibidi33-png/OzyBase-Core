@@ -159,8 +159,8 @@ Use `docker-compose.coolify.yml` with a managed PostgreSQL service.
 - SMTP vars if email flows are needed
 
 Auto defaults in Coolify compose:
-- `JWT_SECRET`: optional. If empty, OzyBase auto-generates and stores it in `.ozy_secret`.
-- `ALLOWED_ORIGINS`: optional. If empty, OzyBase derives safe origins from `SITE_URL` and `APP_DOMAIN`.
+- `JWT_SECRET`: not set in compose. OzyBase auto-generates and stores it in `.ozy_secret`.
+- `ALLOWED_ORIGINS`: not set in compose. OzyBase derives safe origins from `SITE_URL` and `APP_DOMAIN`.
 - `SITE_URL`: defaults to `https://api.example.com` if unset.
 - `APP_DOMAIN`: defaults to `example.com` if unset.
 
