@@ -8,7 +8,7 @@
     --color-sidebar: #1c1c1c;
     --color-border: #2e2e2e;
 
-    --font-sans: "Inter", "Geist", "sans-serif";
+    --font-sans: "Inter", "Geist", ui-sans-serif, system-ui, sans-serif;
 }
 
 @layer base {
