@@ -153,8 +153,6 @@ Use `docker-compose.coolify.yml` with a managed PostgreSQL service.
 
 ### Variables to set in Coolify
 - `DATABASE_URL` (required)
-- `SITE_URL` (required, e.g. `https://api.example.com`)
-- `APP_DOMAIN` (required, e.g. `example.com`)
 - `DEBUG=false`
 - `OZY_STRICT_SECURITY=true` (recommended in production)
 - `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`
@@ -163,6 +161,8 @@ Use `docker-compose.coolify.yml` with a managed PostgreSQL service.
 Auto defaults in Coolify compose:
 - `JWT_SECRET`: optional. If empty, OzyBase auto-generates and stores it in `.ozy_secret`.
 - `ALLOWED_ORIGINS`: optional. If empty, OzyBase derives safe origins from `SITE_URL` and `APP_DOMAIN`.
+- `SITE_URL`: defaults to `https://api.example.com` if unset.
+- `APP_DOMAIN`: defaults to `example.com` if unset.
 
 ### Notes
 - Keep PostgreSQL private and use TLS in `DATABASE_URL` (`sslmode=require` or stronger).
