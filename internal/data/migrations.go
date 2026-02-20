@@ -19,6 +19,7 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 			email VARCHAR(255) UNIQUE NOT NULL,
 			password_hash TEXT NOT NULL,
 			role VARCHAR(20) DEFAULT 'user',
+			is_verified BOOLEAN DEFAULT FALSE,
 			created_at TIMESTAMPTZ DEFAULT NOW(),
 			updated_at TIMESTAMPTZ DEFAULT NOW()
 		)`,
@@ -249,6 +250,7 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS rls_rule TEXT DEFAULT 'auth.uid() = owner_id'`,
 		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS update_rule VARCHAR(50) DEFAULT 'admin'`,
 		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS delete_rule VARCHAR(50) DEFAULT 'admin'`,
+		`ALTER TABLE _v_users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE`,
 		`ALTER TABLE _v_security_alerts ADD COLUMN IF NOT EXISTS message TEXT`,
 		`ALTER TABLE _v_security_alerts ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS realtime_enabled BOOLEAN DEFAULT FALSE`,

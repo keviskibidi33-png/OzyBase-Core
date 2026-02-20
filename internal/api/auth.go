@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/mail"
+	"os"
+	"strings"
 
 	"github.com/Xangel0s/OzyBase/internal/core"
 	"github.com/labstack/echo/v4"
@@ -100,12 +102,16 @@ func (h *AuthHandler) RequestReset(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
-	// In development, we return the token in the response for easy testing.
-	// In production, this would be empty or a generic "Email sent" message.
-	return c.JSON(http.StatusOK, map[string]any{
+	response := map[string]any{
 		"message": "If the email exists, a reset token has been generated",
-		"token":   token, // TODO: Remove in true production
-	})
+	}
+
+	// Never leak reset tokens in production API responses.
+	if strings.EqualFold(os.Getenv("DEBUG"), "true") && token != "" {
+		response["token"] = token
+	}
+
+	return c.JSON(http.StatusOK, response)
 }
 
 func (h *AuthHandler) ConfirmReset(c echo.Context) error {
@@ -131,6 +137,14 @@ func (h *AuthHandler) ConfirmReset(c echo.Context) error {
 
 func (h *AuthHandler) VerifyEmail(c echo.Context) error {
 	token := c.QueryParam("token")
+	if token == "" {
+		var req struct {
+			Token string `json:"token"`
+		}
+		_ = c.Bind(&req)
+		token = req.Token
+	}
+
 	if token == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "missing token"})
 	}

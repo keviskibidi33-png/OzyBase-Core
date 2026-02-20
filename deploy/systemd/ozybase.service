@@ -10,7 +10,7 @@ User=OzyBase
 Group=OzyBase
 
 # Binary and working directory
-ExecStart=/opt/OzyBase/OzyBase
+ExecStart=/opt/OzyBase/ozybase
 WorkingDirectory=/opt/OzyBase
 
 # Auto restart

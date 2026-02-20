@@ -14,12 +14,20 @@ import (
 	"github.com/Xangel0s/OzyBase/internal/data"
 	"github.com/Xangel0s/OzyBase/internal/realtime"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 )
 
-func AuthMiddleware(jwtSecret string, optional bool) echo.MiddlewareFunc {
+func AuthMiddleware(db *data.DB, jwtSecret string, optional bool) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
+			// API key middleware may already authenticate this request.
+			if userID, ok := c.Get("user_id").(string); ok && userID != "" {
+				if role, ok := c.Get("role").(string); ok && role != "" {
+					return next(c)
+				}
+			}
+
 			authHeader := c.Request().Header.Get("Authorization")
 			if authHeader == "" {
 				if optional {
@@ -59,10 +67,52 @@ func AuthMiddleware(jwtSecret string, optional bool) echo.MiddlewareFunc {
 				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid token claims"})
 			}
 
-			c.Set("user_id", claims["user_id"])
-			c.Set("email", claims["email"])
-			c.Set("role", claims["role"])
+			rawUserID, ok := claims["user_id"].(string)
+			userID := strings.TrimSpace(rawUserID)
+			if !ok || userID == "" {
+				if optional {
+					return next(c)
+				}
+				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid token user"})
+			}
 
+			// Hardening: token subject must map to an existing account.
+			var email, role string
+			var isVerified bool
+			err = db.Pool.QueryRow(c.Request().Context(), `
+				SELECT email, role, is_verified
+				FROM _v_users
+				WHERE id = $1
+			`, userID).Scan(&email, &role, &isVerified)
+			if err != nil {
+				if optional {
+					return next(c)
+				}
+				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid token subject"})
+			}
+
+			// Use DB as source of truth to avoid stale or forged role/email claims.
+			c.Set("user_id", userID)
+			c.Set("email", email)
+			c.Set("role", role)
+			c.Set("is_verified", isVerified)
+
+			return next(c)
+		}
+	}
+}
+
+// RequireRole enforces an exact role match for sensitive routes.
+func RequireRole(requiredRole string) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			role, ok := c.Get("role").(string)
+			if !ok || role == "" {
+				return c.JSON(http.StatusForbidden, map[string]string{"error": "insufficient privileges"})
+			}
+			if role != requiredRole {
+				return c.JSON(http.StatusForbidden, map[string]string{"error": requiredRole + " role required"})
+			}
 			return next(c)
 		}
 	}
@@ -312,7 +362,11 @@ func MetricsMiddleware(h *Handler) echo.MiddlewareFunc {
 			rawUserID := c.Get("user_id")
 			var userIDPtr *string
 			if s, ok := rawUserID.(string); ok && s != "" {
-				userIDPtr = &s
+				// API key identities are non-UUID (e.g. "api_key_<id>"), keep DB FK safe.
+				if _, parseErr := uuid.Parse(s); parseErr == nil {
+					userID := s
+					userIDPtr = &userID
+				}
 			} else {
 				userIDPtr = nil
 			}
@@ -343,17 +397,18 @@ func MetricsMiddleware(h *Handler) echo.MiddlewareFunc {
 				isBreach, _ := h.Geo.CheckBreach(context.Background(), ip, geo.Country)
 				if isBreach {
 					// ... existing logic ...
-					details, _ := json.Marshal(map[string]any{
+					detailsMap := map[string]any{
 						"ip":      ip,
 						"country": geo.Country,
 						"city":    geo.City,
 						"method":  entry.Method,
 						"path":    entry.Path,
-					})
+					}
+					details, _ := json.Marshal(detailsMap)
 					_, _ = h.DB.Pool.Exec(context.Background(), `
-						INSERT INTO _v_security_alerts (type, severity, details)
-						VALUES ($1, $2, $3)
-					`, "geo_breach", "critical", details)
+						INSERT INTO _v_security_alerts (type, severity, message, metadata)
+						VALUES ($1, $2, $3, $4)
+					`, "geo_breach", "critical", "Geo breach detected", details)
 
 					// Send email notifications to all active recipients
 					go func() {

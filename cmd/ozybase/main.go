@@ -286,10 +286,13 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 	e.Use(api.APIKeyMiddleware(h.DB)) // 🔐 API Key Auth (Enterprise Phase 1)
 	e.Use(api.RLSMiddleware(h.DB))    // 🛡️ RLS Context Injection
 	e.Use(middleware.CSRFWithConfig(middleware.CSRFConfig{
-		TokenLookup: "header:X-CSRF-Token",
-		ContextKey:  "csrf",
-		CookieName:  "_ozy_csrf",
-		CookiePath:  "/",
+		TokenLookup:    "header:X-CSRF-Token",
+		ContextKey:     "csrf",
+		CookieName:     "_ozy_csrf",
+		CookiePath:     "/",
+		CookieHTTPOnly: true,
+		CookieSecure:   !strings.EqualFold(os.Getenv("DEBUG"), "true"),
+		CookieSameSite: http.SameSiteStrictMode,
 		Skipper: func(c echo.Context) bool {
 			// Skip CSRF for API requests with Bearer token or API keys
 			authHeader := c.Request().Header.Get("Authorization")
@@ -330,8 +333,9 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 	workspaceHandler := api.NewWorkspaceHandler(workspaceService, mailSvc)
 
 	// API Groups and Middlewares
-	authRequired := api.AuthMiddleware(cfg.JWTSecret, false)
-	authOptional := api.AuthMiddleware(cfg.JWTSecret, true)
+	authRequired := api.AuthMiddleware(h.DB, cfg.JWTSecret, false)
+	authOptional := api.AuthMiddleware(h.DB, cfg.JWTSecret, true)
+	adminOnly := api.RequireRole("admin")
 	accessList := api.AccessMiddleware(h.DB, "list")
 	accessCreate := api.AccessMiddleware(h.DB, "create")
 	accessUpdate := api.AccessMiddleware(h.DB, "update")
@@ -369,11 +373,12 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		authGroup := apiGroup.Group("/auth")
 		authGroup.POST("/login", authHandler.Login)
 		// Signup is now protected, only an authenticated user (admin) can create others
-		authGroup.POST("/signup", authHandler.Signup, authRequired)
+		authGroup.POST("/signup", authHandler.Signup, authRequired, adminOnly)
 		authGroup.POST("/reset-password/request", authHandler.RequestReset)
 		authGroup.POST("/reset-password/confirm", authHandler.ConfirmReset)
 		authGroup.GET("/verify-email", authHandler.VerifyEmail)
-		authGroup.PATCH("/users/:id/role", authHandler.UpdateRole, authRequired)
+		authGroup.POST("/verify-email", authHandler.VerifyEmail)
+		authGroup.PATCH("/users/:id/role", authHandler.UpdateRole, authRequired, adminOnly)
 
 		// Social Login
 		authGroup.GET("/login/:provider", authHandler.GetOAuthURL)
@@ -473,8 +478,8 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.POST("/graphql/v1", h.HandleGraphQL, authRequired)
 
 		apiGroup.GET("/schema/:name", h.GetTableSchema, authRequired)
-		apiGroup.POST("/sql", h.HandleExecuteSQL, authRequired)
-		apiGroup.POST("/sql/sync", h.HandleSyncSystem, authRequired)
+		apiGroup.POST("/sql", h.HandleExecuteSQL, authRequired, adminOnly)
+		apiGroup.POST("/sql/sync", h.HandleSyncSystem, authRequired, adminOnly)
 
 		// Records
 		apiGroup.POST("/collections/:name/records", h.CreateRecord, authOptional, accessCreate)

@@ -29,6 +29,8 @@ const FirewallManager = lazy(() => import('./components/FirewallManager'));
 const WorkspaceManager = lazy(() => import('./components/WorkspaceManager'));
 const WorkspaceSettings = lazy(() => import('./components/WorkspaceSettings'));
 
+const isLikelyJWT = (value) => /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value);
+
 function App() {
     const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('ozy_token'));
     const [isSystemInitialized, setIsSystemInitialized] = useState(true);
@@ -67,13 +69,48 @@ function App() {
     }, [isAuthenticated, workspaceId, loadTables, checkSystemStatus]);
 
     useEffect(() => {
-        const urlParams = new URLSearchParams(window.location.search);
-        const token = urlParams.get('token');
-        if (token) {
-            localStorage.setItem('ozy_token', token);
-            window.history.replaceState({}, document.title, window.location.pathname);
-            setIsAuthenticated(true);
+        const url = new URL(window.location.href);
+        const token = url.searchParams.get('token');
+        if (!token) return;
+
+        const clearTokenFromURL = () => {
+            url.searchParams.delete('token');
+            const search = url.searchParams.toString();
+            const cleanURL = `${url.pathname}${search ? `?${search}` : ''}${url.hash}`;
+            window.history.replaceState({}, document.title, cleanURL);
+        };
+
+        const pathname = window.location.pathname;
+
+        if (pathname === '/reset-password') {
+            sessionStorage.setItem('ozy_reset_token', token);
+            clearTokenFromURL();
+            return;
         }
+
+        if (pathname === '/verify-email') {
+            clearTokenFromURL();
+            fetch('/api/auth/verify-email', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token }),
+            })
+                .finally(() => {
+                    window.history.replaceState({}, document.title, '/');
+                });
+            return;
+        }
+
+        const isCallback = pathname === '/oauth/callback' || pathname.startsWith('/auth/callback');
+        if (isCallback && isLikelyJWT(token)) {
+            localStorage.setItem('ozy_token', token);
+            clearTokenFromURL();
+            setIsAuthenticated(true);
+            return;
+        }
+
+        // Ignore arbitrary query-string tokens to prevent session fixation and token misuse.
+        clearTokenFromURL();
     }, []);
 
     const handleTableSelect = useCallback((tableName) => {

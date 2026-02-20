@@ -1,6 +1,27 @@
 import React, { useState } from 'react';
-import { X, Check, Plus, Trash2, Shield, Zap, Info, Link as LinkIcon, Settings, FileUp } from 'lucide-react';
+import { X, Check, Plus, Trash2, Shield, Zap, Info, Link as LinkIcon, Settings, FileUp, FileText } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
+
+const makeColumnId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+const createColumn = (overrides = {}) => ({
+    id: makeColumnId(),
+    name: '',
+    type: 'text',
+    defaultValue: '',
+    isPrimary: false,
+    isSystem: false,
+    unique: false,
+    required: false,
+    references: '',
+    ...overrides
+});
+
+const getDefaultColumns = () => ([
+    createColumn({ name: 'id', type: 'uuid', defaultValue: 'gen_random_uuid()', isPrimary: true, isSystem: true }),
+    createColumn({ name: 'user_id', type: 'uuid' }),
+    createColumn({ name: 'created_at', type: 'timestamptz', defaultValue: 'now()', isSystem: true })
+]);
 
 const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, schema = 'public' }) => {
     const [name, setName] = useState('');
@@ -10,11 +31,7 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
     const [isRealtimeEnabled, setIsRealtimeEnabled] = useState(false);
 
     // Default columns
-    const [columns, setColumns] = useState([
-        { name: 'id', type: 'uuid', defaultValue: 'gen_random_uuid()', isPrimary: true, isSystem: true },
-        { name: 'user_id', type: 'uuid', defaultValue: '', isPrimary: false, isSystem: false },
-        { name: 'created_at', type: 'timestamptz', defaultValue: 'now()', isPrimary: false, isSystem: true },
-    ]);
+    const [columns, setColumns] = useState(() => getDefaultColumns());
 
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -88,20 +105,17 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
                     type = 'boolean';
                 }
 
-                return {
+                return createColumn({
                     name: header.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
-                    type: type,
-                    defaultValue: '',
-                    isPrimary: false,
-                    isSystem: false
-                };
+                    type
+                });
             });
 
             // Merge with system columns
             setColumns([
-                { name: 'id', type: 'uuid', defaultValue: 'gen_random_uuid()', isPrimary: true, isSystem: true },
+                createColumn({ name: 'id', type: 'uuid', defaultValue: 'gen_random_uuid()', isPrimary: true, isSystem: true }),
                 ...newCols,
-                { name: 'created_at', type: 'timestamptz', defaultValue: 'now()', isPrimary: false, isSystem: true },
+                createColumn({ name: 'created_at', type: 'timestamptz', defaultValue: 'now()', isSystem: true })
             ]);
 
             // Auto-suggest table name from file
@@ -116,27 +130,15 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
     if (!isOpen) return null;
 
     const handleAddColumn = () => {
-        setColumns([...columns, { 
-            name: '', 
-            type: 'text', 
-            defaultValue: '', 
-            isPrimary: false, 
-            unique: false, 
-            required: false, 
-            references: '' 
-        }]);
+        setColumns(prev => [...prev, createColumn()]);
     };
 
     const handleRemoveColumn = (index) => {
-        const newCols = [...columns];
-        newCols.splice(index, 1);
-        setColumns(newCols);
+        setColumns(prev => prev.filter((_, i) => i !== index));
     };
 
     const handleColumnChange = (index, field, value) => {
-        const newCols = [...columns];
-        newCols[index][field] = value;
-        setColumns(newCols);
+        setColumns(prev => prev.map((col, i) => (i === index ? { ...col, [field]: value } : col)));
     };
 
     const handleSave = async () => {
@@ -307,7 +309,7 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
                                     <div className="flex items-center gap-1.5 px-3 py-1.5 bg-green-900/20 border border-green-800/30 rounded text-[10px] font-black text-green-500 uppercase tracking-widest animate-in fade-in zoom-in duration-300">
                                         <Check size={12} /> {csvRecords.length} records staged
                                         <button
-                                            onClick={() => { setCsvRecords([]); setColumns([{ name: 'id', type: 'uuid', defaultValue: 'gen_random_uuid()', isPrimary: true, isSystem: true }, { name: 'user_id', type: 'uuid', defaultValue: '', isPrimary: false, isSystem: false }, { name: 'created_at', type: 'timestamptz', defaultValue: 'now()', isPrimary: false, isSystem: true }]); }}
+                                            onClick={() => { setCsvRecords([]); setColumns(getDefaultColumns()); }}
                                             className="ml-2 hover:text-white"
                                         >
                                             <Trash2 size={10} />
@@ -342,7 +344,7 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
 
                             {/* Column Rows */}
                             {columns.map((col, idx) => (
-                                <div key={idx} className="group grid grid-cols-12 gap-2 items-center bg-[#0c0c0c] border border-[#2e2e2e] rounded px-2 py-2 hover:border-zinc-700 transition-colors">
+                                <div key={col.id} className="group grid grid-cols-12 gap-2 items-center bg-[#0c0c0c] border border-[#2e2e2e] rounded px-2 py-2 hover:border-zinc-700 transition-colors">
                                     <div className="col-span-1 flex justify-center cursor-move text-zinc-600 hover:text-zinc-400">
                                         <div className="space-y-0.5">
                                             <div className="w-3 h-0.5 bg-current rounded-full"></div>
@@ -450,6 +452,8 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
                             ))}
 
                             <button
+                                key="add-column-button"
+                                type="button"
                                 onClick={handleAddColumn}
                                 className="w-full py-2 border border-dashed border-[#2e2e2e] rounded text-xs text-zinc-500 hover:text-zinc-300 hover:border-zinc-600 transition-all flex items-center justify-center gap-2"
                             >
@@ -486,8 +490,5 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
         </div>
     );
 };
-
-// Help icon was missing import
-import { FileText } from 'lucide-react';
 
 export default CreateTableModal;

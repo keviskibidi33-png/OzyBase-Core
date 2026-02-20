@@ -22,11 +22,13 @@ go.work
 
 # Environment variables
 .env
+ .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
 .ozy_secret
+frontend/token.txt
 
 # Frontend dependencies
 node_modules/

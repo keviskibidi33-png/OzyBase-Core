@@ -1,87 +1,86 @@
 #!/bin/bash
 # deploy/scripts/install.sh
-# OzyBase Automated Linux Deployment Script
+# OzyBase automated Linux deployment script
 
-set -e
+set -euo pipefail
 
-# Configuration
 INSTALL_DIR="/opt/OzyBase"
-BIN_NAME="OzyBase"
-SYSTEMD_PATH="/etc/systemd/system/OzyBase.service"
-SYSCTL_PATH="/etc/sysctl.d/99-OzyBase.conf"
-NGINX_AVAILABLE="/etc/nginx/sites-available/OzyBase"
-NGINX_ENABLED="/etc/nginx/sites-enabled/OzyBase"
+SERVICE_NAME="ozybase"
+BIN_NAME="ozybase"
+SYSTEMD_PATH="/etc/systemd/system/ozybase.service"
+SYSCTL_PATH="/etc/sysctl.d/99-ozybase.conf"
+NGINX_AVAILABLE="/etc/nginx/sites-available/ozybase"
+NGINX_ENABLED="/etc/nginx/sites-enabled/ozybase"
 
-echo "🚀 Starting OzyBase Installation..."
+echo "Starting OzyBase installation..."
 
-# 1. Create Dedicated User
-if ! id "OzyBase" &>/dev/null; then
-    echo "👤 Creating OzyBase system user..."
+if ! id "OzyBase" >/dev/null 2>&1; then
+    echo "Creating OzyBase system user..."
     sudo useradd --system --no-create-home --shell /usr/sbin/nologin OzyBase
 fi
 
-# 2. Setup Directories
-echo "📁 Setting up installation directories..."
-sudo mkdir -p $INSTALL_DIR/data
-sudo chown -R OzyBase:OzyBase $INSTALL_DIR
+echo "Setting up installation directories..."
+sudo mkdir -p "$INSTALL_DIR/data"
+sudo chown -R OzyBase:OzyBase "$INSTALL_DIR"
 
-# 3. Copy Application Files
-echo "📦 Deploying application files..."
+echo "Deploying application files..."
 if [ -f "./$BIN_NAME" ]; then
-    sudo cp ./$BIN_NAME $INSTALL_DIR/
-    sudo chmod +x $INSTALL_DIR/$BIN_NAME
+    sudo cp "./$BIN_NAME" "$INSTALL_DIR/"
+    sudo chmod +x "$INSTALL_DIR/$BIN_NAME"
+elif [ -f "./OzyBase" ]; then
+    sudo cp "./OzyBase" "$INSTALL_DIR/ozybase"
+    sudo chmod +x "$INSTALL_DIR/ozybase"
 else
-    echo "⚠️ Warning: $BIN_NAME binary not found in current directory. Please copy it manually to $INSTALL_DIR later."
+    echo "Warning: binary not found. Copy it manually to $INSTALL_DIR later."
 fi
 
 if [ ! -f "$INSTALL_DIR/.env" ]; then
     if [ -f ".env.example" ]; then
-        sudo cp .env.example $INSTALL_DIR/.env
-        echo "✅ Created .env from .env.example"
-        echo "⚠️ REMINDER: Update $INSTALL_DIR/.env with production credentials!"
+        sudo cp .env.example "$INSTALL_DIR/.env"
+        echo "Created .env from .env.example"
+        echo "Reminder: update $INSTALL_DIR/.env with production credentials."
     else
-        echo "⚠️ Warning: .env.example not found."
+        echo "Warning: .env.example not found."
     fi
 fi
 
-# 4. Install Systemd Service
-echo "⚙️ Configuring systemd service..."
-if [ -f "./deploy/systemd/OzyBase.service" ]; then
-    sudo cp ./deploy/systemd/OzyBase.service $SYSTEMD_PATH
+echo "Configuring systemd service..."
+if [ -f "./deploy/systemd/ozybase.service" ]; then
+    sudo cp ./deploy/systemd/ozybase.service "$SYSTEMD_PATH"
     sudo systemctl daemon-reload
-    sudo systemctl enable OzyBase
-    echo "✅ OzyBase service enabled"
+    sudo systemctl enable "$SERVICE_NAME"
+    echo "Systemd service enabled."
 else
-    echo "❌ Error: OzyBase.service file not found in deploy/systemd/"
+    echo "Error: deploy/systemd/ozybase.service not found."
 fi
 
-# 5. Kernel Tuning
-echo "⚡ Optimizing kernel (sysctl)..."
-if [ -f "./deploy/sysctl/99-OzyBase.conf" ]; then
-    sudo cp ./deploy/sysctl/99-OzyBase.conf $SYSCTL_PATH
-    sudo sysctl -p $SYSCTL_PATH
-    echo "✅ Kernel optimized"
+echo "Applying kernel tuning (sysctl)..."
+if [ -f "./deploy/sysctl/99-ozybase.conf" ]; then
+    sudo cp ./deploy/sysctl/99-ozybase.conf "$SYSCTL_PATH"
+    sudo sysctl -p "$SYSCTL_PATH"
+    echo "Kernel tuning applied."
 fi
 
-# 6. Nginx Configuration
-if command -v nginx &>/dev/null; then
-    echo "🌐 Configuring Nginx reverse proxy..."
-    if [ -f "./deploy/nginx/OzyBase.conf" ]; then
-        sudo cp ./deploy/nginx/OzyBase.conf $NGINX_AVAILABLE
-        sudo ln -sf $NGINX_AVAILABLE $NGINX_ENABLED
-        sudo nginx -t && sudo systemctl reload nginx
-        echo "✅ Nginx configured"
+if command -v nginx >/dev/null 2>&1; then
+    echo "Configuring nginx reverse proxy..."
+    if [ -f "./deploy/nginx/ozybase.conf" ]; then
+        sudo cp ./deploy/nginx/ozybase.conf "$NGINX_AVAILABLE"
+        sudo ln -sf "$NGINX_AVAILABLE" "$NGINX_ENABLED"
+        sudo nginx -t
+        sudo systemctl reload nginx
+        echo "Nginx configured."
+    else
+        echo "Warning: deploy/nginx/ozybase.conf not found; skipping nginx site setup."
     fi
 else
-    echo "ℹ️ Nginx not installed. Skipping proxy configuration."
+    echo "Nginx not installed; skipping proxy configuration."
 fi
 
 echo "===================================================="
-echo "✅ OzyBase Installation Complete!"
+echo "OzyBase installation complete"
 echo "===================================================="
-echo "Next Steps:"
-echo "1. Nano $INSTALL_DIR/.env   # Set DB credentials"
-echo "2. sudo systemctl start OzyBase # Start the engine"
-echo "3. sudo journalctl -u OzyBase -f # Watch logs"
+echo "Next steps:"
+echo "1. nano $INSTALL_DIR/.env"
+echo "2. sudo systemctl start $SERVICE_NAME"
+echo "3. sudo journalctl -u $SERVICE_NAME -f"
 echo "===================================================="
-

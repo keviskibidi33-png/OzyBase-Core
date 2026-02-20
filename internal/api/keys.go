@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -55,8 +56,12 @@ func (h *Handler) ListAPIKeys(c echo.Context) error {
 	var keys []APIKey
 	for rows.Next() {
 		var k APIKey
-		if err := rows.Scan(&k.ID, &k.Name, &k.Prefix, &k.Role, &k.IsActive, &k.ExpiresAt, &k.CreatedAt, &k.LastUsedAt, &k.WorkspaceID); err != nil {
+		var workspaceID *string
+		if err := rows.Scan(&k.ID, &k.Name, &k.Prefix, &k.Role, &k.IsActive, &k.ExpiresAt, &k.CreatedAt, &k.LastUsedAt, &workspaceID); err != nil {
 			continue
+		}
+		if workspaceID != nil {
+			k.WorkspaceID = *workspaceID
 		}
 		keys = append(keys, k)
 	}
@@ -87,13 +92,17 @@ func (h *Handler) CreateAPIKey(c echo.Context) error {
 	keyHash := hex.EncodeToString(hash[:])
 
 	workspaceID, _ := c.Get("workspace_id").(string)
+	var workspaceIDVal any
+	if strings.TrimSpace(workspaceID) != "" {
+		workspaceIDVal = workspaceID
+	}
 
 	var id string
 	err = h.DB.Pool.QueryRow(c.Request().Context(), `
 		INSERT INTO _v_api_keys (name, key_hash, prefix, role, workspace_id)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
-	`, req.Name, keyHash, prefix, req.Role, workspaceID).Scan(&id)
+	`, req.Name, keyHash, prefix, req.Role, workspaceIDVal).Scan(&id)
 
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})

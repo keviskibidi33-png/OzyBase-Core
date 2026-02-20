@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"log"
 	"net/smtp"
+	"net/url"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -30,14 +33,14 @@ func (m *LogMailer) Send(to, subject, body string) error {
 
 func (m *LogMailer) SendVerificationEmail(to, token string) error {
 	subject := "Verify your OzyBase Account"
-	link := fmt.Sprintf("http://localhost:5342/verify-email?token=%s", token)
+	link := buildTokenURL("/verify-email", token)
 	body := fmt.Sprintf("Click here to verify your account: %s\nToken: %s", link, token)
 	return m.Send(to, subject, body)
 }
 
 func (m *LogMailer) SendPasswordResetEmail(to, token string) error {
 	subject := "Reset your OzyBase Password"
-	link := fmt.Sprintf("http://localhost:5342/reset-password?token=%s", token)
+	link := buildTokenURL("/reset-password", token)
 	body := fmt.Sprintf("Click here to reset your password: %s\nToken: %s", link, token)
 	return m.Send(to, subject, body)
 }
@@ -94,14 +97,14 @@ func (m *SMTPMailer) Send(to, subject, body string) error {
 
 func (m *SMTPMailer) SendVerificationEmail(to, token string) error {
 	subject := "Verify your OzyBase Account"
-	link := fmt.Sprintf("http://localhost:5342/verify-email?token=%s", token)
+	link := buildTokenURL("/verify-email", token)
 	body := fmt.Sprintf("Click here to verify your account: %s\nToken: %s", link, token)
 	return m.Send(to, subject, body)
 }
 
 func (m *SMTPMailer) SendPasswordResetEmail(to, token string) error {
 	subject := "Reset your OzyBase Password"
-	link := fmt.Sprintf("http://localhost:5342/reset-password?token=%s", token)
+	link := buildTokenURL("/reset-password", token)
 	body := fmt.Sprintf("Click here to reset your password: %s\nToken: %s", link, token)
 	return m.Send(to, subject, body)
 }
@@ -116,4 +119,24 @@ func (m *SMTPMailer) SendWorkspaceInvite(to, workspaceName, inviterEmail string)
 	subject := fmt.Sprintf("Invitation to join %s on OzyBase", workspaceName)
 	body := fmt.Sprintf("%s has invited you to collaborate on the workspace '%s'.\n\nLog in to your dashboard to get started.", inviterEmail, workspaceName)
 	return m.Send(to, subject, body)
+}
+
+func buildTokenURL(path, token string) string {
+	base := strings.TrimSpace(os.Getenv("SITE_URL"))
+	if base == "" {
+		base = "http://localhost:5342"
+	}
+	base = strings.TrimRight(base, "/")
+
+	u, err := url.Parse(base)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		u, _ = url.Parse("http://localhost:5342")
+	}
+
+	u.Path = strings.TrimRight(u.Path, "/") + path
+	query := u.Query()
+	query.Set("token", token)
+	u.RawQuery = query.Encode()
+
+	return u.String()
 }

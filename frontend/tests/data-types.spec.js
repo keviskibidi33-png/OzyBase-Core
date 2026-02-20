@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
 
 // Configuration - Token generated with 'super-secret-key-change-it'
-// Payload: {"user_id":"00000000-0000-0000-0000-000000000001","role":"admin","exp":1893456000,"iat":1707584400}
-const AUTH_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIiwicm9sZSI6ImFkbWluIiwiZXhwIjoxODkzNDU2MDAwLCJpYXQiOjE3MDc1ODQ0MDB9.vIfbLQ_HsfZeIHZbStSea5iVjh7ZkDzhNadFpCZ0zwU';
+// Payload: {"user_id":"f7e86b60-4877-4639-a37a-eaf7a2978677","role":"admin","exp":1893456000,"iat":1707584400}
+const AUTH_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE4OTM0NTYwMDAsImlhdCI6MTcwNzU4NDQwMCwicm9sZSI6ImFkbWluIiwidXNlcl9pZCI6ImY3ZTg2YjYwLTQ4NzctNDYzOS1hMzdhLWVhZjdhMjk3ODY3NyJ9.QEB5fD7aKEtWgg8BhmbZ1_Kxwcxu8z7DW2tutiX5tpY';
 const USER_DATA = { email: 'system@ozybase.local', role: 'admin' };
 
 test.beforeEach(async ({ page }) => {

@@ -141,12 +141,16 @@ func (h *Handler) CreateCollection(c echo.Context) error {
 
 	// Store collection metadata
 	schemaJSON, _ := json.Marshal(req.Schema)
+	var workspaceID any
+	if strings.TrimSpace(req.WorkspaceID) != "" {
+		workspaceID = req.WorkspaceID
+	}
 	var collection Collection
 	err = tx.QueryRow(ctx, `
 		INSERT INTO _v_collections (name, schema_def, list_rule, create_rule, rls_enabled, rls_rule, realtime_enabled, workspace_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id, name, list_rule, create_rule, rls_enabled, rls_rule, realtime_enabled, workspace_id, created_at, updated_at
-	`, req.Name, schemaJSON, req.ListRule, req.CreateRule, req.RlsEnabled, req.RlsRule, req.RealtimeEnabled, req.WorkspaceID).Scan(
+		RETURNING id, name, list_rule, create_rule, rls_enabled, rls_rule, realtime_enabled, COALESCE(workspace_id::text, ''), created_at, updated_at
+	`, req.Name, schemaJSON, req.ListRule, req.CreateRule, req.RlsEnabled, req.RlsRule, req.RealtimeEnabled, workspaceID).Scan(
 		&collection.ID, &collection.Name, &collection.ListRule, &collection.CreateRule,
 		&collection.RlsEnabled, &collection.RlsRule, &collection.RealtimeEnabled, &collection.WorkspaceID, &collection.CreatedAt, &collection.UpdatedAt,
 	)
@@ -811,7 +815,7 @@ func (h *Handler) GetHealthIssues(c echo.Context) error {
 	}
 
 	// 5. Check for unresolved security alerts
-	rows, err = h.DB.Pool.Query(ctx, "SELECT type, severity, details FROM _v_security_alerts WHERE is_resolved = false ORDER BY created_at DESC LIMIT 10")
+	rows, err = h.DB.Pool.Query(ctx, "SELECT type, severity, metadata FROM _v_security_alerts WHERE is_resolved = false ORDER BY created_at DESC LIMIT 10")
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {

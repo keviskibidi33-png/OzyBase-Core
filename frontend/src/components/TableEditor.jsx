@@ -145,6 +145,16 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
         }
     }, [tableName]);
 
+    const fetchRealtimeStatus = useCallback(async () => {
+        if (!tableName) return;
+        try {
+            const res = await fetchWithAuth('/api/collections');
+            const collections = await res.json();
+            const current = collections.find(c => c.name === tableName);
+            if (current) setRealtimeEnabled(current.realtime_enabled);
+        } catch (e) { console.error(e); }
+    }, [tableName]);
+
     const fetchData = useCallback(async () => {
         if (!tableName) return;
         setLoading(true);
@@ -184,16 +194,6 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
             setEditingCell(null); // Clear editing state when table changes
         }
     }, [tableName, fetchData, fetchRealtimeStatus]);
-
-    const fetchRealtimeStatus = useCallback(async () => {
-        if (!tableName) return;
-        try {
-            const res = await fetchWithAuth('/api/collections');
-            const collections = await res.json();
-            const current = collections.find(c => c.name === tableName);
-            if (current) setRealtimeEnabled(current.realtime_enabled);
-        } catch (e) { console.error(e); }
-    }, [tableName]);
 
     const toggleRealtime = useCallback(async () => {
         setIsRealtimeLoading(true);

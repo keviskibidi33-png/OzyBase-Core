@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Database, Lock, Mail, Loader2, ArrowRight, ShieldCheck } from 'lucide-react';
 
 const Login = ({ onLoginSuccess }) => {
@@ -13,6 +13,16 @@ const Login = ({ onLoginSuccess }) => {
     const [message, setMessage] = useState('');
     const [mfaCode, setMfaCode] = useState('');
     const [mfaUser, setMfaUser] = useState(null);
+
+    useEffect(() => {
+        const resetToken = sessionStorage.getItem('ozy_reset_token');
+        if (!resetToken) return;
+
+        setToken(resetToken);
+        setFlow('confirm');
+        setMessage('Recovery token loaded. Set a new password.');
+        sessionStorage.removeItem('ozy_reset_token');
+    }, []);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
