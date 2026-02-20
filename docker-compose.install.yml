@@ -8,6 +8,10 @@ services:
     ports:
       - "${PORT:-8090}:8090"
     environment:
+      DB_USER: ${DB_USER:-ozybase}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
+      DB_NAME: ${DB_NAME:-ozybase}
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
       DATABASE_URL: postgres://${DB_USER:-ozybase}:${DB_PASSWORD:?set DB_PASSWORD}@db:5432/${DB_NAME:-ozybase}?sslmode=${DB_SSLMODE:-disable}
       PORT: "8090"
       JWT_SECRET: ${JWT_SECRET:-}

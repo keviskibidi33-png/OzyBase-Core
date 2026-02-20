@@ -60,6 +60,10 @@ Required vars only:
 - `SITE_URL`
 - `APP_DOMAIN`
 - `DB_PASSWORD`
+Visible DB vars in Coolify:
+- `DB_USER` (default `ozybase`)
+- `DB_NAME` (default `ozybase`)
+- `DB_SSLMODE` (default `disable`)
 
 ### Coolify (managed Postgres)
 Use `docker-compose.coolify.yml`.
