@@ -9,7 +9,8 @@
     <a href="https://goreportcard.com/report/github.com/Xangel0s/OzyBase"><img src="https://img.shields.io/badge/Go%20Report-A%2B-brightgreen.svg" alt="Go Report Card"></a>
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License MIT"></a>
     <a href="#"><img src="https://img.shields.io/badge/Single-Binary-blueviolet.svg" alt="Single Binary"></a>
-    <a href="./CHANGELOG.md"><img src="https://img.shields.io/badge/v1.2.1-Production%20Ready-brightgreen.svg" alt="Version"></a>
+    <a href="https://github.com/Xangel0s/OzyBase/releases/tag/v1.1.0-Enterprise"><img src="https://img.shields.io/badge/Latest%20Tag-v1.1.0--Enterprise-blue.svg" alt="Latest Tag"></a>
+    <a href="./docs/DEPLOYMENT.md"><img src="https://img.shields.io/badge/Production%20Smoke-Validated-success.svg" alt="Production Smoke Validated"></a>
   </p>
 </div>
 
