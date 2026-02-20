@@ -37,6 +37,8 @@ func HandleGlobalCommands(args []string) (bool, error) {
 	case "version", "--version", "-v":
 		fmt.Println(version.String())
 		return true, nil
+	case "init":
+		return true, handleInit(args[2:])
 	case "upgrade":
 		return true, handleUpgrade(args[2:])
 	case "functions":

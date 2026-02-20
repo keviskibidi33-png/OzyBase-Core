@@ -54,6 +54,15 @@ func run() error {
 	// Initialize Logger
 	logger.Init(os.Getenv("DEBUG") == "true")
 	logger.Log.Info().Msg("🎯 OzyBase initializing...")
+	if cfg.GeneratedJWTSecret {
+		logger.Log.Warn().Msg("JWT_SECRET was missing and has been generated automatically into .ozy_secret")
+	}
+	if cfg.DerivedAllowedOrigin {
+		logger.Log.Info().Strs("origins", cfg.AllowedOrigins).Msg("ALLOWED_ORIGINS was auto-derived from SITE_URL/APP_DOMAIN")
+	}
+	for _, warning := range cfg.SecurityWarnings {
+		logger.Log.Warn().Str("area", "config-security").Msg(warning)
+	}
 
 	// Connect to database
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
