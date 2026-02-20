@@ -190,9 +190,9 @@ const ConnectionModal = ({ isOpen, onClose }) => {
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center">
-            <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
+            <div className="absolute inset-0 bg-black/80 backdrop-blur-sm modal-overlay-enter" onClick={onClose} />
 
-            <div className="relative bg-[#1a1a1a] border border-[#2e2e2e] rounded-2xl shadow-2xl w-full max-w-5xl max-h-[85vh] overflow-hidden animate-in zoom-in-95 fade-in duration-200">
+            <div className="relative bg-[#1a1a1a] border border-[#2e2e2e] rounded-2xl shadow-2xl w-full max-w-5xl max-h-[85vh] overflow-hidden modal-panel-enter">
                 <div className="px-6 py-4 border-b border-[#2e2e2e] flex items-center justify-between">
                     <div>
                         <h2 className="text-lg font-black text-white uppercase tracking-tight">Connect to your project</h2>
@@ -445,6 +445,26 @@ const ConnectionModal = ({ isOpen, onClose }) => {
             <style
                 dangerouslySetInnerHTML={{
                     __html: `
+                    @keyframes modalOverlayIn {
+                        from { opacity: 0; }
+                        to { opacity: 1; }
+                    }
+                    @keyframes modalPanelIn {
+                        from {
+                            opacity: 0;
+                            transform: translateY(14px) scale(0.98);
+                        }
+                        to {
+                            opacity: 1;
+                            transform: translateY(0) scale(1);
+                        }
+                    }
+                    .modal-overlay-enter {
+                        animation: modalOverlayIn 180ms ease-out;
+                    }
+                    .modal-panel-enter {
+                        animation: modalPanelIn 220ms cubic-bezier(0.22, 1, 0.36, 1);
+                    }
                     .custom-scrollbar::-webkit-scrollbar {
                         width: 6px;
                     }
