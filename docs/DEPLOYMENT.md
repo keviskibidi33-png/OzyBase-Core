@@ -148,6 +148,30 @@ Confirm:
 - Overly strict `ALLOWED_ORIGINS` mismatch causing frontend auth failures.
 - Running with `DEBUG=true` in production.
 
+## 11. Coolify Deployment (Recommended)
+Use `docker-compose.coolify.yml` with a managed PostgreSQL service.
+
+### Variables to set in Coolify
+- `DATABASE_URL` (required)
+- `JWT_SECRET` (required, 64+ random bytes)
+- `SITE_URL` (required, e.g. `https://api.example.com`)
+- `APP_DOMAIN` (required, e.g. `example.com`)
+- `ALLOWED_ORIGINS` (required, comma-separated URLs)
+- `DEBUG=false`
+- `OZY_STRICT_SECURITY=true` (recommended in production)
+- `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`
+- SMTP vars if email flows are needed
+
+### Notes
+- Keep PostgreSQL private and use TLS in `DATABASE_URL` (`sslmode=require` or stronger).
+- With `OZY_STRICT_SECURITY=true`, startup fails on insecure public DB URLs or wildcard origins.
+- Persist volumes:
+  - `/app/data`
+  - `/app/migrations`
+  - `/app/functions`
+- Expose internal port `8090` in Coolify and attach your domain.
+- Health check endpoint: `/api/health`.
+
 ## 10. Rollback Strategy
 - Keep image tags immutable per release.
 - Roll back by redeploying previous image + validated `.env`.

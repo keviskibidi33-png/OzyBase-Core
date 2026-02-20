@@ -54,8 +54,17 @@ go run ./cmd/OzyBase
 docker compose up -d --build
 ```
 
+### Coolify (managed Postgres)
+Use `docker-compose.coolify.yml` and set `DATABASE_URL` + required auth/domain env vars in Coolify.
+
+Install-to-play defaults:
+- If `JWT_SECRET` is missing, OzyBase auto-generates it into `.ozy_secret`.
+- If `ALLOWED_ORIGINS` is missing, OzyBase derives safe defaults from `SITE_URL` and `APP_DOMAIN`.
+- Set `OZY_STRICT_SECURITY=true` in production to fail fast on insecure config.
+
 ### CLI utility commands
 ```bash
+ozybase init
 ozybase version
 ozybase upgrade
 ozybase functions init hello
