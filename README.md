@@ -1,41 +1,37 @@
-﻿# OzyBase Core
+﻿# OzyBase Core 🛡️🚀
 
-OzyBase Core is a Go + PostgreSQL Backend-as-a-Service focused on low operational cost, fast deployment, and strong production security defaults.
+<div align="center">
+  <img src="https://raw.githubusercontent.com/Xangel0s/OzyBase/main/docs/banner.jpg" alt="OzyBase Banner" width="100%" />
+  <br/>
+  <b>The high-performance, open-source Backend-as-a-Service (BaaS) for the next generation of apps.</b>
+  <br/><br/>
+  <p>
+    <a href="https://goreportcard.com/report/github.com/Xangel0s/OzyBase"><img src="https://img.shields.io/badge/Go%20Report-A%2B-brightgreen.svg" alt="Go Report Card"></a>
+    <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License MIT"></a>
+    <a href="#"><img src="https://img.shields.io/badge/Single-Binary-blueviolet.svg" alt="Single Binary"></a>
+    <a href="./CHANGELOG.md"><img src="https://img.shields.io/badge/v1.2.1-Production%20Ready-brightgreen.svg" alt="Version"></a>
+  </p>
+</div>
 
-## What You Get
-- Authentication (email/password, OAuth, sessions, 2FA)
-- Dynamic collections and table management from UI
-- Realtime events and webhooks
-- File storage (local and S3-compatible)
-- Workspaces (multi-tenant isolation)
-- SQL terminal with admin-only enforcement
-- Integrated security dashboard and audit trails
+---
 
-## Production Hardening Status (2026-02-20)
-This repository includes the following production hardening changes already applied and validated:
+## ⚡ PocketBase Simplicity, Supabase Power
 
-- JWT hardening:
-  - JWT subject (`user_id`) is validated against `_v_users` on every authenticated request.
-  - Role and email are sourced from DB (not trusted only from JWT claims).
-  - Tokens signed with valid secret but non-existent `user_id` are rejected with `401`.
-- API key compatibility:
-  - API keys continue working for protected routes.
-  - `workspace_id` handling is safe when empty (`NULL`, no UUID cast errors).
-- URL token safety in frontend:
-  - Invalid `?token=` is removed from URL and not persisted.
-  - `verify-email` and `reset-password` flows sanitize query tokens from URL.
-- Security headers and cookies:
-  - CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy.
-  - CSRF cookie with `HttpOnly`, `Secure`, `SameSite=Strict`.
-- Docker/deploy hardening:
-  - Required env vars enforced in `docker-compose.yml`.
-  - Health checks enabled for app and DB.
-  - Rate limiting env exposed and configurable.
-- Reliability fixes:
-  - `CreateTableModal` flow stabilized.
-  - Audit log insertion handles non-UUID identities safely.
+OzyBase is a high-performance, single-binary BaaS for authentication, dynamic collections, realtime subscriptions, and file storage with zero-friction deployment.
 
-## Install to Play
+## ✅ Production Hardening Status (2026-02-20)
+
+- JWT subject validated against `_v_users` on authenticated requests.
+- Role/email sourced from DB (not only JWT claims).
+- Tokens signed with non-existent user are rejected (`401`).
+- API keys remain valid for protected routes.
+- URL query token sanitization active in frontend flows.
+- Security headers and CSRF secure cookie enabled.
+- Docker compose requires critical env vars and includes health checks.
+- Rate limiter tuning exposed via env (`RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`).
+
+## 🚀 Quick Start
+
 ### Local
 ```bash
 git clone https://github.com/Xangel0s/OzyBase.git
@@ -43,15 +39,12 @@ cd OzyBase-Core
 go run ./cmd/OzyBase
 ```
 
-### Docker (recommended)
+### Docker
 ```bash
 docker compose up -d --build
 ```
 
-See `docs/DEPLOYMENT.md` for full production setup with domain and TLS.
-
-## Required Environment Variables
-Use `.env` (never commit it):
+## 🔐 Required Environment Variables
 
 ```env
 PORT=8090
@@ -59,34 +52,22 @@ SITE_URL=https://api.example.com
 APP_DOMAIN=example.com
 ALLOWED_ORIGINS=https://app.example.com,https://api.example.com
 JWT_SECRET=<64-byte-random-secret>
-
 DB_USER=ozyuser
 DB_PASSWORD=<strong-password>
 DB_NAME=Ozydb
 DB_SSLMODE=verify-full
-
 RATE_LIMIT_RPS=20
 RATE_LIMIT_BURST=20
 DEBUG=false
 ```
 
-## Production Validation Commands
-```bash
-# build/test backend
-go test ./...
+## 📚 Documentation
 
-# frontend e2e
-cd frontend
-npx playwright test --reporter=line
-
-# health and security headers
-curl -i http://localhost:8090/api/health
-```
-
-## Main Docs
-- Deployment runbook: `docs/DEPLOYMENT.md`
-- Security suite: `docs/SECURITY_SUITE.md`
-- Notifications and alerting: `docs/SECURITY_NOTIFICATIONS.md`
-- Project status: `docs/PROJECT_STATUS_MASTER.md`
+- Deployment Runbook: `docs/DEPLOYMENT.md`
+- Security Suite: `docs/SECURITY_SUITE.md`
+- Security Notifications: `docs/SECURITY_NOTIFICATIONS.md`
+- Project Status: `docs/PROJECT_STATUS_MASTER.md`
 - Roadmap: `docs/ROADMAP.md`
 - Changelog: `CHANGELOG.md`
+
+Developed by **Xangel0s**.
