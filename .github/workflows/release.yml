@@ -34,6 +34,11 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3.8.2
 
+      - name: Install syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+          syft version
+
       - name: Build frontend assets
         run: |
           cd frontend
