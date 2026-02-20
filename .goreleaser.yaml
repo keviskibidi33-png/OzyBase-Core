@@ -10,7 +10,7 @@ before:
 
 builds:
   - id: ozybase
-    main: ./cmd/OzyBase
+    main: ./cmd/ozybase
     binary: ozybase
     env:
       - CGO_ENABLED=0
@@ -60,4 +60,3 @@ changelog:
       - "^docs:"
       - "^test:"
       - "^chore:"
-
