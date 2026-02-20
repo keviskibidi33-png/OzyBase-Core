@@ -184,6 +184,12 @@ Required variables:
 
 Everything else has safe defaults.
 
+Visible DB variables in Coolify (install stack):
+- `DB_USER` (default: `ozybase`)
+- `DB_PASSWORD` (required)
+- `DB_NAME` (default: `ozybase`)
+- `DB_SSLMODE` (default: `disable`)
+
 `DATABASE_URL` is built automatically in compose from DB vars:
 `postgres://${DB_USER:-ozybase}:${DB_PASSWORD}@db:5432/${DB_NAME:-ozybase}?sslmode=${DB_SSLMODE:-disable}`
 
