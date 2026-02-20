@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/big"
 	"os"
+	"strings"
 
 	"github.com/Xangel0s/OzyBase/internal/data"
 	"golang.org/x/crypto/bcrypt"
@@ -41,7 +42,12 @@ func EnsureAdminUser(db *data.DB) {
 
 	email := os.Getenv("INITIAL_ADMIN_EMAIL")
 	if email == "" {
-		email = "system@ozybase.local"
+		appDomain := strings.TrimSpace(os.Getenv("APP_DOMAIN"))
+		if appDomain == "" || appDomain == "localhost" || strings.HasPrefix(appDomain, "localhost:") {
+			email = "system@ozybase.local"
+		} else {
+			email = "admin@" + appDomain
+		}
 	}
 
 	password := os.Getenv("INITIAL_ADMIN_PASSWORD")
