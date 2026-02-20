@@ -115,8 +115,13 @@ func run() error {
 		return err
 	}
 
-	// Auto-setup admin user
-	ozyauth.EnsureAdminUser(db)
+	// Optional admin bootstrap.
+	// Default flow keeps system uninitialized so Setup Wizard appears first.
+	if shouldBootstrapAdminFromEnv() {
+		ozyauth.EnsureAdminUser(db)
+	} else {
+		logger.Log.Info().Msg("Admin bootstrap skipped. Setup Wizard will handle first-time initialization.")
+	}
 
 	// CLI Commands handling
 	if handleCLI(db) {
@@ -243,6 +248,19 @@ func resolveInitialAdminEmail() string {
 		return "system@ozybase.local"
 	}
 	return "admin@" + appDomain
+}
+
+func shouldBootstrapAdminFromEnv() bool {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("OZY_AUTO_BOOTSTRAP_ADMIN")), "true") {
+		return true
+	}
+	if strings.TrimSpace(os.Getenv("INITIAL_ADMIN_EMAIL")) != "" {
+		return true
+	}
+	if strings.TrimSpace(os.Getenv("INITIAL_ADMIN_PASSWORD")) != "" {
+		return true
+	}
+	return false
 }
 
 func initOAuth() {

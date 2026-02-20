@@ -261,6 +261,21 @@ const ConnectionModal = ({ isOpen, onClose }) => {
                                         </select>
                                     </div>
 
+                                    {(!connectionInfo.hasReplica || !connectionInfo.hasPooler) && (
+                                        <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-3">
+                                            {!connectionInfo.hasReplica && (
+                                                <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">
+                                                    Read replica unavailable. Configure DB_READ_REPLICA_HOST and DB_READ_REPLICA_PORT.
+                                                </p>
+                                            )}
+                                            {!connectionInfo.hasPooler && (
+                                                <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider mt-1">
+                                                    Pooler unavailable. Configure DB_POOLER_HOST and DB_POOLER_PORT.
+                                                </p>
+                                            )}
+                                        </div>
+                                    )}
+
                                     <div className="space-y-4">
                                         <div>
                                             <div className="flex items-center justify-between mb-2">

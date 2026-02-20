@@ -27,7 +27,7 @@ func (h *Handler) SetupSystem(c echo.Context) error {
 	var req struct {
 		Email        string `json:"email"`
 		Password     string `json:"password"`
-		Mode         string `json:"mode"`          // "clean" or "secure"
+		Mode         string `json:"mode"`          // "clean", "secure", or "migrate"
 		AllowCountry string `json:"allow_country"` // Current country to allow if secure mode
 	}
 
@@ -67,7 +67,7 @@ func (h *Handler) SetupSystem(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create admin: " + err.Error()})
 	}
 
-	// 3. Apply Configuration based on Mode
+	// 3. Apply configuration based on mode
 	if req.Mode == "secure" {
 		// A. Enable Geo-Fencing for the provided country
 		if req.AllowCountry != "" {
@@ -94,6 +94,14 @@ func (h *Handler) SetupSystem(c echo.Context) error {
 		`)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to initialize audit logs"})
+		}
+	} else if req.Mode == "migrate" {
+		_, err = tx.Exec(c.Request().Context(), `
+			INSERT INTO _v_audit_logs (method, path, status, country)
+			VALUES ('SYSTEM', 'SETUP_MIGRATE', 200, 'SYSTEM')
+		`)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to initialize migration setup logs"})
 		}
 	}
 
