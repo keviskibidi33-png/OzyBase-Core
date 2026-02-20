@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -107,11 +108,15 @@ func (h *Handler) ListRecords(c echo.Context) error {
 	offsetStr := c.QueryParam("offset")
 	limit := 100 // Default limit
 	if limitStr != "" {
-		fmt.Sscanf(limitStr, "%d", &limit)
+		if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
 	}
 	offset := 0
 	if offsetStr != "" {
-		fmt.Sscanf(offsetStr, "%d", &offset)
+		if parsedOffset, err := strconv.Atoi(offsetStr); err == nil && parsedOffset >= 0 {
+			offset = parsedOffset
+		}
 	}
 
 	// Inject RLS filter if enabled

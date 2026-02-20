@@ -33,6 +33,15 @@ OzyBase is a high-performance, single-binary BaaS for authentication, dynamic co
 
 ## 🚀 Quick Start
 
+### Install (latest release)
+```bash
+curl -fsSL https://raw.githubusercontent.com/Xangel0s/OzyBase/main/scripts/install.sh | bash
+```
+
+```powershell
+irm https://raw.githubusercontent.com/Xangel0s/OzyBase/main/scripts/install.ps1 | iex
+```
+
 ### Local
 ```bash
 git clone https://github.com/Xangel0s/OzyBase.git
@@ -43,6 +52,13 @@ go run ./cmd/OzyBase
 ### Docker
 ```bash
 docker compose up -d --build
+```
+
+### CLI utility commands
+```bash
+ozybase version
+ozybase upgrade
+ozybase functions init hello
 ```
 
 ## 🔐 Required Environment Variables

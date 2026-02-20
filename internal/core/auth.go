@@ -128,7 +128,9 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*AuthL
 func (s *AuthService) generateToken(userID, role string) (string, error) {
 	// Generate a unique ID for this token to prevent collisions if generated in same second
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate token entropy: %w", err)
+	}
 	jti := hex.EncodeToString(b)
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{

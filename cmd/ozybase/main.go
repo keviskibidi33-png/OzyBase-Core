@@ -13,6 +13,7 @@ import (
 
 	"github.com/Xangel0s/OzyBase/internal/api"
 	ozyauth "github.com/Xangel0s/OzyBase/internal/auth"
+	"github.com/Xangel0s/OzyBase/internal/cli"
 	"github.com/Xangel0s/OzyBase/internal/config"
 	"github.com/Xangel0s/OzyBase/internal/core"
 	"github.com/Xangel0s/OzyBase/internal/data"
@@ -36,6 +37,14 @@ func main() {
 }
 
 func run() error {
+	handled, err := cli.HandleGlobalCommands(os.Args)
+	if err != nil {
+		return err
+	}
+	if handled {
+		return nil
+	}
+
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {

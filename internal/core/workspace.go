@@ -29,7 +29,7 @@ func (s *WorkspaceService) CreateWorkspace(ctx context.Context, name, ownerID st
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var ws Workspace
 	err = tx.QueryRow(ctx, `

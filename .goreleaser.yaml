@@ -1,0 +1,63 @@
+version: 2
+
+project_name: ozybase
+
+before:
+  hooks:
+    - go mod download
+    - bash -c "cd frontend && npm ci && npm run build"
+    - bash -c "rm -rf internal/api/frontend_dist && mkdir -p internal/api/frontend_dist && cp -R frontend/dist/. internal/api/frontend_dist/"
+
+builds:
+  - id: ozybase
+    main: ./cmd/OzyBase
+    binary: ozybase
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/Xangel0s/OzyBase/internal/version.Version={{.Version}} -X github.com/Xangel0s/OzyBase/internal/version.Commit={{.Commit}} -X github.com/Xangel0s/OzyBase/internal/version.Date={{.Date}} -X github.com/Xangel0s/OzyBase/internal/version.BuiltBy=goreleaser
+
+archives:
+  - id: binaries
+    ids:
+      - ozybase
+    name_template: "ozybase_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: checksums.txt
+
+sboms:
+  - artifacts: archive
+
+signs:
+  - artifacts: checksum
+    cmd: cosign
+    args:
+      - sign-blob
+      - --yes
+      - --output-signature=${signature}
+      - --output-certificate=${certificate}
+      - ${artifact}
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+

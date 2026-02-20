@@ -294,7 +294,7 @@ func (h *Handler) UpdateRealtimeToggle(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// 1. Update Metadata
 	_, err = tx.Exec(ctx, "UPDATE _v_collections SET realtime_enabled = $1 WHERE name = $2", req.Enabled, req.Name)
