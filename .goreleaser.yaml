@@ -40,16 +40,6 @@ checksum:
 sboms:
   - artifacts: archive
 
-signs:
-  - artifacts: checksum
-    cmd: cosign
-    args:
-      - sign-blob
-      - --yes
-      - --output-signature=${signature}
-      - --output-certificate=${certificate}
-      - ${artifact}
-
 changelog:
   use: git
   sort: asc
