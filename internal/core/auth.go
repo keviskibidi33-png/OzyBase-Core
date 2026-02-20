@@ -390,3 +390,9 @@ func (s *AuthService) RevokeSession(ctx context.Context, sessionID, userID strin
 	`, sessionID, userID)
 	return err
 }
+
+// RevokeAllSessions deletes all active sessions (incident response operation).
+func (s *AuthService) RevokeAllSessions(ctx context.Context) error {
+	_, err := s.db.Pool.Exec(ctx, `DELETE FROM _v_sessions`)
+	return err
+}

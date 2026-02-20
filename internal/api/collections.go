@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/Xangel0s/OzyBase/internal/data"
+	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 )
 
@@ -513,6 +516,18 @@ type ProjectInfo struct {
 	Port             string      `json:"port"`
 	Database         string      `json:"database"`
 	User             string      `json:"user"`
+	Password         string      `json:"password,omitempty"`
+	SSLMode          string      `json:"ssl_mode,omitempty"`
+	PoolerHost       string      `json:"pooler_host,omitempty"`
+	PoolerPort       string      `json:"pooler_port,omitempty"`
+	PoolerTxPort     string      `json:"pooler_tx_port,omitempty"`
+	ReadReplicaHost  string      `json:"read_replica_host,omitempty"`
+	ReadReplicaPort  string      `json:"read_replica_port,omitempty"`
+	ReadReplicaMode  string      `json:"read_replica_ssl_mode,omitempty"`
+	APIURL           string      `json:"api_url,omitempty"`
+	ServiceRoleKey   string      `json:"service_role_key,omitempty"`
+	CanViewSecrets   bool        `json:"can_view_secrets"`
+	InternalOnlyHost bool        `json:"internal_only_host"`
 	TableCount       int         `json:"table_count"`
 	UserTableCount   int         `json:"user_table_count"`
 	SystemTableCount int         `json:"system_table_count"`
@@ -683,8 +698,211 @@ func (h *Handler) GetProjectInfo(c echo.Context) error {
 	info.Host = "localhost"
 	info.Port = "5432"
 	info.User = "postgres"
+	info.SSLMode = "disable"
+
+	if conn := resolveProjectConnectionInfo(); conn != nil {
+		if conn.Host != "" {
+			info.Host = conn.Host
+		}
+		if conn.Port != "" {
+			info.Port = conn.Port
+		}
+		if conn.Database != "" {
+			info.Database = conn.Database
+			info.Name = conn.Database
+		}
+		if conn.User != "" {
+			info.User = conn.User
+		}
+		if conn.Password != "" {
+			info.Password = conn.Password
+		}
+		if conn.SSLMode != "" {
+			info.SSLMode = conn.SSLMode
+		}
+		info.PoolerHost = conn.PoolerHost
+		info.PoolerPort = conn.PoolerPort
+		info.PoolerTxPort = conn.PoolerTxPort
+		info.ReadReplicaHost = conn.ReadReplicaHost
+		info.ReadReplicaPort = conn.ReadReplicaPort
+		info.ReadReplicaMode = conn.ReadReplicaMode
+		info.InternalOnlyHost = conn.InternalOnlyHost
+	}
+
+	if apiURL := readEnvForProjectInfo("SITE_URL"); apiURL != "" {
+		info.APIURL = strings.TrimRight(apiURL, "/")
+	}
+
+	role, _ := c.Get("role").(string)
+	info.CanViewSecrets = role == "admin"
+	if info.CanViewSecrets {
+		if key := firstNonEmptyEnv("SERVICE_ROLE_KEY", "OZY_SERVICE_ROLE_KEY"); key != "" {
+			info.ServiceRoleKey = key
+		}
+		if info.Password == "" {
+			info.Password = "[set in DATABASE_URL]"
+		}
+	} else {
+		info.Password = ""
+	}
 
 	return c.JSON(http.StatusOK, info)
+}
+
+type projectConnectionInfo struct {
+	Host             string
+	Port             string
+	Database         string
+	User             string
+	Password         string
+	SSLMode          string
+	PoolerHost       string
+	PoolerPort       string
+	PoolerTxPort     string
+	ReadReplicaHost  string
+	ReadReplicaPort  string
+	ReadReplicaMode  string
+	InternalOnlyHost bool
+}
+
+func resolveProjectConnectionInfo() *projectConnectionInfo {
+	host := readEnvForProjectInfo("DB_PUBLIC_HOST")
+	port := readEnvForProjectInfo("DB_PUBLIC_PORT")
+	db := readEnvForProjectInfo("DB_NAME")
+	user := readEnvForProjectInfo("DB_USER")
+	password := readEnvForProjectInfo("DB_PASSWORD")
+	sslmode := readEnvForProjectInfo("DB_SSLMODE")
+	poolerHost := firstNonEmptyEnv("DB_POOLER_HOST", "POOLER_HOST")
+	poolerPort := firstNonEmptyEnv("DB_POOLER_PORT", "POOLER_PORT")
+	poolerTxPort := firstNonEmptyEnv("DB_POOLER_TX_PORT", "POOLER_TX_PORT")
+	readReplicaHost := firstNonEmptyEnv("DB_READ_REPLICA_HOST", "READ_REPLICA_HOST")
+	readReplicaPort := firstNonEmptyEnv("DB_READ_REPLICA_PORT", "READ_REPLICA_PORT")
+	readReplicaMode := firstNonEmptyEnv("DB_READ_REPLICA_SSLMODE", "READ_REPLICA_SSLMODE")
+
+	if host == "" {
+		host = readEnvForProjectInfo("DB_HOST")
+	}
+	if port == "" {
+		port = readEnvForProjectInfo("DB_PORT")
+	}
+
+	if host == "" || db == "" || user == "" {
+		if parsed := parseDatabaseURL(readEnvForProjectInfo("DATABASE_URL")); parsed != nil {
+			if host == "" {
+				host = parsed.Host
+			}
+			if port == "" {
+				port = parsed.Port
+			}
+			if db == "" {
+				db = parsed.Database
+			}
+			if user == "" {
+				user = parsed.User
+			}
+			if password == "" {
+				password = parsed.Password
+			}
+			if sslmode == "" {
+				sslmode = parsed.SSLMode
+			}
+		}
+	}
+
+	if host == "" {
+		host = "localhost"
+	}
+	if port == "" {
+		port = "5432"
+	}
+	if db == "" {
+		db = "ozybase"
+	}
+	if user == "" {
+		user = "postgres"
+	}
+	if sslmode == "" {
+		sslmode = "disable"
+	}
+	if poolerPort == "" {
+		poolerPort = "6543"
+	}
+	if poolerTxPort == "" {
+		poolerTxPort = "6543"
+	}
+	if readReplicaMode == "" {
+		readReplicaMode = sslmode
+	}
+
+	return &projectConnectionInfo{
+		Host:             host,
+		Port:             port,
+		Database:         db,
+		User:             user,
+		Password:         password,
+		SSLMode:          sslmode,
+		PoolerHost:       poolerHost,
+		PoolerPort:       poolerPort,
+		PoolerTxPort:     poolerTxPort,
+		ReadReplicaHost:  readReplicaHost,
+		ReadReplicaPort:  readReplicaPort,
+		ReadReplicaMode:  readReplicaMode,
+		InternalOnlyHost: isInternalDBHost(host),
+	}
+}
+
+func parseDatabaseURL(raw string) *projectConnectionInfo {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil
+	}
+	password, _ := u.User.Password()
+	sslmode := u.Query().Get("sslmode")
+	if sslmode == "" {
+		sslmode = "disable"
+	}
+	return &projectConnectionInfo{
+		Host:     u.Hostname(),
+		Port:     u.Port(),
+		Database: strings.TrimPrefix(u.Path, "/"),
+		User:     u.User.Username(),
+		Password: password,
+		SSLMode:  sslmode,
+	}
+}
+
+func firstNonEmptyEnv(keys ...string) string {
+	for _, key := range keys {
+		if v := readEnvForProjectInfo(key); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func readEnvForProjectInfo(key string) string {
+	val := strings.TrimSpace(os.Getenv(key))
+	if val == "" {
+		return ""
+	}
+	if isSetPlaceholder(val, key) {
+		return ""
+	}
+	return val
+}
+
+func isSetPlaceholder(value, key string) bool {
+	v := strings.ToLower(strings.TrimSpace(value))
+	k := strings.ToLower(strings.TrimSpace(key))
+	return v == "set_"+k || v == "set "+k || v == "set-"+k || v == "set:"+k
+}
+
+func isInternalDBHost(host string) bool {
+	h := strings.ToLower(strings.TrimSpace(host))
+	return h == "localhost" || h == "127.0.0.1" || h == "db" || strings.HasSuffix(h, ".internal")
 }
 
 // HealthIssue represents a security or performance recommendation
@@ -886,14 +1104,32 @@ func (h *Handler) FixHealthIssues(c echo.Context) error {
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
 
+		ownerColumn, ownerErr := resolveRLSOwnerColumn(ctx, tx, tableName)
+		if ownerErr != nil || ownerColumn == "" {
+			return c.JSON(http.StatusBadRequest, map[string]string{
+				"error": "RLS auto-fix requires owner column (owner_id, user_id, created_by)",
+			})
+		}
+		rule := fmt.Sprintf("%s = auth.uid()", ownerColumn)
+
 		// 1. Primary PG RLS (Native)
 		sql := fmt.Sprintf("ALTER TABLE %s ENABLE ROW LEVEL SECURITY", tableName)
 		if _, err := tx.Exec(ctx, sql); err != nil {
 			log.Printf("Warning: Failed to enable native RLS (might not have permission): %v", err)
 		}
+		policySQL := fmt.Sprintf("DROP POLICY IF EXISTS policy_ozy_%s ON %s", tableName, tableName)
+		_, _ = tx.Exec(ctx, policySQL)
+		policyName := fmt.Sprintf("policy_ozy_%s", tableName)
+		if err := h.DB.CreatePolicy(ctx, tx, tableName, policyName, rule); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create RLS policy: " + err.Error()})
+		}
 
 		// 2. OzyBase Metadata RLS (Internal)
-		_, err = tx.Exec(ctx, "UPDATE _v_collections SET rls_enabled = true, rls_rule = 'user_id = auth.uid()' WHERE name = $1", tableName)
+		_, err = tx.Exec(ctx, `
+			UPDATE _v_collections
+			SET rls_enabled = true, rls_rule = $2, list_rule = 'auth', create_rule = 'admin', update_rule = 'auth', delete_rule = 'auth'
+			WHERE name = $1
+		`, tableName, rule)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update metadata: " + err.Error()})
 		}
@@ -987,4 +1223,147 @@ func (h *Handler) FixHealthIssues(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusNotFound, map[string]string{"error": "Fix strategy not found for this issue: " + req.Issue})
+}
+
+type EnforceRLSResult struct {
+	Table       string `json:"table"`
+	Status      string `json:"status"`
+	Rule        string `json:"rule,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// EnforceRLSAll enables RLS on all user collections with an owner column and tightens ACL defaults.
+func (h *Handler) EnforceRLSAll(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 20*time.Second)
+	defer cancel()
+
+	rows, err := h.DB.Pool.Query(ctx, `
+		SELECT name, rls_enabled
+		FROM _v_collections
+		WHERE name NOT LIKE '_v_%' AND name NOT LIKE '_ozy_%'
+		ORDER BY name
+	`)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to list collections"})
+	}
+	defer rows.Close()
+
+	type entry struct {
+		Name       string
+		RLSEnabled bool
+	}
+	var collections []entry
+	for rows.Next() {
+		var e entry
+		if scanErr := rows.Scan(&e.Name, &e.RLSEnabled); scanErr == nil {
+			collections = append(collections, e)
+		}
+	}
+
+	tx, err := h.DB.Pool.Begin(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to start transaction"})
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	results := make([]EnforceRLSResult, 0, len(collections))
+	for _, col := range collections {
+		if !data.IsValidIdentifier(col.Name) {
+			results = append(results, EnforceRLSResult{
+				Table:       col.Name,
+				Status:      "skipped",
+				Description: "invalid identifier",
+			})
+			continue
+		}
+
+		ownerColumn, ownerErr := resolveRLSOwnerColumn(ctx, tx, col.Name)
+		if ownerErr != nil || ownerColumn == "" {
+			results = append(results, EnforceRLSResult{
+				Table:       col.Name,
+				Status:      "skipped",
+				Description: "owner column missing (owner_id/user_id/created_by)",
+			})
+			continue
+		}
+
+		rule := fmt.Sprintf("%s = auth.uid()", ownerColumn)
+		enableSQL := fmt.Sprintf("ALTER TABLE %s ENABLE ROW LEVEL SECURITY", col.Name)
+		if _, execErr := tx.Exec(ctx, enableSQL); execErr != nil {
+			results = append(results, EnforceRLSResult{
+				Table:       col.Name,
+				Status:      "error",
+				Description: "failed to enable native RLS",
+			})
+			continue
+		}
+
+		dropPolicySQL := fmt.Sprintf("DROP POLICY IF EXISTS policy_ozy_%s ON %s", col.Name, col.Name)
+		_, _ = tx.Exec(ctx, dropPolicySQL)
+		policyName := fmt.Sprintf("policy_ozy_%s", col.Name)
+		if policyErr := h.DB.CreatePolicy(ctx, tx, col.Name, policyName, rule); policyErr != nil {
+			results = append(results, EnforceRLSResult{
+				Table:       col.Name,
+				Status:      "error",
+				Description: "failed to create RLS policy",
+			})
+			continue
+		}
+
+		if _, metaErr := tx.Exec(ctx, `
+			UPDATE _v_collections
+			SET rls_enabled = true, rls_rule = $2, list_rule = 'auth', create_rule = 'admin', update_rule = 'auth', delete_rule = 'auth'
+			WHERE name = $1
+		`, col.Name, rule); metaErr != nil {
+			results = append(results, EnforceRLSResult{
+				Table:       col.Name,
+				Status:      "error",
+				Description: "failed to update metadata",
+			})
+			continue
+		}
+
+		results = append(results, EnforceRLSResult{
+			Table:       col.Name,
+			Status:      "enforced",
+			Rule:        rule,
+			Description: "native and metadata RLS enabled",
+		})
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to commit RLS enforcement"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"status":  "ok",
+		"results": results,
+	})
+}
+
+func resolveRLSOwnerColumn(ctx context.Context, tx pgx.Tx, tableName string) (string, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT column_name
+		FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = $1
+	`, tableName)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	available := map[string]struct{}{}
+	for rows.Next() {
+		var col string
+		if scanErr := rows.Scan(&col); scanErr == nil {
+			available[strings.ToLower(strings.TrimSpace(col))] = struct{}{}
+		}
+	}
+
+	for _, candidate := range []string{"owner_id", "user_id", "created_by"} {
+		if _, ok := available[candidate]; ok {
+			return candidate, nil
+		}
+	}
+	return "", nil
 }

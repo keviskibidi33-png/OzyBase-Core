@@ -253,10 +253,23 @@ func APIKeyMiddleware(db *data.DB) echo.MiddlewareFunc {
 				return next(c)
 			}
 
-			// Service roles are treated as admin if specifically configured,
-			// otherwise they are elevated system users.
-			c.Set("user_id", "api_key_"+id)
-			c.Set("role", role)
+			// Formal API key model:
+			// - anon: public-capable key (must NOT satisfy auth-required rules)
+			// - service_role: trusted server key with admin-level capabilities
+			switch role {
+			case "service_role":
+				c.Set("user_id", "service_role_"+id)
+				c.Set("role", "admin")
+				c.Set("api_key_role", role)
+				c.Set("is_service_role", true)
+			case "anon":
+				c.Set("role", "anon")
+				c.Set("api_key_role", role)
+			default:
+				c.Set("user_id", "api_key_"+id)
+				c.Set("role", role)
+				c.Set("api_key_role", role)
+			}
 			c.Set("is_api_key", true)
 
 			return next(c)

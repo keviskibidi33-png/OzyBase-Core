@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -24,6 +25,13 @@ type APIKey struct {
 	LastUsedAt  *time.Time `json:"last_used_at"`
 	WorkspaceID string     `json:"workspace_id,omitempty"`
 }
+
+const (
+	APIKeyRoleAnon        = "anon"
+	APIKeyRoleServiceRole = "service_role"
+)
+
+var apiKeyNamePattern = regexp.MustCompile(`^[a-zA-Z0-9 _.-]{3,64}$`)
 
 // GenerateRandomKey creates a new random secure key
 func GenerateRandomKey() (string, error) {
@@ -70,12 +78,33 @@ func (h *Handler) ListAPIKeys(c echo.Context) error {
 
 func (h *Handler) CreateAPIKey(c echo.Context) error {
 	var req struct {
-		Name string `json:"name"`
-		Role string `json:"role"` // 'anon' or 'service_role'
+		Name          string `json:"name"`
+		Role          string `json:"role"` // 'anon' or 'service_role'
+		ExpiresInDays *int   `json:"expires_in_days,omitempty"`
 	}
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
 	}
+	req.Name = strings.TrimSpace(req.Name)
+	req.Role = strings.ToLower(strings.TrimSpace(req.Role))
+	if req.Name == "" || !apiKeyNamePattern.MatchString(req.Name) {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid key name"})
+	}
+	if req.Role != APIKeyRoleAnon && req.Role != APIKeyRoleServiceRole {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "role must be 'anon' or 'service_role'"})
+	}
+	defaultDays := 90
+	if req.Role == APIKeyRoleAnon {
+		defaultDays = 30
+	}
+	expiresInDays := defaultDays
+	if req.ExpiresInDays != nil {
+		if *req.ExpiresInDays < 1 || *req.ExpiresInDays > 365 {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "expires_in_days must be between 1 and 365"})
+		}
+		expiresInDays = *req.ExpiresInDays
+	}
+	expiresAt := time.Now().UTC().Add(time.Duration(expiresInDays) * 24 * time.Hour)
 
 	rawKey, err := GenerateRandomKey()
 	if err != nil {
@@ -99,21 +128,23 @@ func (h *Handler) CreateAPIKey(c echo.Context) error {
 
 	var id string
 	err = h.DB.Pool.QueryRow(c.Request().Context(), `
-		INSERT INTO _v_api_keys (name, key_hash, prefix, role, workspace_id)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO _v_api_keys (name, key_hash, prefix, role, workspace_id, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id
-	`, req.Name, keyHash, prefix, req.Role, workspaceIDVal).Scan(&id)
+	`, req.Name, keyHash, prefix, req.Role, workspaceIDVal, expiresAt).Scan(&id)
 
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
 	return c.JSON(http.StatusCreated, map[string]any{
-		"id":      id,
-		"key":     fullKey,
-		"name":    req.Name,
-		"role":    req.Role,
-		"warning": "Copy this key now, it will not be shown again!",
+		"id":              id,
+		"key":             fullKey,
+		"name":            req.Name,
+		"role":            req.Role,
+		"expires_at":      expiresAt,
+		"expires_in_days": expiresInDays,
+		"warning":         "Copy this key now, it will not be shown again!",
 	})
 }
 
@@ -140,4 +171,72 @@ func (h *Handler) ToggleAPIKey(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (h *Handler) RotateAPIKey(c echo.Context) error {
+	keyID := strings.TrimSpace(c.Param("id"))
+	if keyID == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "key id is required"})
+	}
+
+	ctx := c.Request().Context()
+	tx, err := h.DB.Pool.Begin(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to start transaction"})
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var currentName, role string
+	var workspaceID *string
+	var expiresAt *time.Time
+	err = tx.QueryRow(ctx, `
+		SELECT name, role, workspace_id, expires_at
+		FROM _v_api_keys
+		WHERE id = $1
+		FOR UPDATE
+	`, keyID).Scan(&currentName, &role, &workspaceID, &expiresAt)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "api key not found"})
+	}
+
+	rawKey, err := GenerateRandomKey()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to generate key"})
+	}
+	prefix := "ozy_" + rawKey[:4]
+	fullKey := fmt.Sprintf("%s_%s", prefix, rawKey)
+	hash := sha256.Sum256([]byte(fullKey))
+	keyHash := hex.EncodeToString(hash[:])
+
+	newName := fmt.Sprintf("%s (rotated %s)", currentName, time.Now().UTC().Format("2006-01-02"))
+	var newID string
+	var workspaceIDVal any
+	if workspaceID != nil && strings.TrimSpace(*workspaceID) != "" {
+		workspaceIDVal = *workspaceID
+	}
+
+	err = tx.QueryRow(ctx, `
+		INSERT INTO _v_api_keys (name, key_hash, prefix, role, workspace_id, expires_at, is_active)
+		VALUES ($1, $2, $3, $4, $5, $6, true)
+		RETURNING id
+	`, newName, keyHash, prefix, role, workspaceIDVal, expiresAt).Scan(&newID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to create rotated key"})
+	}
+
+	if _, err := tx.Exec(ctx, `UPDATE _v_api_keys SET is_active = false WHERE id = $1`, keyID); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to deactivate previous key"})
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to commit key rotation"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"old_id":  keyID,
+		"new_id":  newID,
+		"key":     fullKey,
+		"role":    role,
+		"warning": "Rotation complete. Old key was deactivated. Copy this new key now.",
+	})
 }

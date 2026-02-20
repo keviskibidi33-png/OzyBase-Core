@@ -392,11 +392,12 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		// ... (Auth/System/etc) ...
 
 		// API Keys (Enterprise Phase 1)
-		keysGroup := apiGroup.Group("/project/keys", authRequired)
+		keysGroup := apiGroup.Group("/project/keys", authRequired, adminOnly)
 		keysGroup.GET("", h.ListAPIKeys)
 		keysGroup.POST("", h.CreateAPIKey)
 		keysGroup.DELETE("/:id", h.DeleteAPIKey)
 		keysGroup.PATCH("/:id/toggle", h.ToggleAPIKey)
+		keysGroup.POST("/:id/rotate", h.RotateAPIKey)
 
 		// Auth
 		authGroup := apiGroup.Group("/auth")
@@ -416,6 +417,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		// Sessions (Enterprise Phase 2)
 		authGroup.GET("/sessions", authHandler.ListSessions, authRequired)
 		authGroup.DELETE("/sessions/:id", authHandler.RevokeSession, authRequired)
+		authGroup.POST("/sessions/revoke-all", authHandler.RevokeAllSessions, authRequired, adminOnly)
 
 		// System Setup (Public, but protected by logic inside)
 		apiGroup.GET("/system/status", h.GetSystemStatus)
@@ -467,6 +469,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.GET("/project/security/notifications", h.GetNotificationRecipients, authRequired)
 		apiGroup.POST("/project/security/notifications", h.AddNotificationRecipient, authRequired)
 		apiGroup.DELETE("/project/security/notifications/:id", h.DeleteNotificationRecipient, authRequired)
+		apiGroup.POST("/project/security/rls/enforce", h.EnforceRLSAll, authRequired, adminOnly)
 
 		// Integrations (Slack, Discord, SIEM)
 		apiGroup.GET("/project/integrations", h.ListIntegrations, authRequired)
