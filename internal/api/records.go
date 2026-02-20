@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -124,6 +125,10 @@ func (h *Handler) ListRecords(c echo.Context) error {
 
 	result, err := h.DB.ListRecords(ctx, collectionName, filters, orderBy, limit, offset)
 	if err != nil {
+		// Client/navigation cancellations are expected in dynamic dashboards.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return c.NoContent(http.StatusRequestTimeout)
+		}
 		// SECURITY: Don't leak SQL errors to client
 		fmt.Printf("[ERROR] ListRecords (%s): %v\n", collectionName, err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{

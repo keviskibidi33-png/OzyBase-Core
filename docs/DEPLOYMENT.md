@@ -1,18 +1,25 @@
-# OzyBase Production Deployment Guide
+﻿# OzyBase Production Deployment Guide
 
-This guide covers a secure production deployment with Docker, domain, HTTPS, and auth safety.
+This guide is the canonical runbook to deploy OzyBase in production with Docker, domain, TLS, and hardened auth behavior.
 
-## 1. Prerequisites
-- PostgreSQL 14+
-- Docker + Docker Compose v2
-- Nginx (or equivalent reverse proxy)
-- A public domain (example: `api.example.com`)
+## 1. Architecture
+- `ozybase` container serves API + embedded frontend on port `8090`.
+- `ozybase-db` container runs PostgreSQL 15.
+- Reverse proxy (Nginx/Caddy/Traefik) terminates TLS and forwards to OzyBase.
+- PostgreSQL should remain private (no public host port exposure in production).
 
-## 2. Required environment variables
-Create a local `.env` file (do not commit it):
+## 2. Prerequisites
+- Docker Engine + Docker Compose v2
+- Public domain (example: `api.example.com`)
+- DNS control (A/AAAA records)
+- TLS certificates (Let's Encrypt recommended)
+- Backup strategy for PostgreSQL data volume
+
+## 3. Required Environment Variables
+Create a local `.env` beside `docker-compose.yml` and never commit it.
 
 ```env
-# App
+# Core
 PORT=8090
 SITE_URL=https://api.example.com
 APP_DOMAIN=example.com
@@ -28,6 +35,10 @@ DB_PASSWORD=<strong-password>
 DB_NAME=Ozydb
 DB_SSLMODE=verify-full
 
+# Rate limiter
+RATE_LIMIT_RPS=20
+RATE_LIMIT_BURST=20
+
 # Optional SMTP
 SMTP_HOST=
 SMTP_PORT=587
@@ -36,32 +47,108 @@ SMTP_PASSWORD=
 SMTP_FROM=noreply@example.com
 ```
 
-`docker-compose.yml` now requires `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JWT_SECRET`, `SITE_URL`, `APP_DOMAIN`, and `ALLOWED_ORIGINS`.
+Required by compose:
+- `DB_USER`
+- `DB_PASSWORD`
+- `DB_NAME`
+- `JWT_SECRET`
+- `SITE_URL`
+- `APP_DOMAIN`
+- `ALLOWED_ORIGINS`
 
-## 3. Deploy with Docker Compose
-
+## 4. Deploy
 ```bash
 docker compose up -d --build
 ```
 
-Notes:
-- PostgreSQL is intentionally not exposed publicly in compose.
-- App health check uses `GET /api/health` inside the container.
+Verify:
+```bash
+docker ps
+curl -i http://localhost:8090/api/health
+```
 
-## 4. Domain and HTTPS
+Expected:
+- Both containers healthy.
+- `/api/health` returns `200`.
+- Security headers are present.
+
+## 5. Domain and TLS
 1. Point `api.example.com` to your server IP.
-2. Install Nginx config from `deploy/nginx/ozybase.conf`.
-3. Issue TLS certificates (Let's Encrypt/Certbot).
-4. Replace `server_name` and cert paths in nginx config.
+2. Configure reverse proxy to upstream `http://127.0.0.1:8090`.
+3. Issue TLS certs and enforce HTTPS redirect.
+4. Keep HSTS enabled only after cert is stable.
 
-## 5. Security checklist
-1. Keep `DEBUG=false`.
-2. Rotate `JWT_SECRET` if exposed.
-3. Never expose `POST /api/sql` to non-admin users.
-4. Keep reset/verification tokens out of logs and browser URL history.
-5. Restrict inbound firewall to `80/443` (and SSH management port only).
+Minimal Nginx upstream example:
+```nginx
+server {
+  listen 443 ssl http2;
+  server_name api.example.com;
 
-## 6. Monitoring
-- Liveness: `GET /api/health`
-- Log shipping recommended: Loki, Elasticsearch, Datadog.
-- Add DB backups and restore drills to operations.
+  ssl_certificate /etc/letsencrypt/live/api.example.com/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/api.example.com/privkey.pem;
+
+  location / {
+    proxy_pass http://127.0.0.1:8090;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+  }
+}
+```
+
+## 6. Security Behavior to Expect
+- JWT subject is validated in DB on each authenticated request.
+- Tokens with non-existent users are rejected (`401`).
+- Role/email are loaded from DB (claims are not trusted as final source).
+- API keys continue to access protected endpoints when valid and active.
+- URL query tokens are sanitized in frontend auth flows (`verify-email`, `reset-password`, invalid `?token=`).
+- SQL execution endpoint is admin-only.
+
+## 7. Production Validation Checklist
+Run this before going live:
+
+1. Backend and frontend tests
+```bash
+go test ./...
+cd frontend && npx playwright test --reporter=line
+```
+
+2. Header and cookie checks
+```bash
+curl -i https://api.example.com/api/health
+```
+Confirm:
+- `Content-Security-Policy`
+- `Strict-Transport-Security`
+- `X-Frame-Options`
+- `X-Content-Type-Options`
+- `Referrer-Policy`
+- CSRF cookie includes `HttpOnly; Secure; SameSite=Strict`
+
+3. Auth rejection check (invalid subject)
+- Send a JWT signed with your secret but pointing to non-existent `user_id`.
+- Expected response: `401`.
+
+4. Admin/role gate check
+- Validate non-admin token receives `403` on `/api/sql`.
+
+5. Rate limiting sanity
+- Confirm `RATE_LIMIT_RPS` / `RATE_LIMIT_BURST` match expected traffic profile.
+
+## 8. Observability and Operations
+- Liveness endpoint: `/api/health`
+- Keep structured logs shipped to a central sink.
+- Keep DB backups automated and test restore.
+- Monitor 4xx/5xx trends and auth failures.
+
+## 9. Common Production Mistakes
+- Committing `.env` or secrets files.
+- Leaving default/weak `JWT_SECRET`.
+- Exposing PostgreSQL to public internet.
+- Overly strict `ALLOWED_ORIGINS` mismatch causing frontend auth failures.
+- Running with `DEBUG=true` in production.
+
+## 10. Rollback Strategy
+- Keep image tags immutable per release.
+- Roll back by redeploying previous image + validated `.env`.
+- If DB schema changed, ensure backward-compatible migrations or restore snapshot.

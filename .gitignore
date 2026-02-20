@@ -54,3 +54,11 @@ ozy_data/
 server_diag.log
 server_new.log
 server.log
+
+# Frontend local test/debug artifacts
+frontend/playwright-report/
+frontend/test-results/
+frontend/test_error*.txt
+frontend/test_results.txt
+frontend/*_output.txt
+frontend/report.json

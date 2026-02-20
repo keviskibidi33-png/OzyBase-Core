@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-02-20
+
+### Added
+
+- Production deployment runbook expanded with domain, TLS, rate-limit, and auth-hardening validation steps (`docs/DEPLOYMENT.md`).
+- Production hardening summary and operational validation commands documented in `README.md`.
+
+### Changed
+
+- `AuthMiddleware` now validates JWT `user_id` against `_v_users` and sources `role/email` from database.
+- Docker Compose now exposes rate limiter knobs: `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`.
+- API key creation now safely handles empty `workspace_id` as `NULL` (no UUID cast failure).
+
+### Fixed
+
+- Rejected signed JWTs that reference non-existent users (returns `401` instead of authorizing access).
+- Stabilized Create Table flow and updated E2E token fixture to a real admin user.
+- Audit logging now ignores non-UUID identities for `user_id` persistence, avoiding runtime insert errors.
+
 ## [1.2.0-Enterprise] - 2026-02-16
 
 ### Added
