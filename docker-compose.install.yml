@@ -5,15 +5,17 @@ services:
       dockerfile: Dockerfile
     container_name: ozybase
     restart: unless-stopped
+    ports:
+      - "${PORT:-8090}:8090"
     environment:
-      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      DATABASE_URL: postgres://${DB_USER:-ozybase}:${DB_PASSWORD:?set DB_PASSWORD}@db:5432/${DB_NAME:-ozybase}?sslmode=${DB_SSLMODE:-disable}
       PORT: "8090"
       JWT_SECRET: ${JWT_SECRET:-}
       SITE_URL: ${SITE_URL:?set SITE_URL}
       APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       DEBUG: ${DEBUG:-false}
-      OZY_STRICT_SECURITY: ${OZY_STRICT_SECURITY:-true}
+      OZY_STRICT_SECURITY: ${OZY_STRICT_SECURITY:-false}
       RATE_LIMIT_RPS: ${RATE_LIMIT_RPS:-20}
       RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-20}
       SMTP_HOST: ${SMTP_HOST:-}
@@ -21,8 +23,9 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
-    expose:
-      - "8090"
+    depends_on:
+      db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8090/api/health >/dev/null || exit 1"]
       interval: 30s
@@ -34,7 +37,24 @@ services:
       - ozy_migrations:/app/migrations
       - ozy_functions:/app/functions
 
+  db:
+    image: postgres:15-alpine
+    container_name: ozybase-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-ozybase}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-ozybase}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-ozybase} -d ${DB_NAME:-ozybase}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   ozy_data:
   ozy_migrations:
   ozy_functions:
+  postgres_data:

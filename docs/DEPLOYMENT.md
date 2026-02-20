@@ -153,14 +153,16 @@ Use `docker-compose.coolify.yml` with a managed PostgreSQL service.
 
 ### Variables to set in Coolify
 - `DATABASE_URL` (required)
-- `JWT_SECRET` (required, 64+ random bytes)
 - `SITE_URL` (required, e.g. `https://api.example.com`)
 - `APP_DOMAIN` (required, e.g. `example.com`)
-- `ALLOWED_ORIGINS` (required, comma-separated URLs)
 - `DEBUG=false`
 - `OZY_STRICT_SECURITY=true` (recommended in production)
 - `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`
 - SMTP vars if email flows are needed
+
+Auto defaults in Coolify compose:
+- `JWT_SECRET`: optional. If empty, OzyBase auto-generates and stores it in `.ozy_secret`.
+- `ALLOWED_ORIGINS`: optional. If empty, OzyBase derives safe origins from `SITE_URL` and `APP_DOMAIN`.
 
 ### Notes
 - Keep PostgreSQL private and use TLS in `DATABASE_URL` (`sslmode=require` or stronger).
@@ -171,6 +173,33 @@ Use `docker-compose.coolify.yml` with a managed PostgreSQL service.
   - `/app/functions`
 - Expose internal port `8090` in Coolify and attach your domain.
 - Health check endpoint: `/api/health`.
+
+## 12. Install-to-Play Deployment (DB + App Together)
+Use `docker-compose.install.yml` when you want OzyBase + Postgres in one stack.
+
+Required variables:
+- `SITE_URL`
+- `APP_DOMAIN`
+- `DB_PASSWORD`
+
+Everything else has safe defaults.
+
+`DATABASE_URL` is built automatically in compose from DB vars:
+`postgres://${DB_USER:-ozybase}:${DB_PASSWORD}@db:5432/${DB_NAME:-ozybase}?sslmode=${DB_SSLMODE:-disable}`
+
+Start:
+```bash
+SITE_URL=https://api.example.com APP_DOMAIN=example.com DB_PASSWORD='<strong-password>' docker compose -f docker-compose.install.yml up -d --build
+```
+
+You can generate the env file automatically:
+```bash
+ozybase init --output .env
+```
+This command creates:
+- `JWT_SECRET` (strong random)
+- `DB_PASSWORD` (strong random)
+- sensible default domains (`SITE_URL=https://api.example.com`, `APP_DOMAIN=example.com`)
 
 ## 10. Rollback Strategy
 - Keep image tags immutable per release.
