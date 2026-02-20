@@ -1,11 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import { Bell, Shield, AlertTriangle, CheckCircle2, X, Activity, Zap } from 'lucide-react';
+import React from 'react';
+import { Bell, Shield, AlertTriangle, CheckCircle2, X, Zap } from 'lucide-react';
 
 const NotificationCenter = ({ isOpen, onClose, issues, onIssueAction, onViewLogs }) => {
-    if (!isOpen) return null;
-
     return (
-        <div className="absolute top-16 right-6 w-[420px] bg-[#1a1a1a] border border-[#2e2e2e] rounded-2xl shadow-2xl z-[100] overflow-hidden animate-in slide-in-from-top-4 duration-200">
+        <div
+            className={`absolute top-16 right-6 w-[420px] bg-[#1a1a1a] border border-[#2e2e2e] rounded-2xl shadow-2xl z-[100] overflow-hidden origin-top-right transition-all duration-200 ${
+                isOpen
+                    ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto'
+                    : 'opacity-0 -translate-y-2 scale-95 pointer-events-none'
+            }`}
+            aria-hidden={!isOpen}
+        >
             <div className="px-6 py-4 border-b border-[#2e2e2e] flex items-center justify-between bg-[#111111]">
                 <div className="flex items-center gap-2">
                     <Bell size={16} className="text-primary" />
