@@ -163,6 +163,8 @@ Auto defaults in Coolify compose:
 - `ALLOWED_ORIGINS`: not set in compose. OzyBase derives safe origins from `SITE_URL` and `APP_DOMAIN`.
 - `SITE_URL`: defaults to `https://api.example.com` if unset.
 - `APP_DOMAIN`: defaults to `example.com` if unset.
+- `INITIAL_ADMIN_EMAIL`: optional. If empty, defaults to `admin@<APP_DOMAIN>`.
+- `INITIAL_ADMIN_PASSWORD`: optional. If empty, generated once and printed in startup logs.
 
 ### Notes
 - Keep PostgreSQL private and use TLS in `DATABASE_URL` (`sslmode=require` or stronger).
@@ -189,6 +191,8 @@ Visible DB variables in Coolify (install stack):
 - `DB_PASSWORD` (required)
 - `DB_NAME` (default: `ozybase`)
 - `DB_SSLMODE` (default: `disable`)
+- `INITIAL_ADMIN_EMAIL` (optional)
+- `INITIAL_ADMIN_PASSWORD` (optional)
 
 `DATABASE_URL` is built automatically in compose from DB vars:
 `postgres://${DB_USER:-ozybase}:${DB_PASSWORD}@db:5432/${DB_NAME:-ozybase}?sslmode=${DB_SSLMODE:-disable}`

@@ -81,6 +81,11 @@ Install-to-play defaults:
   - local DB host (`db`/`localhost`) -> `sslmode=disable`
   - external DB host -> `sslmode=require`
 
+First admin login:
+- `INITIAL_ADMIN_EMAIL` and `INITIAL_ADMIN_PASSWORD` can be provided as env vars.
+- If `INITIAL_ADMIN_EMAIL` is empty, default is `admin@<APP_DOMAIN>` (or `system@ozybase.local` on localhost).
+- If `INITIAL_ADMIN_PASSWORD` is empty, OzyBase generates one and prints it in startup logs once.
+
 ### CLI utility commands
 ```bash
 ozybase init

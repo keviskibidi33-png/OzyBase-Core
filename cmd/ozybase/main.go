@@ -189,7 +189,7 @@ func handleCLI(db *data.DB) bool {
 
 	if len(os.Args) > 1 && os.Args[1] == "reset-admin" {
 		ctx := context.Background()
-		email := "system@ozybase.local"
+		email := resolveInitialAdminEmail()
 		newPass := "admin123"
 
 		if len(os.Args) > 2 {
@@ -226,6 +226,17 @@ func handleCLI(db *data.DB) bool {
 	}
 
 	return false
+}
+
+func resolveInitialAdminEmail() string {
+	if email := strings.TrimSpace(os.Getenv("INITIAL_ADMIN_EMAIL")); email != "" {
+		return email
+	}
+	appDomain := strings.TrimSpace(os.Getenv("APP_DOMAIN"))
+	if appDomain == "" || appDomain == "localhost" || strings.HasPrefix(appDomain, "localhost:") {
+		return "system@ozybase.local"
+	}
+	return "admin@" + appDomain
 }
 
 func initOAuth() {
