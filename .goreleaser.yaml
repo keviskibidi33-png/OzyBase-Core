@@ -5,8 +5,6 @@ project_name: ozybase
 before:
   hooks:
     - go mod download
-    - cd frontend && npm ci && npm run build
-    - rm -rf internal/api/frontend_dist && mkdir -p internal/api/frontend_dist && cp -R frontend/dist/. internal/api/frontend_dist/
 
 builds:
   - id: ozybase
