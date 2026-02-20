@@ -19,7 +19,7 @@ const SetupWizard = ({ onComplete }) => {
 
     useEffect(() => {
         setDetectingLoc(true);
-        fetch('http://ip-api.com/json/')
+        fetch('https://ipapi.co/json/')
             .then(res => res.json())
             .then(data => {
                 setFormData(prev => ({ ...prev, country: data.country }));
