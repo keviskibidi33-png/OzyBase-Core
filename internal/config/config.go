@@ -90,8 +90,8 @@ func Load() (*Config, error) {
 		generatedJWTSecret = true
 	}
 
-	siteURL := getEnv("SITE_URL", "http://localhost:8090")
-	appDomain := getEnv("APP_DOMAIN", "localhost")
+	siteURL := getEnv("SITE_URL", "https://api.example.com")
+	appDomain := getEnv("APP_DOMAIN", "example.com")
 
 	origins, derivedAllowedOrigin := resolveAllowedOrigins(getEnv("ALLOWED_ORIGINS", ""), siteURL, appDomain, debug)
 
