@@ -404,8 +404,8 @@ const ConnectionModal = ({ isOpen, onClose }) => {
                                         <div>
                                             <h3 className="text-sm font-bold text-white mb-1">Current Session Token</h3>
                                             <p className="text-xs text-zinc-500 mb-3">Your current authentication token. Use this for API requests.</p>
-                                            <div className="bg-[#111111] p-4 rounded-xl border border-[#2e2e2e] font-mono text-xs text-zinc-400 flex items-center justify-between">
-                                                <code className="truncate max-w-[400px]">{connectionInfo.sessionToken}</code>
+                                            <div className="bg-[#111111] p-4 rounded-xl border border-[#2e2e2e] font-mono text-xs text-zinc-400 flex items-center justify-between gap-3">
+                                                <code className="break-all whitespace-pre-wrap flex-1">{connectionInfo.sessionToken}</code>
                                                 <button onClick={() => handleCopy(connectionInfo.sessionToken, 'sessionToken')} className="ml-4 p-2 bg-[#1a1a1a] rounded-lg border border-[#2e2e2e] hover:border-primary/50 transition-all">
                                                     {copied === 'sessionToken' ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
                                                 </button>

@@ -57,6 +57,12 @@ func run() error {
 	if cfg.GeneratedJWTSecret {
 		logger.Log.Warn().Msg("JWT_SECRET was missing and has been generated automatically into .ozy_secret")
 	}
+	if cfg.GeneratedAnonKey {
+		logger.Log.Warn().Msg("ANON_KEY was missing and has been generated automatically into .ozy_anon_key")
+	}
+	if cfg.GeneratedServiceRoleKey {
+		logger.Log.Warn().Msg("SERVICE_ROLE_KEY was missing and has been generated automatically into .ozy_service_role_key")
+	}
 	if cfg.DerivedAllowedOrigin {
 		logger.Log.Info().Strs("origins", cfg.AllowedOrigins).Msg("ALLOWED_ORIGINS was auto-derived from SITE_URL/APP_DOMAIN")
 	}
@@ -312,8 +318,11 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 	e.Use(api.SecurityHeadersDefault())
 	e.Use(middleware.BodyLimit(cfg.BodyLimit))
 	e.Use(api.PrometheusMiddleware()) // 📊 Stats
-	e.Use(api.APIKeyMiddleware(h.DB)) // 🔐 API Key Auth (Enterprise Phase 1)
-	e.Use(api.RLSMiddleware(h.DB))    // 🛡️ RLS Context Injection
+	e.Use(api.APIKeyMiddleware(h.DB, api.StaticAPIKeys{
+		AnonKey:        cfg.AnonKey,
+		ServiceRoleKey: cfg.ServiceRoleKey,
+	})) // 🔐 API Key Auth (Enterprise Phase 1)
+	e.Use(api.RLSMiddleware(h.DB)) // 🛡️ RLS Context Injection
 	e.Use(middleware.CSRFWithConfig(middleware.CSRFConfig{
 		TokenLookup:    "header:X-CSRF-Token",
 		ContextKey:     "csrf",

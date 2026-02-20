@@ -15,9 +15,11 @@ import (
 )
 
 type Config struct {
-	DatabaseURL string
-	Port        string
-	JWTSecret   string
+	DatabaseURL    string
+	Port           string
+	JWTSecret      string
+	AnonKey        string
+	ServiceRoleKey string
 
 	// Security & Domains
 	AppDomain      string
@@ -49,9 +51,11 @@ type Config struct {
 	SMTPFrom string
 
 	// Bootstrap metadata
-	GeneratedJWTSecret   bool
-	DerivedAllowedOrigin bool
-	SecurityWarnings     []string
+	GeneratedJWTSecret      bool
+	GeneratedAnonKey        bool
+	GeneratedServiceRoleKey bool
+	DerivedAllowedOrigin    bool
+	SecurityWarnings        []string
 }
 
 func Load() (*Config, error) {
@@ -89,6 +93,21 @@ func Load() (*Config, error) {
 		jwtSecret = getOrGenerateSecret()
 		generatedJWTSecret = true
 	}
+	_ = os.Setenv("JWT_SECRET", jwtSecret)
+
+	anonKey := readEnv("ANON_KEY")
+	generatedAnonKey := false
+	if anonKey == "" {
+		anonKey, generatedAnonKey = getOrGenerateNamedSecret(".ozy_anon_key", 32, "ozy_anon_")
+	}
+	_ = os.Setenv("ANON_KEY", anonKey)
+
+	serviceRoleKey := firstNonEmpty(readEnv("SERVICE_ROLE_KEY"), readEnv("OZY_SERVICE_ROLE_KEY"))
+	generatedServiceRoleKey := false
+	if serviceRoleKey == "" {
+		serviceRoleKey, generatedServiceRoleKey = getOrGenerateNamedSecret(".ozy_service_role_key", 48, "ozy_service_role_")
+	}
+	_ = os.Setenv("SERVICE_ROLE_KEY", serviceRoleKey)
 
 	siteURL := getEnv("SITE_URL", "https://api.example.com")
 	appDomain := getEnv("APP_DOMAIN", "example.com")
@@ -101,18 +120,22 @@ func Load() (*Config, error) {
 	redisDB, _ := strconv.Atoi(getEnv("REDIS_DB", "0"))
 
 	cfg := &Config{
-		DatabaseURL:          dbURL,
-		Port:                 getEnv("PORT", "8090"),
-		JWTSecret:            jwtSecret,
-		AppDomain:            appDomain,
-		SiteURL:              siteURL,
-		AllowedOrigins:       origins,
-		RateLimitRPS:         rps,
-		RateLimitBurst:       burst,
-		BodyLimit:            getEnv("BODY_LIMIT", "10M"),
-		GeneratedJWTSecret:   generatedJWTSecret,
-		DerivedAllowedOrigin: derivedAllowedOrigin,
-		SecurityWarnings:     nil,
+		DatabaseURL:             dbURL,
+		Port:                    getEnv("PORT", "8090"),
+		JWTSecret:               jwtSecret,
+		AnonKey:                 anonKey,
+		ServiceRoleKey:          serviceRoleKey,
+		AppDomain:               appDomain,
+		SiteURL:                 siteURL,
+		AllowedOrigins:          origins,
+		RateLimitRPS:            rps,
+		RateLimitBurst:          burst,
+		BodyLimit:               getEnv("BODY_LIMIT", "10M"),
+		GeneratedJWTSecret:      generatedJWTSecret,
+		GeneratedAnonKey:        generatedAnonKey,
+		GeneratedServiceRoleKey: generatedServiceRoleKey,
+		DerivedAllowedOrigin:    derivedAllowedOrigin,
+		SecurityWarnings:        nil,
 
 		// Storage
 		StorageProvider: getEnv("OZY_STORAGE_PROVIDER", "local"),
@@ -146,18 +169,28 @@ func Load() (*Config, error) {
 }
 
 func getOrGenerateSecret() string {
-	const secretFile = ".ozy_secret"
-	if data, err := os.ReadFile(secretFile); err == nil {
-		return string(data)
-	}
-
-	b := make([]byte, 64)
-	if _, err := rand.Read(b); err != nil {
+	secret, _ := getOrGenerateNamedSecret(".ozy_secret", 64, "")
+	if secret == "" {
 		return "emergency-static-secret-should-never-happen"
 	}
-	secret := hex.EncodeToString(b)
-	_ = os.WriteFile(secretFile, []byte(secret), 0600)
 	return secret
+}
+
+func getOrGenerateNamedSecret(secretFile string, numBytes int, prefix string) (string, bool) {
+	if data, err := os.ReadFile(secretFile); err == nil {
+		existing := strings.TrimSpace(string(data))
+		if existing != "" {
+			return existing, false
+		}
+	}
+
+	b := make([]byte, numBytes)
+	if _, err := rand.Read(b); err != nil {
+		return "", false
+	}
+	secret := prefix + hex.EncodeToString(b)
+	_ = os.WriteFile(secretFile, []byte(secret), 0600)
+	return secret, true
 }
 
 func getEnv(key, defaultValue string) string {
@@ -237,6 +270,20 @@ func validateSecurity(cfg *Config, debug, strict bool) ([]string, error) {
 		}
 		warnings = append(warnings, msg)
 	}
+	if len(strings.TrimSpace(cfg.AnonKey)) < 40 {
+		msg := "ANON_KEY is shorter than recommended minimum"
+		if strict && !debug {
+			return nil, errors.New(msg)
+		}
+		warnings = append(warnings, msg)
+	}
+	if len(strings.TrimSpace(cfg.ServiceRoleKey)) < 40 {
+		msg := "SERVICE_ROLE_KEY is shorter than recommended minimum"
+		if strict && !debug {
+			return nil, errors.New(msg)
+		}
+		warnings = append(warnings, msg)
+	}
 
 	if cfg.DatabaseURL != "" {
 		dbWarnings, dbErr := validateDatabaseURL(cfg.DatabaseURL, debug, strict)
@@ -259,6 +306,15 @@ func validateSecurity(cfg *Config, debug, strict bool) ([]string, error) {
 	}
 
 	return warnings, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 func validateDatabaseURL(databaseURL string, debug, strict bool) ([]string, error) {

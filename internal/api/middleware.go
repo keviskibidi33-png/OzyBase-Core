@@ -216,7 +216,12 @@ func WorkspaceMiddleware(db *data.DB, jwtSecret string) echo.MiddlewareFunc {
 }
 
 // APIKeyMiddleware validates OzyBase API keys (Enterprise Phase 1)
-func APIKeyMiddleware(db *data.DB) echo.MiddlewareFunc {
+type StaticAPIKeys struct {
+	AnonKey        string
+	ServiceRoleKey string
+}
+
+func APIKeyMiddleware(db *data.DB, staticKeys StaticAPIKeys) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			// Skip if already authenticated by JWT
@@ -231,6 +236,23 @@ func APIKeyMiddleware(db *data.DB) echo.MiddlewareFunc {
 
 			if key == "" {
 				return next(c) // Proceed for public routes or will fail in AccessMiddleware
+			}
+
+			// Supabase-like static keys from environment (auto-generated if missing).
+			// These keys are compared in constant time to reduce side-channel leakage.
+			if staticKeys.ServiceRoleKey != "" && ConstantTimeCompare(key, staticKeys.ServiceRoleKey) {
+				c.Set("user_id", "service_role_static")
+				c.Set("role", "admin")
+				c.Set("api_key_role", "service_role")
+				c.Set("is_service_role", true)
+				c.Set("is_api_key", true)
+				return next(c)
+			}
+			if staticKeys.AnonKey != "" && ConstantTimeCompare(key, staticKeys.AnonKey) {
+				c.Set("role", "anon")
+				c.Set("api_key_role", "anon")
+				c.Set("is_api_key", true)
+				return next(c)
 			}
 
 			// Validate Key
