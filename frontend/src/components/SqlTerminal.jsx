@@ -191,6 +191,25 @@ const SqlTerminal = () => {
         return String(value || '').toLowerCase().replace(/_/g, '');
     }, []);
 
+    const isSubsequence = useCallback((needle, haystack) => {
+        if (!needle) return true;
+        let i = 0;
+        let j = 0;
+        while (i < needle.length && j < haystack.length) {
+            if (needle[i] === haystack[j]) i++;
+            j++;
+        }
+        return i === needle.length;
+    }, []);
+
+    const buildFilterText = useCallback((value) => {
+        const raw = String(value || '');
+        const lower = raw.toLowerCase();
+        const normalized = normalizeToken(raw);
+        const spaced = lower.replace(/_/g, ' ');
+        return `${raw} ${lower} ${normalized} ${spaced}`;
+    }, [normalizeToken]);
+
     const rankSuggestion = useCallback((needle, candidate) => {
         if (!needle) return 50;
         const a = needle.toLowerCase();
@@ -201,8 +220,10 @@ const SqlTerminal = () => {
         if (b.includes(a)) return 1;
         if (bn.startsWith(an)) return 2;
         if (bn.includes(an)) return 3;
+        if (isSubsequence(an, bn)) return 4;
+        if (isSubsequence(a, b)) return 5;
         return 9;
-    }, [normalizeToken]);
+    }, [normalizeToken, isSubsequence]);
 
     const fetchCatalog = useCallback(async () => {
         try {
@@ -296,6 +317,7 @@ const SqlTerminal = () => {
                     kind: monacoRef.current.languages.CompletionItemKind.Keyword,
                     insertText: keyword,
                     range,
+                    filterText: buildFilterText(keyword),
                     sortText: `k_${String(rankSuggestion(typed, keyword)).padStart(2, '0')}_${keyword.toLowerCase()}`
                 }));
 
@@ -304,7 +326,9 @@ const SqlTerminal = () => {
                     kind: monacoRef.current.languages.CompletionItemKind.Class,
                     insertText: table,
                     detail: 'Table',
+                    documentation: `Normalized: ${normalizeToken(table)}`,
                     range,
+                    filterText: buildFilterText(table),
                     sortText: `t_${String(rankSuggestion(typed, table)).padStart(2, '0')}_${table}`
                 }));
 
@@ -314,7 +338,9 @@ const SqlTerminal = () => {
                     kind: monacoRef.current.languages.CompletionItemKind.Field,
                     insertText: column,
                     detail: tableScopedColumns ? 'Column (table scope)' : 'Column',
+                    documentation: `Normalized: ${normalizeToken(column)}`,
                     range,
+                    filterText: buildFilterText(column),
                     sortText: `c_${String(rankSuggestion(typed, column)).padStart(2, '0')}_${column}`
                 }));
 
@@ -325,7 +351,9 @@ const SqlTerminal = () => {
                         kind: monacoRef.current.languages.CompletionItemKind.Property,
                         insertText: `${table}.${column}`,
                         detail: 'Table.Column',
+                        documentation: `Normalized: ${normalizeToken(`${table}.${column}`)}`,
                         range,
+                        filterText: buildFilterText(`${table}.${column}`),
                         sortText: `p_${String(rankSuggestion(typed, `${table}.${column}`)).padStart(2, '0')}_${table}_${column}`
                     })));
 
@@ -336,7 +364,7 @@ const SqlTerminal = () => {
                 return { suggestions };
             }
         });
-    }, [catalog, rankSuggestion]);
+    }, [catalog, rankSuggestion, buildFilterText, normalizeToken]);
 
     useEffect(() => {
         registerCompletionProvider();
