@@ -2,16 +2,18 @@ name: OzyBase CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+
+concurrency:
+  group: ozybase-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
-    name: Build & Test
+  backend-quality:
+    name: Backend Quality
     runs-on: ubuntu-latest
-    
-    # Añadimos Postgres como servicio para los tests
     services:
       postgres:
         image: postgres:15
@@ -22,54 +24,253 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-
+    env:
+      DATABASE_URL: postgres://postgres:password@localhost:5432/ozybase_test?sslmode=disable
+      JWT_SECRET: test_secret_key_12345
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: password
+      DB_NAME: ozybase_test
+      DB_SSLMODE: disable
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.x'
+          go-version: "1.24.x"
           cache: true
 
-      - name: Install dependencies
+      - name: Download modules
         run: go mod download
 
-      - name: Build
+      - name: Run tests
+        run: go test -v ./...
+
+      - name: Build binary
         run: go build -v ./cmd/ozybase
 
-      - name: Run tests
-        env:
-          DATABASE_URL: postgres://postgres:password@localhost:5432/ozybase_test?sslmode=disable
-          JWT_SECRET: test_secret_key_12345
-        run: go test -v -race -coverprofile=coverage.txt ./...
-
-  lint:
-    name: Lint & Security
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24.x'
-          cache: true
-
-      - name: golangci-lint
+      - name: Lint (golangci)
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
           args: --timeout=10m
 
-      - name: Run gosec
-        continue-on-error: true
+  frontend-quality:
+    name: Frontend Quality
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Bundle budget
+        run: npm run bundle:check
+
+  smoke-api:
+    name: Smoke API
+    runs-on: ubuntu-latest
+    needs: [backend-quality]
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: ozybase_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: password
+      DB_NAME: ozybase_test
+      DB_SSLMODE: disable
+      DATABASE_URL: postgres://postgres:password@localhost:5432/ozybase_test?sslmode=disable
+      JWT_SECRET: ci_static_jwt_secret_for_smoke
+      SITE_URL: http://127.0.0.1:8090
+      APP_DOMAIN: localhost
+      ALLOWED_ORIGINS: http://127.0.0.1:5342,http://localhost:5342
+      OZY_AUTO_BOOTSTRAP_ADMIN: "true"
+      INITIAL_ADMIN_EMAIL: admin@ozybase.local
+      INITIAL_ADMIN_PASSWORD: OzyBase123!
+      SMOKE_ADMIN_EMAIL: admin@ozybase.local
+      SMOKE_ADMIN_PASSWORD: OzyBase123!
+      DEBUG: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Start API
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
-          gosec ./...
+          nohup go run ./cmd/ozybase > /tmp/ozybase.log 2>&1 &
+          for i in {1..40}; do
+            if curl -fsS http://127.0.0.1:8090/api/health > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API failed to start"
+          cat /tmp/ozybase.log || true
+          exit 1
+
+      - name: Run smoke script
+        run: bash scripts/smoke_api.sh
+
+      - name: Dump API log on failure
+        if: failure()
+        run: cat /tmp/ozybase.log || true
+
+  e2e-smoke:
+    name: E2E Smoke
+    runs-on: ubuntu-latest
+    needs: [backend-quality, frontend-quality]
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: ozybase_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: password
+      DB_NAME: ozybase_test
+      DB_SSLMODE: disable
+      DATABASE_URL: postgres://postgres:password@localhost:5432/ozybase_test?sslmode=disable
+      JWT_SECRET: ci_static_jwt_secret_for_e2e
+      SITE_URL: http://127.0.0.1:8090
+      APP_DOMAIN: localhost
+      ALLOWED_ORIGINS: http://127.0.0.1:5342,http://localhost:5342
+      OZY_AUTO_BOOTSTRAP_ADMIN: "true"
+      INITIAL_ADMIN_EMAIL: admin@ozybase.local
+      INITIAL_ADMIN_PASSWORD: OzyBase123!
+      E2E_ADMIN_EMAIL: admin@ozybase.local
+      E2E_ADMIN_PASSWORD: OzyBase123!
+      DEBUG: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+          cache: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Start API
+        run: |
+          nohup go run ./cmd/ozybase > /tmp/ozybase.log 2>&1 &
+          for i in {1..40}; do
+            if curl -fsS http://127.0.0.1:8090/api/health > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API failed to start"
+          cat /tmp/ozybase.log || true
+          exit 1
+
+      - name: Start frontend
+        working-directory: frontend
+        run: |
+          nohup npm run dev -- --host 127.0.0.1 --port 5342 > /tmp/ozy-frontend.log 2>&1 &
+          for i in {1..40}; do
+            if curl -fsS http://127.0.0.1:5342 > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Frontend failed to start"
+          cat /tmp/ozy-frontend.log || true
+          exit 1
+
+      - name: Install Playwright browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run smoke spec
+        working-directory: frontend
+        run: npx playwright test tests/smoke-critical.spec.js --project=chromium
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: |
+          cat /tmp/ozybase.log || true
+          cat /tmp/ozy-frontend.log || true
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report
+          retention-days: 7
+
+  ci-gate:
+    name: CI Gate
+    runs-on: ubuntu-latest
+    needs: [backend-quality, frontend-quality, smoke-api, e2e-smoke]
+    steps:
+      - name: Mark gate passed
+        run: echo "All enterprise CI gates passed."
+

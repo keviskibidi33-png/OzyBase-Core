@@ -330,6 +330,21 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 		// Scoping existing items to workspaces (Evolution)
 		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES _v_workspaces(id) ON DELETE CASCADE`,
 		`ALTER TABLE _v_api_keys ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES _v_workspaces(id) ON DELETE CASCADE`,
+		`CREATE INDEX IF NOT EXISTS idx_collections_workspace_id ON _v_collections(workspace_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_collections_updated_at ON _v_collections(updated_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_keys_workspace_id ON _v_api_keys(workspace_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_workspace_members_user_id ON _v_workspace_members(user_id)`,
+
+		// RLS Coverage History (Enterprise Governance)
+		`CREATE TABLE IF NOT EXISTS _v_rls_coverage_history (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			total_tables INTEGER NOT NULL,
+			fully_covered INTEGER NOT NULL,
+			coverage_ratio DOUBLE PRECISION NOT NULL,
+			details JSONB NOT NULL DEFAULT '[]'
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_rls_coverage_history_recorded_at ON _v_rls_coverage_history(recorded_at DESC)`,
 	}
 
 	for i, migration := range migrations {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -67,10 +66,8 @@ func (db *DB) ListRecords(ctx context.Context, collectionName string, filters ma
 	// 1. Fetch ALL columns dynamically for precise validation
 	validCols, err := db.GetTableColumns(ctx, collectionName)
 	if err != nil {
-		fmt.Printf("[DB ARCH] Column lookup failed for %s: %v\n", collectionName, err)
 		return nil, err
 	}
-	fmt.Printf("[DB ARCH] Detected columns for %s: %v\n", collectionName, validCols)
 	if len(validCols) == 0 {
 		return nil, fmt.Errorf("table not found or empty: %s", collectionName)
 	}
@@ -120,29 +117,23 @@ func (db *DB) ListRecords(ctx context.Context, collectionName string, filters ma
 		// 5. Execution - Count (Optional for performance)
 		skipCount := filters["skip_count"] != nil
 		if !skipCount {
-			importTime := time.Now()
 			countQuery, args := qb.BuildCount()
 			if err := tx.QueryRow(ctx, countQuery, args...).Scan(&result.Total); err != nil {
-				fmt.Printf("[DB ARCH] Count failed for %s: %v | Query: %s\n", collectionName, err, countQuery)
 				return err
 			}
-			fmt.Printf("[PERF] %s: CountTime=%v\n", collectionName, time.Since(importTime))
 		} else {
 			result.Total = -1 // Indicator that count was skipped
 		}
 
 		// 6. Execution - Data
-		dataTime := time.Now()
 		dataQuery, args := qb.BuildSelect()
 		rows, err := tx.Query(ctx, dataQuery, args...)
 		if err != nil {
-			fmt.Printf("[DB ARCH] Select failed for %s: %v | Query: %s\n", collectionName, err, dataQuery)
 			return err
 		}
 		defer rows.Close()
 
 		result.Data, err = rowsToMaps(rows)
-		fmt.Printf("[PERF] %s: DataTime=%v | DataCount=%d\n", collectionName, time.Since(dataTime), len(result.Data))
 
 		return err
 	})

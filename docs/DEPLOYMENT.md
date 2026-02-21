@@ -155,6 +155,7 @@ Use `docker-compose.coolify.yml` with a managed PostgreSQL service.
 - `DATABASE_URL` (required)
 - `DEBUG=false`
 - `OZY_STRICT_SECURITY=true` (recommended in production)
+- `OZY_STORAGE_FALLBACK_LOCAL=true` (recommended, fail-open to local storage if S3 init fails)
 - `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`
 - SMTP vars if email flows are needed
 
@@ -169,6 +170,7 @@ Auto defaults in Coolify compose:
 ### Notes
 - Keep PostgreSQL private and use TLS in `DATABASE_URL` (`sslmode=require` or stronger).
 - With `OZY_STRICT_SECURITY=true`, startup fails on insecure public DB URLs or wildcard origins.
+- With `OZY_STORAGE_FALLBACK_LOCAL=true`, startup falls back to local storage if S3 is unavailable.
 - `OZY_SKIP_MIGRATIONS_SEED=true` skips copying `/app/migrations` from the image into the mounted volume.
 - Persist volumes:
   - `/app/data`

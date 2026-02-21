@@ -90,8 +90,6 @@ func (h *Handler) CreateRecord(c echo.Context) error {
 // ListRecords handles GET /api/collections/:name/records
 func (h *Handler) ListRecords(c echo.Context) error {
 	collectionName := c.Param("name")
-	role, _ := c.Get("role").(string)
-	fmt.Printf("\n[API] >>> ListRecords START | Table: %s | Role: %s | URL: %s\n", collectionName, role, c.Request().URL.String())
 
 	if collectionName == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{
@@ -112,6 +110,9 @@ func (h *Handler) ListRecords(c echo.Context) error {
 		if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
 			limit = parsedLimit
 		}
+	}
+	if limit > 1000 {
+		limit = 1000
 	}
 	offset := 0
 	if offsetStr != "" {
@@ -154,7 +155,6 @@ func (h *Handler) ListRecords(c echo.Context) error {
 func (h *Handler) GetRecord(c echo.Context) error {
 	collectionName := c.Param("name")
 	recordID := c.Param("id")
-	fmt.Printf("\n[API] >>> GetRecord START | Table: %s | ID: %s | URL: %s\n", collectionName, recordID, c.Request().URL.String())
 
 	if collectionName == "" || recordID == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{

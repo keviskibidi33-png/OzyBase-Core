@@ -3,6 +3,8 @@ package data
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -10,6 +12,15 @@ import (
 // DB wraps the PostgreSQL connection pool
 type DB struct {
 	Pool *pgxpool.Pool
+
+	columnCacheMu  sync.RWMutex
+	columnCache    map[string]columnCacheEntry
+	columnCacheTTL time.Duration
+}
+
+type columnCacheEntry struct {
+	columns   map[string]bool
+	expiresAt time.Time
 }
 
 // Connect establishes a connection pool to PostgreSQL
@@ -25,7 +36,11 @@ func Connect(ctx context.Context, databaseURL string) (*DB, error) {
 		return nil, fmt.Errorf("unable to ping database: %w", err)
 	}
 
-	return &DB{Pool: pool}, nil
+	return &DB{
+		Pool:           pool,
+		columnCache:    map[string]columnCacheEntry{},
+		columnCacheTTL: 30 * time.Second,
+	}, nil
 }
 
 // Close gracefully closes the database connection pool
@@ -106,6 +121,11 @@ func (db *DB) GetTableColumns(ctx context.Context, tableName string) (map[string
 	if !IsValidIdentifier(tableName) {
 		return nil, fmt.Errorf("invalid table name")
 	}
+
+	if cached, ok := db.getColumnCache(tableName); ok {
+		return cached, nil
+	}
+
 	rows, err := db.Pool.Query(ctx, `
 		SELECT column_name 
 		FROM information_schema.columns 
@@ -123,5 +143,59 @@ func (db *DB) GetTableColumns(ctx context.Context, tableName string) (map[string
 			cols[name] = true
 		}
 	}
+	db.setColumnCache(tableName, cols)
 	return cols, nil
+}
+
+// InvalidateTableColumnCache clears cached table column metadata after schema changes.
+func (db *DB) InvalidateTableColumnCache(tableName string) {
+	if db == nil || tableName == "" {
+		return
+	}
+	db.columnCacheMu.Lock()
+	defer db.columnCacheMu.Unlock()
+	if db.columnCache == nil {
+		return
+	}
+	delete(db.columnCache, tableName)
+}
+
+func (db *DB) getColumnCache(tableName string) (map[string]bool, bool) {
+	if db == nil || tableName == "" {
+		return nil, false
+	}
+	db.columnCacheMu.RLock()
+	entry, ok := db.columnCache[tableName]
+	db.columnCacheMu.RUnlock()
+	if !ok || time.Now().After(entry.expiresAt) {
+		return nil, false
+	}
+	return cloneColumnsMap(entry.columns), true
+}
+
+func (db *DB) setColumnCache(tableName string, cols map[string]bool) {
+	if db == nil || tableName == "" {
+		return
+	}
+	db.columnCacheMu.Lock()
+	defer db.columnCacheMu.Unlock()
+	if db.columnCache == nil {
+		db.columnCache = map[string]columnCacheEntry{}
+	}
+	ttl := db.columnCacheTTL
+	if ttl <= 0 {
+		ttl = 30 * time.Second
+	}
+	db.columnCache[tableName] = columnCacheEntry{
+		columns:   cloneColumnsMap(cols),
+		expiresAt: time.Now().Add(ttl),
+	}
+}
+
+func cloneColumnsMap(input map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
 }

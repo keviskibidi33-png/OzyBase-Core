@@ -30,12 +30,13 @@ type Config struct {
 	AllowedOrigins []string
 
 	// Storage
-	StorageProvider string
-	StoragePath     string
-	S3Endpoint      string
-	S3AccessKey     string
-	S3SecretKey     string
-	S3UseSSL        bool
+	StorageProvider      string
+	StoragePath          string
+	StorageFallbackLocal bool
+	S3Endpoint           string
+	S3AccessKey          string
+	S3SecretKey          string
+	S3UseSSL             bool
 
 	// Realtime
 	RealtimeBroker string
@@ -138,12 +139,13 @@ func Load() (*Config, error) {
 		SecurityWarnings:        nil,
 
 		// Storage
-		StorageProvider: getEnv("OZY_STORAGE_PROVIDER", "local"),
-		StoragePath:     getEnv("OZY_STORAGE_PATH", "./data/storage"),
-		S3Endpoint:      readEnv("S3_ENDPOINT"),
-		S3AccessKey:     readEnv("S3_ACCESS_KEY"),
-		S3SecretKey:     readEnv("S3_SECRET_KEY"),
-		S3UseSSL:        getEnv("S3_USE_SSL", "false") == "true",
+		StorageProvider:      getEnv("OZY_STORAGE_PROVIDER", "local"),
+		StoragePath:          getEnv("OZY_STORAGE_PATH", "./data/storage"),
+		StorageFallbackLocal: strings.EqualFold(getEnv("OZY_STORAGE_FALLBACK_LOCAL", "true"), "true"),
+		S3Endpoint:           readEnv("S3_ENDPOINT"),
+		S3AccessKey:          readEnv("S3_ACCESS_KEY"),
+		S3SecretKey:          readEnv("S3_SECRET_KEY"),
+		S3UseSSL:             getEnv("S3_USE_SSL", "false") == "true",
 
 		// Realtime
 		RealtimeBroker: getEnv("OZY_REALTIME_BROKER", "local"),

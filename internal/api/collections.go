@@ -333,6 +333,8 @@ func (h *Handler) CreateCollection(c echo.Context) error {
 	}
 
 	collection.Schema = req.Schema
+	h.invalidateProjectInfoCache()
+	h.invalidateHealthIssuesCache()
 	return c.JSON(http.StatusCreated, collection)
 }
 
@@ -378,6 +380,8 @@ func (h *Handler) DeleteCollection(c echo.Context) error {
 		log.Printf("⚠️ Warning: Failed to record migration: %v", err)
 	}
 
+	h.invalidateProjectInfoCache()
+	h.invalidateHealthIssuesCache()
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -637,6 +641,8 @@ func (h *Handler) AddColumn(c echo.Context) error {
 		log.Printf("⚠️ Warning: Failed to record migration: %v", err)
 	}
 
+	h.invalidateProjectInfoCache()
+	h.invalidateHealthIssuesCache()
 	return c.JSON(http.StatusCreated, field)
 }
 
@@ -659,6 +665,8 @@ func (h *Handler) DeleteColumn(c echo.Context) error {
 		log.Printf("⚠️ Warning: Failed to record migration: %v", err)
 	}
 
+	h.invalidateProjectInfoCache()
+	h.invalidateHealthIssuesCache()
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -731,6 +739,12 @@ type SlowQuery struct {
 func (h *Handler) GetProjectInfo(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
 	defer cancel()
+	forceRefresh := strings.EqualFold(strings.TrimSpace(c.QueryParam("refresh")), "true")
+	if !forceRefresh {
+		if cached, ok := h.getCachedProjectInfo(); ok {
+			return c.JSON(http.StatusOK, h.applyProjectInfoAccess(cached, c))
+		}
+	}
 
 	var info ProjectInfo
 
@@ -899,20 +913,8 @@ func (h *Handler) GetProjectInfo(c echo.Context) error {
 		info.APIURL = strings.TrimRight(apiURL, "/")
 	}
 
-	role, _ := c.Get("role").(string)
-	info.CanViewSecrets = role == "admin"
-	if info.CanViewSecrets {
-		if key := firstNonEmptyEnv("SERVICE_ROLE_KEY", "OZY_SERVICE_ROLE_KEY"); key != "" {
-			info.ServiceRoleKey = key
-		}
-		if info.Password == "" {
-			info.Password = "[set in DATABASE_URL]"
-		}
-	} else {
-		info.Password = ""
-	}
-
-	return c.JSON(http.StatusOK, info)
+	h.setCachedProjectInfo(info, 5*time.Second)
+	return c.JSON(http.StatusOK, h.applyProjectInfoAccess(info, c))
 }
 
 type projectConnectionInfo struct {
@@ -1071,6 +1073,79 @@ func isInternalDBHost(host string) bool {
 	return h == "localhost" || h == "127.0.0.1" || h == "db" || strings.HasSuffix(h, ".internal")
 }
 
+func (h *Handler) getCachedProjectInfo() (ProjectInfo, bool) {
+	h.projectInfoCacheMu.RLock()
+	defer h.projectInfoCacheMu.RUnlock()
+	if h.projectInfoCache == nil || time.Now().After(h.projectInfoCacheUntil) {
+		return ProjectInfo{}, false
+	}
+	return *h.projectInfoCache, true
+}
+
+func (h *Handler) setCachedProjectInfo(info ProjectInfo, ttl time.Duration) {
+	sanitized := info
+	sanitized.CanViewSecrets = false
+	sanitized.Password = ""
+	sanitized.ServiceRoleKey = ""
+
+	h.projectInfoCacheMu.Lock()
+	defer h.projectInfoCacheMu.Unlock()
+	h.projectInfoCache = &sanitized
+	h.projectInfoCacheUntil = time.Now().Add(ttl)
+}
+
+func (h *Handler) applyProjectInfoAccess(info ProjectInfo, c echo.Context) ProjectInfo {
+	role, _ := c.Get("role").(string)
+	info.CanViewSecrets = role == "admin"
+	if info.CanViewSecrets {
+		if key := firstNonEmptyEnv("SERVICE_ROLE_KEY", "OZY_SERVICE_ROLE_KEY"); key != "" {
+			info.ServiceRoleKey = key
+		}
+		if info.Password == "" {
+			info.Password = "[set in DATABASE_URL]"
+		}
+	} else {
+		info.Password = ""
+		info.ServiceRoleKey = ""
+	}
+	return info
+}
+
+func (h *Handler) getCachedHealthIssues() ([]HealthIssue, bool) {
+	h.healthIssuesCacheMu.RLock()
+	defer h.healthIssuesCacheMu.RUnlock()
+	if h.healthIssuesCache == nil || time.Now().After(h.healthIssuesCacheUntil) {
+		return nil, false
+	}
+	out := make([]HealthIssue, len(h.healthIssuesCache))
+	copy(out, h.healthIssuesCache)
+	return out, true
+}
+
+func (h *Handler) setCachedHealthIssues(issues []HealthIssue, ttl time.Duration) {
+	cloned := make([]HealthIssue, len(issues))
+	copy(cloned, issues)
+
+	h.healthIssuesCacheMu.Lock()
+	defer h.healthIssuesCacheMu.Unlock()
+	h.healthIssuesCache = cloned
+	h.healthIssuesCacheUntil = time.Now().Add(ttl)
+}
+
+func (h *Handler) invalidateProjectInfoCache() {
+	h.projectInfoCacheMu.Lock()
+	defer h.projectInfoCacheMu.Unlock()
+	h.projectInfoCache = nil
+	h.projectInfoCacheUntil = time.Time{}
+}
+
+func (h *Handler) invalidateHealthIssuesCache() {
+	h.healthIssuesCacheMu.Lock()
+	defer h.healthIssuesCacheMu.Unlock()
+	h.healthIssuesCache = nil
+	h.healthIssuesCacheUntil = time.Time{}
+}
+
 // HealthIssue represents a security or performance recommendation
 type HealthIssue struct {
 	Type        string `json:"type"` // "security" | "performance"
@@ -1082,6 +1157,12 @@ type HealthIssue struct {
 func (h *Handler) GetHealthIssues(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
 	defer cancel()
+	forceRefresh := strings.EqualFold(strings.TrimSpace(c.QueryParam("refresh")), "true")
+	if !forceRefresh {
+		if cached, ok := h.getCachedHealthIssues(); ok {
+			return c.JSON(http.StatusOK, cached)
+		}
+	}
 
 	// Initialize as empty slice so it marshals to [] instead of null if empty
 	issues := make([]HealthIssue, 0)
@@ -1225,6 +1306,7 @@ func (h *Handler) GetHealthIssues(c echo.Context) error {
 		}
 	}
 
+	h.setCachedHealthIssues(issues, 10*time.Second)
 	return c.JSON(http.StatusOK, issues)
 }
 
@@ -1282,11 +1364,14 @@ func (h *Handler) FixHealthIssues(c echo.Context) error {
 		if _, err := tx.Exec(ctx, sql); err != nil {
 			log.Printf("Warning: Failed to enable native RLS (might not have permission): %v", err)
 		}
-		policySQL := fmt.Sprintf("DROP POLICY IF EXISTS policy_ozy_%s ON %s", tableName, tableName)
-		_, _ = tx.Exec(ctx, policySQL)
-		policyName := fmt.Sprintf("policy_ozy_%s", tableName)
-		if err := h.DB.CreatePolicy(ctx, tx, tableName, policyName, rule); err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create RLS policy: " + err.Error()})
+		legacyPolicy := fmt.Sprintf("policy_ozy_%s", tableName)
+		_, _ = tx.Exec(ctx, fmt.Sprintf("DROP POLICY IF EXISTS %s ON %s", legacyPolicy, tableName))
+		for _, action := range rlsActions {
+			policyName := makePolicyName(tableName, action)
+			_, _ = tx.Exec(ctx, fmt.Sprintf("DROP POLICY IF EXISTS %s ON %s", policyName, tableName))
+			if err := h.DB.CreatePolicyForAction(ctx, tx, tableName, policyName, action, rule); err != nil {
+				return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create RLS policy: " + err.Error()})
+			}
 		}
 
 		// 2. OzyBase Metadata RLS (Internal)
@@ -1303,6 +1388,7 @@ func (h *Handler) FixHealthIssues(c echo.Context) error {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to commit fix"})
 		}
 
+		h.invalidateHealthIssuesCache()
 		return c.JSON(http.StatusOK, map[string]string{"message": "RLS enabled successfully"})
 	}
 
@@ -1391,16 +1477,24 @@ func (h *Handler) FixHealthIssues(c echo.Context) error {
 }
 
 type EnforceRLSResult struct {
-	Table       string `json:"table"`
-	Status      string `json:"status"`
-	Rule        string `json:"rule,omitempty"`
-	Description string `json:"description,omitempty"`
+	Table          string   `json:"table"`
+	Status         string   `json:"status"`
+	Rule           string   `json:"rule,omitempty"`
+	ActionsApplied []string `json:"actions_applied,omitempty"`
+	Description    string   `json:"description,omitempty"`
 }
 
 // EnforceRLSAll enables RLS on all user collections with an owner column and tightens ACL defaults.
 func (h *Handler) EnforceRLSAll(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 20*time.Second)
 	defer cancel()
+
+	var req struct {
+		DryRun      bool   `json:"dry_run"`
+		RulePattern string `json:"rule_pattern"`
+	}
+	_ = c.Bind(&req)
+	dryRun := req.DryRun || strings.EqualFold(strings.TrimSpace(c.QueryParam("dry_run")), "true")
 
 	rows, err := h.DB.Pool.Query(ctx, `
 		SELECT name, rls_enabled
@@ -1432,6 +1526,7 @@ func (h *Handler) EnforceRLSAll(c echo.Context) error {
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	results := make([]EnforceRLSResult, 0, len(collections))
+	enforcedCount := 0
 	for _, col := range collections {
 		if !data.IsValidIdentifier(col.Name) {
 			results = append(results, EnforceRLSResult{
@@ -1453,6 +1548,29 @@ func (h *Handler) EnforceRLSAll(c echo.Context) error {
 		}
 
 		rule := fmt.Sprintf("%s = auth.uid()", ownerColumn)
+		if custom := strings.TrimSpace(req.RulePattern); custom != "" {
+			rule = custom
+		}
+		if exprErr := validateRLSExpression(ctx, tx, col.Name, rule); exprErr != nil {
+			results = append(results, EnforceRLSResult{
+				Table:       col.Name,
+				Status:      "error",
+				Description: "invalid policy expression",
+			})
+			continue
+		}
+
+		if dryRun {
+			results = append(results, EnforceRLSResult{
+				Table:          col.Name,
+				Status:         "preview",
+				Rule:           rule,
+				ActionsApplied: append([]string{}, rlsActions...),
+				Description:    "preview only (no changes applied)",
+			})
+			continue
+		}
+
 		enableSQL := fmt.Sprintf("ALTER TABLE %s ENABLE ROW LEVEL SECURITY", col.Name)
 		if _, execErr := tx.Exec(ctx, enableSQL); execErr != nil {
 			results = append(results, EnforceRLSResult{
@@ -1463,15 +1581,25 @@ func (h *Handler) EnforceRLSAll(c echo.Context) error {
 			continue
 		}
 
-		dropPolicySQL := fmt.Sprintf("DROP POLICY IF EXISTS policy_ozy_%s ON %s", col.Name, col.Name)
-		_, _ = tx.Exec(ctx, dropPolicySQL)
-		policyName := fmt.Sprintf("policy_ozy_%s", col.Name)
-		if policyErr := h.DB.CreatePolicy(ctx, tx, col.Name, policyName, rule); policyErr != nil {
-			results = append(results, EnforceRLSResult{
-				Table:       col.Name,
-				Status:      "error",
-				Description: "failed to create RLS policy",
-			})
+		legacyPolicy := fmt.Sprintf("policy_ozy_%s", col.Name)
+		_, _ = tx.Exec(ctx, fmt.Sprintf("DROP POLICY IF EXISTS %s ON %s", legacyPolicy, col.Name))
+		applied := make([]string, 0, len(rlsActions))
+		policyErr := false
+		for _, action := range rlsActions {
+			policyName := makePolicyName(col.Name, action)
+			_, _ = tx.Exec(ctx, fmt.Sprintf("DROP POLICY IF EXISTS %s ON %s", policyName, col.Name))
+			if err := h.DB.CreatePolicyForAction(ctx, tx, col.Name, policyName, action, rule); err != nil {
+				results = append(results, EnforceRLSResult{
+					Table:       col.Name,
+					Status:      "error",
+					Description: fmt.Sprintf("failed to create RLS %s policy", action),
+				})
+				policyErr = true
+				break
+			}
+			applied = append(applied, action)
+		}
+		if policyErr {
 			continue
 		}
 
@@ -1489,20 +1617,33 @@ func (h *Handler) EnforceRLSAll(c echo.Context) error {
 		}
 
 		results = append(results, EnforceRLSResult{
-			Table:       col.Name,
-			Status:      "enforced",
-			Rule:        rule,
-			Description: "native and metadata RLS enabled",
+			Table:          col.Name,
+			Status:         "enforced",
+			Rule:           rule,
+			ActionsApplied: append([]string{}, applied...),
+			Description:    "native and metadata RLS enabled with per-action policies",
+		})
+		enforcedCount++
+	}
+
+	if dryRun {
+		return c.JSON(http.StatusOK, map[string]any{
+			"status":   "preview",
+			"dry_run":  true,
+			"results":  results,
+			"enforced": 0,
 		})
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to commit RLS enforcement"})
 	}
+	h.invalidateHealthIssuesCache()
 
 	return c.JSON(http.StatusOK, map[string]any{
-		"status":  "ok",
-		"results": results,
+		"status":   "ok",
+		"enforced": enforcedCount,
+		"results":  results,
 	})
 }
 

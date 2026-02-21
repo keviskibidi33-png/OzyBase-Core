@@ -1,6 +1,8 @@
 name: Release
 
 on:
+  pull_request:
+    branches: [main]
   push:
     tags:
       - "v*"
@@ -10,21 +12,150 @@ permissions:
   id-token: write
 
 jobs:
-  goreleaser:
+  quality-gate:
+    name: Release Quality Gate
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: ozybase_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: password
+      DB_NAME: ozybase_test
+      DB_SSLMODE: disable
+      DATABASE_URL: postgres://postgres:password@localhost:5432/ozybase_test?sslmode=disable
+      JWT_SECRET: release_quality_secret
+      SITE_URL: http://127.0.0.1:8090
+      APP_DOMAIN: localhost
+      ALLOWED_ORIGINS: http://127.0.0.1:5342,http://localhost:5342
+      OZY_AUTO_BOOTSTRAP_ADMIN: "true"
+      INITIAL_ADMIN_EMAIL: admin@ozybase.local
+      INITIAL_ADMIN_PASSWORD: OzyBase123!
+      SMOKE_ADMIN_EMAIL: admin@ozybase.local
+      SMOKE_ADMIN_PASSWORD: OzyBase123!
+      DEBUG: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+          cache: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Go tests
+        run: go test ./...
+
+      - name: Go lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=10m
+
+      - name: Frontend install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Frontend lint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Frontend build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Frontend bundle budget
+        working-directory: frontend
+        run: npm run bundle:check
+
+      - name: Start API for smoke
+        run: |
+          nohup go run ./cmd/ozybase > /tmp/ozybase.log 2>&1 &
+          for i in {1..40}; do
+            if curl -fsS http://127.0.0.1:8090/api/health > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API failed to start"
+          cat /tmp/ozybase.log || true
+          exit 1
+
+      - name: Smoke API
+        run: bash scripts/smoke_api.sh
+
+      - name: Dump API log on failure
+        if: failure()
+        run: cat /tmp/ozybase.log || true
+
+  release-dry-run:
+    name: Release Dry Run
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    needs: [quality-gate]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up Go
+      - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: "1.24.x"
           cache: true
 
-      - name: Run GoReleaser
+      - name: GoReleaser snapshot
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean --skip=publish --skip=announce
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    name: Publish Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: [quality-gate]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+          cache: true
+
+      - name: GoReleaser publish
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
@@ -32,3 +163,8 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Rollback checklist
+        run: |
+          echo "Release completed. If rollback is needed, follow docs/RELEASE_ROLLBACK_CHECKLIST.md"
+

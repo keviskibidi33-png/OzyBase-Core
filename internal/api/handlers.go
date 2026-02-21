@@ -70,6 +70,14 @@ type Handler struct {
 	Migrations   *migrations.Generator
 	Applier      *migrations.Applier
 	StartTime    time.Time
+
+	projectInfoCacheMu    sync.RWMutex
+	projectInfoCache      *ProjectInfo
+	projectInfoCacheUntil time.Time
+
+	healthIssuesCacheMu    sync.RWMutex
+	healthIssuesCache      []HealthIssue
+	healthIssuesCacheUntil time.Time
 }
 
 // NewHandler creates a new Handler with the given dependencies

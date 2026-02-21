@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +21,13 @@ type RLSPolicyCoverage struct {
 	PolicyCount        int      `json:"policy_count"`
 	MissingActions     []string `json:"missing_actions"`
 	FullyCovered       bool     `json:"fully_covered"`
+}
+
+type RLSPolicyCoverageHistorySnapshot struct {
+	RecordedAt    time.Time `json:"recorded_at"`
+	TotalTables   int       `json:"total_tables"`
+	FullyCovered  int       `json:"fully_covered"`
+	CoverageRatio float64   `json:"coverage_ratio"`
 }
 
 func (h *Handler) collectRLSPolicyCoverage(ctx context.Context) ([]RLSPolicyCoverage, error) {
@@ -138,13 +147,73 @@ func (h *Handler) GetRLSPolicyCoverage(c echo.Context) error {
 		}
 		filtered = append(filtered, row)
 	}
+	_ = h.persistRLSPolicyCoverageSnapshot(ctx, coverage, fullyCovered)
 
 	return c.JSON(http.StatusOK, map[string]any{
-		"total_tables":   len(coverage),
-		"fully_covered":  fullyCovered,
-		"coverage_ratio": coverageRatio(fullyCovered, len(coverage)),
-		"items":          filtered,
+		"total_tables":                   len(coverage),
+		"fully_covered":                  fullyCovered,
+		"tables_with_gaps":               len(coverage) - fullyCovered,
+		"coverage_ratio":                 coverageRatio(fullyCovered, len(coverage)),
+		"kpi_full_action_coverage_ratio": coverageRatio(fullyCovered, len(coverage)),
+		"items":                          filtered,
 	})
+}
+
+// GetRLSPolicyCoverageHistory handles GET /api/project/security/rls/coverage/history
+func (h *Handler) GetRLSPolicyCoverageHistory(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
+	defer cancel()
+
+	limit := 30
+	if raw := strings.TrimSpace(c.QueryParam("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 365 {
+		limit = 365
+	}
+
+	rows, err := h.DB.Pool.Query(ctx, `
+		SELECT recorded_at, total_tables, fully_covered, coverage_ratio
+		FROM _v_rls_coverage_history
+		ORDER BY recorded_at DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "failed to load RLS coverage history",
+		})
+	}
+	defer rows.Close()
+
+	items := make([]RLSPolicyCoverageHistorySnapshot, 0, limit)
+	for rows.Next() {
+		var row RLSPolicyCoverageHistorySnapshot
+		if scanErr := rows.Scan(&row.RecordedAt, &row.TotalTables, &row.FullyCovered, &row.CoverageRatio); scanErr == nil {
+			items = append(items, row)
+		}
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"items": items,
+		"count": len(items),
+	})
+}
+
+func (h *Handler) persistRLSPolicyCoverageSnapshot(ctx context.Context, coverage []RLSPolicyCoverage, fullyCovered int) error {
+	details, err := json.Marshal(coverage)
+	if err != nil {
+		return err
+	}
+	_, err = h.DB.Pool.Exec(ctx, `
+		INSERT INTO _v_rls_coverage_history (total_tables, fully_covered, coverage_ratio, details)
+		VALUES ($1, $2, $3, $4)
+	`, len(coverage), fullyCovered, coverageRatio(fullyCovered, len(coverage)), details)
+	return err
 }
 
 func coverageRatio(covered, total int) float64 {

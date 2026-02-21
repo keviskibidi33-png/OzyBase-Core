@@ -420,6 +420,9 @@ func (db *DB) AddColumn(ctx context.Context, tableName string, field FieldSchema
 	}
 
 	_, err := db.Pool.Exec(ctx, sql)
+	if err == nil {
+		db.InvalidateTableColumnCache(tableName)
+	}
 	return sql, err
 }
 
@@ -432,6 +435,9 @@ func (db *DB) DeleteColumn(ctx context.Context, tableName string, columnName str
 	// #nosec G201
 	sql := fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", tableName, columnName)
 	_, err := db.Pool.Exec(ctx, sql)
+	if err == nil {
+		db.InvalidateTableColumnCache(tableName)
+	}
 	return sql, err
 }
 
@@ -444,6 +450,9 @@ func (db *DB) DeleteTable(ctx context.Context, tableName string) error {
 	// #nosec G201
 	sql := fmt.Sprintf("DROP TABLE IF EXISTS %s CASCADE", tableName)
 	_, err := db.Pool.Exec(ctx, sql)
+	if err == nil {
+		db.InvalidateTableColumnCache(tableName)
+	}
 	return err
 }
 

@@ -272,12 +272,19 @@ func initStorage(cfg *config.Config) (storage.Provider, error) {
 	if cfg.StorageProvider == "s3" {
 		svc, err := storage.NewS3Provider(cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3UseSSL)
 		if err != nil {
+			if cfg.StorageFallbackLocal {
+				logger.Log.Warn().Err(err).Str("path", cfg.StoragePath).Msg("S3 storage unavailable, falling back to local storage")
+				return storage.NewLocalProvider(cfg.StoragePath), nil
+			}
 			return nil, fmt.Errorf("failed to initialize S3 storage: %w", err)
 		}
-		logger.Log.Info().Msg("📦 Using S3-Compatible Storage")
+		logger.Log.Info().Msg("Using S3-compatible storage")
 		return svc, nil
 	}
-	logger.Log.Info().Str("path", cfg.StoragePath).Msg("📦 Using Local Storage")
+	if cfg.StorageProvider != "local" {
+		logger.Log.Warn().Str("provider", cfg.StorageProvider).Msg("Unknown storage provider, defaulting to local storage")
+	}
+	logger.Log.Info().Str("path", cfg.StoragePath).Msg("Using local storage")
 	return storage.NewLocalProvider(cfg.StoragePath), nil
 }
 
@@ -501,6 +508,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.POST("/project/security/notifications", h.AddNotificationRecipient, authRequired)
 		apiGroup.DELETE("/project/security/notifications/:id", h.DeleteNotificationRecipient, authRequired)
 		apiGroup.GET("/project/security/rls/coverage", h.GetRLSPolicyCoverage, authRequired, adminOnly)
+		apiGroup.GET("/project/security/rls/coverage/history", h.GetRLSPolicyCoverageHistory, authRequired, adminOnly)
 		apiGroup.POST("/project/security/rls/enforce", h.EnforceRLSAll, authRequired, adminOnly)
 
 		// Integrations (Slack, Discord, SIEM)
