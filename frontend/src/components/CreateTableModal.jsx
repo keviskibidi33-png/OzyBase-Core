@@ -249,7 +249,7 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
 
             // Auto-suggest table name from file
             if (!name) {
-                const fileName = file.name.split('.')[0].toLowerCase().replace(/[^a-z0-9_]/g, '_');
+                const fileName = file.name.split('.')[0];
                 setName(fileName);
             }
         };
@@ -306,6 +306,7 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
                 method: 'POST',
                 body: JSON.stringify({
                     name: tableName,
+                    display_name: String(name || '').trim() || tableName,
                     schema: customColumns,
                     rls_enabled: isRLSEnabled,
                     rls_rule: isRLSEnabled ? rlsRule : '',

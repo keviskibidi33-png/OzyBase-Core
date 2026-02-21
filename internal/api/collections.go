@@ -22,6 +22,7 @@ import (
 type Collection struct {
 	ID              string             `json:"id"`
 	Name            string             `json:"name"`
+	DisplayName     string             `json:"display_name,omitempty"`
 	IsSystem        bool               `json:"is_system"`
 	Schema          []data.FieldSchema `json:"schema"`
 	ListRule        string             `json:"list_rule"`
@@ -37,6 +38,7 @@ type Collection struct {
 // CreateCollectionRequest represents the request to create a new collection
 type CreateCollectionRequest struct {
 	Name            string             `json:"name"`
+	DisplayName     string             `json:"display_name"`
 	Schema          []data.FieldSchema `json:"schema"`
 	ListRule        string             `json:"list_rule"`   // "public", "auth", "admin"
 	CreateRule      string             `json:"create_rule"` // "auth", "admin"
@@ -60,6 +62,10 @@ func (h *Handler) CreateCollection(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{
 			"error": "Collection name is required",
 		})
+	}
+	req.DisplayName = strings.TrimSpace(req.DisplayName)
+	if req.DisplayName == "" {
+		req.DisplayName = req.Name
 	}
 
 	if len(req.Schema) == 0 {
@@ -158,13 +164,29 @@ func (h *Handler) CreateCollection(c echo.Context) error {
 	}
 	var collection Collection
 	err = tx.QueryRow(ctx, `
-		INSERT INTO _v_collections (name, schema_def, list_rule, create_rule, rls_enabled, rls_rule, realtime_enabled, workspace_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id, name, list_rule, create_rule, rls_enabled, rls_rule, realtime_enabled, COALESCE(workspace_id::text, ''), created_at, updated_at
-	`, req.Name, schemaJSON, req.ListRule, req.CreateRule, req.RlsEnabled, req.RlsRule, req.RealtimeEnabled, workspaceID).Scan(
-		&collection.ID, &collection.Name, &collection.ListRule, &collection.CreateRule,
+		INSERT INTO _v_collections (name, display_name, schema_def, list_rule, create_rule, rls_enabled, rls_rule, realtime_enabled, workspace_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id, name, COALESCE(display_name, name), list_rule, create_rule, rls_enabled, rls_rule, realtime_enabled, COALESCE(workspace_id::text, ''), created_at, updated_at
+	`, req.Name, req.DisplayName, schemaJSON, req.ListRule, req.CreateRule, req.RlsEnabled, req.RlsRule, req.RealtimeEnabled, workspaceID).Scan(
+		&collection.ID, &collection.Name, &collection.DisplayName, &collection.ListRule, &collection.CreateRule,
 		&collection.RlsEnabled, &collection.RlsRule, &collection.RealtimeEnabled, &collection.WorkspaceID, &collection.CreatedAt, &collection.UpdatedAt,
 	)
+
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42703" {
+			// Backward compatibility for deployments where display_name column is not yet present.
+			err = tx.QueryRow(ctx, `
+				INSERT INTO _v_collections (name, schema_def, list_rule, create_rule, rls_enabled, rls_rule, realtime_enabled, workspace_id)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+				RETURNING id, name, list_rule, create_rule, rls_enabled, rls_rule, realtime_enabled, COALESCE(workspace_id::text, ''), created_at, updated_at
+			`, req.Name, schemaJSON, req.ListRule, req.CreateRule, req.RlsEnabled, req.RlsRule, req.RealtimeEnabled, workspaceID).Scan(
+				&collection.ID, &collection.Name, &collection.ListRule, &collection.CreateRule,
+				&collection.RlsEnabled, &collection.RlsRule, &collection.RealtimeEnabled, &collection.WorkspaceID, &collection.CreatedAt, &collection.UpdatedAt,
+			)
+			collection.DisplayName = req.DisplayName
+		}
+	}
 
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{
@@ -353,8 +375,17 @@ func (h *Handler) ListCollections(c echo.Context) error {
 	workspaceID, _ := c.Get("workspace_id").(string)
 
 	// Fetch metadata for ALL collections to correctly identify and hide tables from other workspaces
-	query := "SELECT name, schema_def, list_rule, create_rule, created_at, updated_at, realtime_enabled, workspace_id FROM _v_collections"
+	query := "SELECT name, COALESCE(display_name, name), schema_def, list_rule, create_rule, created_at, updated_at, realtime_enabled, workspace_id FROM _v_collections"
+	usesDisplayName := true
 	rows, err := h.DB.Pool.Query(ctx, query)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42703" {
+			// Backward compatibility for deployments where display_name column is not yet present.
+			usesDisplayName = false
+			rows, err = h.DB.Pool.Query(ctx, "SELECT name, schema_def, list_rule, create_rule, created_at, updated_at, realtime_enabled, workspace_id FROM _v_collections")
+		}
+	}
 
 	metaMap := make(map[string]Collection)
 	if err == nil {
@@ -363,7 +394,14 @@ func (h *Handler) ListCollections(c echo.Context) error {
 			var col Collection
 			var schemaJSON []byte
 			var wsID *string
-			if err := rows.Scan(&col.Name, &schemaJSON, &col.ListRule, &col.CreateRule, &col.CreatedAt, &col.UpdatedAt, &col.RealtimeEnabled, &wsID); err == nil {
+			var scanErr error
+			if usesDisplayName {
+				scanErr = rows.Scan(&col.Name, &col.DisplayName, &schemaJSON, &col.ListRule, &col.CreateRule, &col.CreatedAt, &col.UpdatedAt, &col.RealtimeEnabled, &wsID)
+			} else {
+				scanErr = rows.Scan(&col.Name, &schemaJSON, &col.ListRule, &col.CreateRule, &col.CreatedAt, &col.UpdatedAt, &col.RealtimeEnabled, &wsID)
+				col.DisplayName = col.Name
+			}
+			if scanErr == nil {
 				if wsID != nil {
 					col.WorkspaceID = *wsID
 				}
@@ -402,11 +440,12 @@ func (h *Handler) ListCollections(c echo.Context) error {
 				continue
 			}
 			result = append(result, Collection{
-				Name:       tableName,
-				IsSystem:   isSystem,
-				ListRule:   "public",
-				CreateRule: "admin",
-				Schema:     []data.FieldSchema{},
+				Name:        tableName,
+				DisplayName: tableName,
+				IsSystem:    isSystem,
+				ListRule:    "public",
+				CreateRule:  "admin",
+				Schema:      []data.FieldSchema{},
 			})
 		}
 	}

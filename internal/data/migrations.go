@@ -75,6 +75,7 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS _v_collections (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			name VARCHAR(255) UNIQUE NOT NULL,
+			display_name VARCHAR(255),
 			schema_def JSONB NOT NULL,
 			list_rule VARCHAR(50) DEFAULT 'auth',
 			create_rule VARCHAR(50) DEFAULT 'admin',
@@ -250,6 +251,8 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS rls_rule TEXT DEFAULT 'auth.uid() = owner_id'`,
 		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS update_rule VARCHAR(50) DEFAULT 'admin'`,
 		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS delete_rule VARCHAR(50) DEFAULT 'admin'`,
+		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS display_name VARCHAR(255)`,
+		`UPDATE _v_collections SET display_name = name WHERE display_name IS NULL OR display_name = ''`,
 		`ALTER TABLE _v_users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE`,
 		`ALTER TABLE _v_security_alerts ADD COLUMN IF NOT EXISTS message TEXT`,
 		`ALTER TABLE _v_security_alerts ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'`,

@@ -847,6 +847,12 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
         standardColumns.reduce((acc, col) => acc + getColumnWidth(col.name, col.type), 0) + 40 + 80, 
     [standardColumns, getColumnWidth]);
 
+    const currentTableMeta = useMemo(
+        () => allTables.find(t => t.name === tableName),
+        [allTables, tableName]
+    );
+    const currentTableLabel = currentTableMeta?.display_name || tableName;
+
     return (
         <div className="flex flex-col h-full w-full max-w-full overflow-hidden text-zinc-400 font-sans animate-in fade-in duration-500">
             {/* Table Toolbar */}
@@ -859,7 +865,7 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                             className="flex items-center gap-2 px-3 py-1.5 bg-[#111111] border border-[#2e2e2e] rounded-lg hover:border-zinc-500 transition-all group shrink-0"
                         >
                             <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Table</span>
-                            <span className="text-[11px] font-bold text-white group-hover:text-primary transition-colors">{tableName}</span>
+                            <span className="text-[11px] font-bold text-white group-hover:text-primary transition-colors">{currentTableLabel}</span>
                             <ChevronDown size={14} className={`text-zinc-600 transition-transform ${isTableSwitcherOpen ? 'rotate-180' : ''}`} />
                         </button>
 
@@ -880,7 +886,7 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                                                     className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex items-center gap-3 ${tableName === t.name ? 'bg-primary/10 text-primary font-bold' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}
                                                 >
                                                     <Database size={12} className={tableName === t.name ? 'text-primary' : 'text-zinc-600'} />
-                                                    {t.name}
+                                                    <span className="truncate">{t.display_name || t.name}</span>
                                                 </button>
                                             ))}
                                         </div>
@@ -897,7 +903,7 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                                                         className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex items-center gap-3 font-mono opacity-80 ${tableName === t.name ? 'bg-primary/10 text-primary font-bold' : 'text-zinc-500 hover:bg-zinc-800 hover:text-white'}`}
                                                     >
                                                         <Lock size={12} className={tableName === t.name ? 'text-primary' : 'text-zinc-700'} />
-                                                        {t.name}
+                                                        <span className="truncate">{t.display_name || t.name}</span>
                                                     </button>
                                                 ))}
                                             </div>

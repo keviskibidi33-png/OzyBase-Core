@@ -28,6 +28,7 @@ import {
     X,
     MousePointer2,
     Lightbulb,
+    Wifi,
     Telescope,
     List,
     User,
@@ -183,7 +184,8 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
 
         tables.forEach(t => {
             const isSystem = t.is_system || t.name?.startsWith('_v_') || t.name?.startsWith('_ozy_');
-            const matchesSearch = t.name?.toLowerCase().includes(lowerSearch);
+            const label = (t.display_name || t.name || '').toLowerCase();
+            const matchesSearch = label.includes(lowerSearch) || t.name?.toLowerCase().includes(lowerSearch);
 
             if (matchesSearch) {
                 if (isSystem) system.push(t);
@@ -477,7 +479,7 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
                                         >
                                             <div className="flex items-center gap-3 truncate">
                                                 <Table2 size={14} className={selectedTable === t.name ? 'text-primary' : 'text-zinc-800 group-hover:text-zinc-500'} />
-                                                <span className="truncate">{t.name}</span>
+                                                <span className="truncate">{t.display_name || t.name}</span>
                                                 {t.realtime_enabled && (
                                                     <div className="flex items-center" title="Realtime Enabled">
                                                         <Wifi size={10} className="text-primary animate-pulse" />
@@ -522,7 +524,7 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
                                             >
                                                 <div className="flex items-center gap-3 truncate">
                                                     <Lock size={12} className={selectedTable === t.name ? 'text-primary' : 'text-zinc-800 group-hover:text-zinc-500'} />
-                                                    <span className="truncate font-mono opacity-80">{t.name}</span>
+                                                    <span className="truncate font-mono opacity-80">{t.display_name || t.name}</span>
                                                 </div>
                                             </button>
                                         ))}
