@@ -551,9 +551,14 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.POST("/tables/:name/rows", h.CreateRecord, authRequired)
 		apiGroup.PATCH("/tables/:name/rows/:id", h.UpdateRecord, authRequired)
 		apiGroup.DELETE("/tables/:name/rows/:id", h.DeleteRecord, authRequired)
+		apiGroup.POST("/tables/:name/rows/bulk", h.BulkRowsAction, authRequired)
 		apiGroup.POST("/tables/:name/import", h.ImportRecords, authRequired)
 		apiGroup.POST("/tables/:name/columns", h.AddColumn, authRequired)           // New
 		apiGroup.DELETE("/tables/:name/columns/:col", h.DeleteColumn, authRequired) // New
+		apiGroup.GET("/tables/:name/views", h.ListTableViews, authRequired)
+		apiGroup.POST("/tables/:name/views", h.CreateTableView, authRequired)
+		apiGroup.PATCH("/tables/:name/views/:id", h.UpdateTableView, authRequired)
+		apiGroup.DELETE("/tables/:name/views/:id", h.DeleteTableView, authRequired)
 	}
 
 	// Create users table for demo if missing
