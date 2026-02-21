@@ -18,6 +18,9 @@ This roadmap focuses on enterprise readiness for self-hosted and Coolify deploym
 - Formal RLS expression validation runs before policy creation and returns stable `error_code` values.
 - API key lifecycle is now auditable with `_v_api_key_events` (create/rotate/toggle/delete).
 - API keys now persist ownership metadata (`created_by_user_id`) for accountability.
+- Added automated RLS coverage auditor endpoint: `GET /api/project/security/rls/coverage`.
+- Added global API error envelope (`error`, `error_code`, `request_id`) via middleware + global handler.
+- Extended `/api/health` with SLO checks for DB, migrations, storage provider, and API key event pipeline.
 
 ---
 

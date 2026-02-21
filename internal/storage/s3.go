@@ -62,3 +62,8 @@ func (s *S3Provider) GetURL(ctx context.Context, bucket, key string) (string, er
 	}
 	return presignedURL.String(), nil
 }
+
+func (s *S3Provider) Health(ctx context.Context) error {
+	_, err := s.client.ListBuckets(ctx)
+	return err
+}

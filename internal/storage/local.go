@@ -62,6 +62,20 @@ func (l *LocalProvider) GetURL(ctx context.Context, bucket, key string) (string,
 	return fmt.Sprintf("/api/files/%s/%s", bucket, key), nil
 }
 
+func (l *LocalProvider) Health(ctx context.Context) error {
+	if err := os.MkdirAll(l.basePath, 0o750); err != nil {
+		return err
+	}
+	testFile := filepath.Join(l.basePath, ".healthcheck")
+	f, err := os.OpenFile(testFile, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_ = f.Close()
+	_ = os.Remove(testFile)
+	return nil
+}
+
 func (l *LocalProvider) resolvePath(bucket, key string) (string, error) {
 	bucket = strings.TrimSpace(bucket)
 	key = strings.TrimSpace(key)

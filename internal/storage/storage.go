@@ -20,4 +20,5 @@ type Provider interface {
 	Download(ctx context.Context, bucket, key string) (io.ReadCloser, error)
 	Delete(ctx context.Context, bucket, key string) error
 	GetURL(ctx context.Context, bucket, key string) (string, error)
+	Health(ctx context.Context) error
 }

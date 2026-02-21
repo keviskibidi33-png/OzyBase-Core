@@ -198,7 +198,13 @@ type HealthResponse struct {
 	Database  string `json:"database"`
 	Timestamp string `json:"timestamp"`
 	Uptime    string `json:"uptime"`
-	Memory    struct {
+	SLO       struct {
+		Database   HealthCheck `json:"database"`
+		Migrations HealthCheck `json:"migrations"`
+		Storage    HealthCheck `json:"storage"`
+		KeyEvents  HealthCheck `json:"key_events"`
+	} `json:"slo"`
+	Memory struct {
 		Alloc      uint64 `json:"alloc_mb"`
 		TotalAlloc uint64 `json:"total_alloc_mb"`
 		Sys        uint64 `json:"sys_mb"`
@@ -206,18 +212,37 @@ type HealthResponse struct {
 	} `json:"memory"`
 }
 
+type HealthCheck struct {
+	Status    string `json:"status"`
+	LatencyMS int64  `json:"latency_ms"`
+	Error     string `json:"error,omitempty"`
+}
+
 // Health handles GET /api/health
 func (h *Handler) Health(c echo.Context) error {
-	ctx, cancel := context.WithTimeout(c.Request().Context(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 4*time.Second)
 	defer cancel()
 
+	dbCheck := runHealthCheck(ctx, func(checkCtx context.Context) error {
+		return h.DB.Health(checkCtx)
+	})
+	migrationsCheck := runHealthCheck(ctx, func(checkCtx context.Context) error {
+		return h.checkMigrationsHealth(checkCtx)
+	})
+	storageCheck := runHealthCheck(ctx, func(checkCtx context.Context) error {
+		return h.checkStorageHealth(checkCtx)
+	})
+	keyEventsCheck := runHealthCheck(ctx, func(checkCtx context.Context) error {
+		return h.checkAPIKeyEventsHealth(checkCtx)
+	})
+
 	dbStatus := "connected"
-	if err := h.DB.Health(ctx); err != nil {
+	if dbCheck.Status != "ok" {
 		dbStatus = "disconnected"
 	}
 
 	status := "ok"
-	if dbStatus == "disconnected" {
+	if dbCheck.Status != "ok" || migrationsCheck.Status != "ok" || storageCheck.Status != "ok" || keyEventsCheck.Status != "ok" {
 		status = "degraded"
 	}
 
@@ -230,12 +255,63 @@ func (h *Handler) Health(c echo.Context) error {
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Uptime:    time.Since(startTime).String(),
 	}
+	resp.SLO.Database = dbCheck
+	resp.SLO.Migrations = migrationsCheck
+	resp.SLO.Storage = storageCheck
+	resp.SLO.KeyEvents = keyEventsCheck
 	resp.Memory.Alloc = m.Alloc / 1024 / 1024
 	resp.Memory.TotalAlloc = m.TotalAlloc / 1024 / 1024
 	resp.Memory.Sys = m.Sys / 1024 / 1024
 	resp.Memory.NumGC = m.NumGC
 
 	return c.JSON(http.StatusOK, resp)
+}
+
+func runHealthCheck(ctx context.Context, fn func(context.Context) error) HealthCheck {
+	start := time.Now()
+	err := fn(ctx)
+	check := HealthCheck{
+		Status:    "ok",
+		LatencyMS: time.Since(start).Milliseconds(),
+	}
+	if err != nil {
+		check.Status = "fail"
+		check.Error = err.Error()
+	}
+	return check
+}
+
+func (h *Handler) checkMigrationsHealth(ctx context.Context) error {
+	var exists bool
+	if err := h.DB.Pool.QueryRow(ctx, "SELECT to_regclass('public._v_migrations_history') IS NOT NULL").Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("migrations table is missing")
+	}
+
+	var count int
+	return h.DB.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM _v_migrations_history").Scan(&count)
+}
+
+func (h *Handler) checkAPIKeyEventsHealth(ctx context.Context) error {
+	var exists bool
+	if err := h.DB.Pool.QueryRow(ctx, "SELECT to_regclass('public._v_api_key_events') IS NOT NULL").Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("api key events table is missing")
+	}
+
+	var count int
+	return h.DB.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM _v_api_key_events").Scan(&count)
+}
+
+func (h *Handler) checkStorageHealth(ctx context.Context) error {
+	if h.Storage == nil {
+		return fmt.Errorf("storage provider is not configured")
+	}
+	return h.Storage.Health(ctx)
 }
 
 // GetStats handles GET /api/project/stats

@@ -1086,31 +1086,30 @@ func (h *Handler) GetHealthIssues(c echo.Context) error {
 	// Initialize as empty slice so it marshals to [] instead of null if empty
 	issues := make([]HealthIssue, 0)
 
-	// 1. Check for tables without RLS (Mock for now as we don't have a formal RLS system in the app yet,
-	// but we can check actual PG tables)
-	// 1. Check for tables without RLS enabled in OzyBase metadata
-	rows, err := h.DB.Pool.Query(ctx, `
-		SELECT name
-		FROM _v_collections
-		WHERE rls_enabled = false
-		  AND name NOT LIKE '_v_%' AND name NOT LIKE '_ozy_%'
-	`)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var tableName string
-			if err := rows.Scan(&tableName); err == nil {
+	// 1. Formal RLS coverage by table/action (database policies, not only metadata flags)
+	coverage, covErr := h.collectRLSPolicyCoverage(ctx)
+	if covErr == nil {
+		for _, item := range coverage {
+			if !item.RLSDatabaseEnabled {
 				issues = append(issues, HealthIssue{
 					Type:        "security",
-					Title:       fmt.Sprintf("Table `%s` does not have Row Level Security enabled", tableName),
-					Description: "RLS is recommended to protect your data at the database level.",
+					Title:       fmt.Sprintf("Table `%s` does not have Row Level Security enabled", item.TableName),
+					Description: "Enable native Postgres RLS and define per-action policies.",
+				})
+				continue
+			}
+			if len(item.MissingActions) > 0 {
+				issues = append(issues, HealthIssue{
+					Type:        "security",
+					Title:       fmt.Sprintf("Table `%s` is missing RLS policies for: %s", item.TableName, strings.Join(item.MissingActions, ", ")),
+					Description: "Define policies for SELECT, INSERT, UPDATE, and DELETE to enforce full action coverage.",
 				})
 			}
 		}
 	}
 
 	// 2. Check for Foreign Keys without indexes (Dynamic)
-	rows, err = h.DB.Pool.Query(ctx, `
+	rows, err := h.DB.Pool.Query(ctx, `
 		WITH fk_columns AS (
 			SELECT conrelid::regclass as table_name, conname as constraint_name, a.attname as column_name
 			FROM pg_constraint c

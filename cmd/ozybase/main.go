@@ -306,8 +306,11 @@ func initPubSub(cfg *config.Config, broker *realtime.Broker) realtime.PubSub {
 func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
+	e.HTTPErrorHandler = api.HTTPErrorHandler
 
 	// Middleware
+	e.Use(api.RequestIDMiddleware())
+	e.Use(api.ErrorEnvelopeMiddleware())
 	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
 		LogStatus: true,
 		LogURI:    true,
@@ -497,6 +500,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.GET("/project/security/notifications", h.GetNotificationRecipients, authRequired)
 		apiGroup.POST("/project/security/notifications", h.AddNotificationRecipient, authRequired)
 		apiGroup.DELETE("/project/security/notifications/:id", h.DeleteNotificationRecipient, authRequired)
+		apiGroup.GET("/project/security/rls/coverage", h.GetRLSPolicyCoverage, authRequired, adminOnly)
 		apiGroup.POST("/project/security/rls/enforce", h.EnforceRLSAll, authRequired, adminOnly)
 
 		// Integrations (Slack, Discord, SIEM)
