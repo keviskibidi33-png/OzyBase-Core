@@ -1,32 +1,58 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useId } from 'react';
 import {
     Database,
-    Zap,
     Activity,
     ShieldCheck,
     Lock,
     Cpu,
     Server,
     ExternalLink,
-    Search,
     ChevronDown,
-    Menu,
-    Triangle,
-    AlertTriangle,
     Shield,
     FolderOpen,
-    MousePointer2,
-    Loader2
+    MousePointer2
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
 
+const DEFAULT_POINTS = 12;
+
+const normalizeSeries = (data, fallbackSize = DEFAULT_POINTS) => {
+    if (!Array.isArray(data) || data.length === 0) {
+        return new Array(fallbackSize).fill(0);
+    }
+    return data.map((v) => Number(v) || 0);
+};
+
+const formatMetricValue = (value) => {
+    const num = Number(value) || 0;
+    return new Intl.NumberFormat('en-US').format(num);
+};
+
+const formatCompactMetric = (value) => {
+    const num = Number(value) || 0;
+    if (num < 1000) return `${Math.round(num * 10) / 10}`;
+    return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(num);
+};
+
+const formatRangeLabels = (minutes) => {
+    const safeMinutes = Math.max(1, Number(minutes) || 60);
+    const end = new Date();
+    const start = new Date(end.getTime() - safeMinutes * 60 * 1000);
+    const dateFormat = { hour: '2-digit', minute: '2-digit', hour12: false };
+    return {
+        start: start.toLocaleTimeString('en-US', dateFormat),
+        end: end.toLocaleTimeString('en-US', dateFormat)
+    };
+};
+
 // --- Mini Charts Components ---
-const BarChart = ({ data = [], color, suffix = 'requests', maxOverride }) => {
+const BarChart = ({ data = [], color, suffix = 'requests', maxOverride, timeRange = 60 }) => {
     const [hoveredIndex, setHoveredIndex] = useState(null);
 
     // Scale data to fit 0-100% height
-    const maxVal = maxOverride || Math.max(...(Array.isArray(data) ? data : [0]), 10);
-    const chartData = data && data.length > 0 ? data : new Array(12).fill(0);
+    const chartData = normalizeSeries(data);
+    const maxVal = maxOverride || Math.max(...chartData, 10);
+    const labels = formatRangeLabels(timeRange);
 
     return (
         <div className="flex-1 flex flex-col justify-end h-24 gap-1 relative">
@@ -53,93 +79,171 @@ const BarChart = ({ data = [], color, suffix = 'requests', maxOverride }) => {
                 ))}
             </div>
             <div className="flex justify-between text-[8px] font-black text-zinc-700 uppercase tracking-widest mt-2 px-1">
-                <span>10:00 AM</span>
-                <span>11:00 AM</span>
+                <span>{labels.start}</span>
+                <span>{labels.end}</span>
             </div>
         </div>
     );
 };
 
-const SignalBand = ({ data = [], tone = 'emerald', suffix = 'events' }) => {
-    const safeData = Array.isArray(data) && data.length > 0 ? data : new Array(12).fill(0);
-    const maxVal = Math.max(...safeData, 1);
-
+const MetricSparkline = ({ data = [], tone = 'emerald', suffix = 'events', timeRange = 60 }) => {
+    const [hoveredIndex, setHoveredIndex] = useState(null);
+    const sparklineId = useId().replace(/:/g, '');
+    const safeData = normalizeSeries(data);
+    const maxVal = Math.max(...safeData, 0);
+    const minVal = Math.min(...safeData, 0);
+    const range = Math.max(maxVal - minVal, 1);
+    const labels = formatRangeLabels(timeRange);
     const toneMap = {
         emerald: {
-            bar: 'bg-emerald-400/70',
-            glow: 'shadow-[0_0_12px_rgba(16,185,129,0.35)]'
+            line: '#34d399',
+            fill: 'rgba(52, 211, 153, 0.15)',
+            dot: 'bg-emerald-400'
         },
         cyan: {
-            bar: 'bg-cyan-400/70',
-            glow: 'shadow-[0_0_12px_rgba(34,211,238,0.35)]'
+            line: '#22d3ee',
+            fill: 'rgba(34, 211, 238, 0.15)',
+            dot: 'bg-cyan-400'
         },
         amber: {
-            bar: 'bg-amber-400/70',
-            glow: 'shadow-[0_0_12px_rgba(251,191,36,0.35)]'
+            line: '#fbbf24',
+            fill: 'rgba(251, 191, 36, 0.15)',
+            dot: 'bg-amber-400'
         },
         violet: {
-            bar: 'bg-violet-400/70',
-            glow: 'shadow-[0_0_12px_rgba(167,139,250,0.35)]'
+            line: '#a78bfa',
+            fill: 'rgba(167, 139, 250, 0.15)',
+            dot: 'bg-violet-400'
         }
     };
-
     const palette = toneMap[tone] || toneMap.emerald;
+    const points = safeData.map((value, idx) => {
+        const x = safeData.length <= 1 ? 50 : (idx / (safeData.length - 1)) * 100;
+        const y = 90 - ((value - minVal) / range) * 70;
+        return { idx, x, y, value };
+    });
+    const pointString = points.map((point) => `${point.x},${point.y}`).join(' ');
+    const areaPath = `M 0 100 L ${pointString} L 100 100 Z`;
+    const hoveredPoint = hoveredIndex !== null ? points[hoveredIndex] : null;
+    const tooltipLeft = hoveredPoint ? Math.min(92, Math.max(8, hoveredPoint.x)) : 50;
 
     return (
-        <div className="mt-5">
-            <div className="flex items-end gap-1.5 h-16">
-                {safeData.map((v, i) => {
-                    const normalized = Number(v) > 0 ? (Number(v) / maxVal) : 0;
-                    const h = Math.max(8, Math.round(normalized * 100));
-                    return (
-                        <div key={i} className="flex-1 flex items-end h-full">
-                            <div
-                                className={`w-full rounded-t-md transition-all duration-300 ${palette.bar} ${palette.glow}`}
-                                style={{ height: `${h}%`, opacity: 0.35 + (i / 30) }}
-                                title={`${Number(v) || 0} ${suffix}`}
-                            />
-                        </div>
-                    );
-                })}
+        <div className="mt-4">
+            <div className="relative h-24 rounded-xl border border-[#2e2e2e] bg-[#0e0e0e] p-2 overflow-hidden">
+                <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full">
+                    <defs>
+                        <linearGradient id={`spark-fill-${sparklineId}`} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={palette.fill} />
+                            <stop offset="100%" stopColor="rgba(0,0,0,0)" />
+                        </linearGradient>
+                    </defs>
+                    <path d={areaPath} fill={`url(#spark-fill-${sparklineId})`} />
+                    <polyline
+                        points={pointString}
+                        fill="none"
+                        stroke={palette.line}
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                    />
+                    {points.map((point) => (
+                        <circle
+                            key={point.idx}
+                            cx={point.x}
+                            cy={point.y}
+                            r={hoveredIndex === point.idx ? 2 : 1.4}
+                            fill={palette.line}
+                            opacity={hoveredIndex === point.idx ? 1 : 0.55}
+                            className="transition-all duration-150"
+                        />
+                    ))}
+                </svg>
+                <div className="absolute inset-0 flex">
+                    {points.map((point) => (
+                        <button
+                            key={`hover-${point.idx}`}
+                            type="button"
+                            className="flex-1 h-full opacity-0 cursor-crosshair"
+                            onMouseEnter={() => setHoveredIndex(point.idx)}
+                            onFocus={() => setHoveredIndex(point.idx)}
+                            onMouseLeave={() => setHoveredIndex(null)}
+                            onBlur={() => setHoveredIndex(null)}
+                            aria-label={`${point.value} ${suffix}`}
+                        />
+                    ))}
+                </div>
+                {hoveredPoint && (
+                    <div
+                        className="pointer-events-none absolute -top-8 -translate-x-1/2 rounded-lg border border-zinc-700 bg-zinc-900/95 px-2 py-1 text-[9px] font-black text-zinc-100 shadow-xl"
+                        style={{ left: `${tooltipLeft}%` }}
+                    >
+                        {Number.isInteger(hoveredPoint.value) ? hoveredPoint.value : hoveredPoint.value.toFixed(1)} {suffix}
+                    </div>
+                )}
             </div>
-            <div className="flex justify-between mt-2 text-[8px] font-black text-zinc-700 uppercase tracking-[0.18em]">
-                <span>10:00</span>
-                <span>11:00</span>
+            <div className="flex justify-between mt-2 text-[8px] font-black text-zinc-700 uppercase tracking-[0.15em]">
+                <span>{labels.start}</span>
+                <span>{labels.end}</span>
             </div>
         </div>
     );
 };
 
-const ModuleCard = ({ icon: Icon, title, metricLabel, value, data, tone, signalText }) => {
+const ModuleCard = ({ icon, title, metricLabel, value, data, tone, signalText, timeRange, metricUnit }) => {
+    const safeData = useMemo(() => normalizeSeries(data), [data]);
+    const first = safeData[0] || 0;
+    const last = safeData[safeData.length - 1] || 0;
+    const peak = Math.max(...safeData, 0);
+    const average = safeData.reduce((acc, val) => acc + val, 0) / safeData.length;
+    const delta = last - first;
+    const deltaPct = first > 0 ? (delta / first) * 100 : (last > 0 ? 100 : 0);
+    const trendClass = delta > 0 ? 'text-emerald-400' : (delta < 0 ? 'text-amber-400' : 'text-zinc-500');
     const toneMap = {
-        emerald: 'text-emerald-300 border-emerald-400/20 bg-emerald-400/10',
-        cyan: 'text-cyan-300 border-cyan-400/20 bg-cyan-400/10',
-        amber: 'text-amber-300 border-amber-400/20 bg-amber-400/10',
-        violet: 'text-violet-300 border-violet-400/20 bg-violet-400/10'
+        emerald: 'text-emerald-300 border-emerald-400/30 bg-emerald-500/10',
+        cyan: 'text-cyan-300 border-cyan-400/30 bg-cyan-500/10',
+        amber: 'text-amber-300 border-amber-400/30 bg-amber-500/10',
+        violet: 'text-violet-300 border-violet-400/30 bg-violet-500/10'
     };
     const toneClass = toneMap[tone] || toneMap.emerald;
 
     return (
-        <div className="relative overflow-hidden rounded-2xl border border-zinc-800 bg-[#141414] p-5 group transition-all duration-300 hover:border-zinc-600 hover:-translate-y-0.5">
-            <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_top_right,rgba(255,255,255,0.06),transparent_55%)] opacity-70" />
-            <div className="absolute left-0 top-0 h-full w-[2px] bg-gradient-to-b from-primary via-transparent to-transparent opacity-40 group-hover:opacity-100 transition-opacity" />
-
-            <div className="relative z-10 flex items-center justify-between mb-4">
+        <div className="rounded-2xl border border-[#2e2e2e] bg-[#131313] p-5 transition-colors duration-200 hover:border-zinc-600">
+            <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-700 flex items-center justify-center">
-                        <Icon size={15} className="text-zinc-300" />
+                    <div className="w-8 h-8 rounded-lg bg-[#0f0f0f] border border-zinc-700 flex items-center justify-center">
+                        {React.createElement(icon, { size: 15, className: 'text-zinc-300' })}
                     </div>
-                    <span className="text-sm font-black text-zinc-100 tracking-tight">{title}</span>
+                    <div>
+                        <span className="text-sm font-black text-zinc-100 tracking-tight">{title}</span>
+                        <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest mt-1">{metricLabel}</p>
+                    </div>
                 </div>
                 <span className={`px-2 py-1 rounded-full border text-[9px] font-black uppercase tracking-widest ${toneClass}`}>
                     {signalText}
                 </span>
             </div>
 
-            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.18em] mb-1.5">{metricLabel}</p>
-            <p className="text-3xl font-black text-white leading-none">{value}</p>
+            <p className="text-3xl font-black text-white leading-none">{formatMetricValue(value)}</p>
+            <p className={`mt-1 text-[9px] font-black uppercase tracking-widest ${trendClass}`}>
+                {delta === 0 ? 'Steady trend' : `${delta > 0 ? '+' : ''}${deltaPct.toFixed(1)}% in selected window`}
+            </p>
 
-            <SignalBand data={data} tone={tone} suffix={metricLabel.toLowerCase()} />
+            <div className="mt-4 grid grid-cols-3 gap-2 text-[9px]">
+                <div className="rounded-lg border border-[#2e2e2e] bg-[#101010] px-2 py-1.5">
+                    <p className="font-black text-zinc-600 uppercase tracking-widest">Avg</p>
+                    <p className="mt-1 font-mono text-zinc-300">{formatCompactMetric(average)}</p>
+                </div>
+                <div className="rounded-lg border border-[#2e2e2e] bg-[#101010] px-2 py-1.5">
+                    <p className="font-black text-zinc-600 uppercase tracking-widest">Peak</p>
+                    <p className="mt-1 font-mono text-zinc-300">{formatCompactMetric(peak)}</p>
+                </div>
+                <div className="rounded-lg border border-[#2e2e2e] bg-[#101010] px-2 py-1.5">
+                    <p className="font-black text-zinc-600 uppercase tracking-widest">Now</p>
+                    <p className="mt-1 font-mono text-zinc-300">{formatCompactMetric(last)}</p>
+                </div>
+            </div>
+
+            <MetricSparkline data={safeData} tone={tone} suffix={metricUnit || 'events'} timeRange={timeRange} />
         </div>
     );
 };
@@ -370,6 +474,11 @@ const Overview = () => {
                 <span className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Statistics for last {timeRange} minutes</span>
             </div>
 
+            <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-sm font-black text-zinc-200 uppercase tracking-widest">Module Activity</h2>
+                <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Hover charts for exact values</p>
+            </div>
+
             {/* Metrics Cards Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-12">
                 <ModuleCard
@@ -379,7 +488,9 @@ const Overview = () => {
                     value={projectInfo?.metrics?.db_requests || 0}
                     data={projectInfo?.metrics?.db_history}
                     tone="emerald"
-                    signalText={(projectInfo?.metrics?.db_requests || 0) > 0 ? 'live' : 'idle'}
+                    signalText={(projectInfo?.metrics?.db_requests || 0) > 0 ? 'active' : 'idle'}
+                    metricUnit="requests"
+                    timeRange={timeRange}
                 />
                 <ModuleCard
                     icon={Lock}
@@ -388,7 +499,9 @@ const Overview = () => {
                     value={projectInfo?.metrics?.auth_requests || 0}
                     data={projectInfo?.metrics?.auth_history}
                     tone="cyan"
-                    signalText={(projectInfo?.metrics?.auth_requests || 0) > 0 ? 'verified' : 'quiet'}
+                    signalText={(projectInfo?.metrics?.auth_requests || 0) > 0 ? 'active' : 'quiet'}
+                    metricUnit="auth events"
+                    timeRange={timeRange}
                 />
                 <ModuleCard
                     icon={FolderOpen}
@@ -398,6 +511,8 @@ const Overview = () => {
                     data={projectInfo?.metrics?.storage_history}
                     tone="amber"
                     signalText={(projectInfo?.metrics?.storage_requests || 0) > 0 ? 'active' : 'cold'}
+                    metricUnit="storage ops"
+                    timeRange={timeRange}
                 />
                 <ModuleCard
                     icon={MousePointer2}
@@ -407,6 +522,8 @@ const Overview = () => {
                     data={projectInfo?.metrics?.realtime_history}
                     tone="violet"
                     signalText={(projectInfo?.metrics?.realtime_requests || 0) > 0 ? 'streaming' : 'standby'}
+                    metricUnit="connections"
+                    timeRange={timeRange}
                 />
             </div>
 
@@ -426,6 +543,7 @@ const Overview = () => {
                         color="bg-primary shadow-[0_0_10px_rgba(var(--primary-rgb),0.3)]"
                         suffix="%"
                         maxOverride={100}
+                        timeRange={timeRange}
                     />
                 </div>
 
@@ -444,6 +562,7 @@ const Overview = () => {
                         color="bg-primary shadow-[0_0_10px_rgba(var(--primary-rgb),0.3)]"
                         suffix="%"
                         maxOverride={100}
+                        timeRange={timeRange}
                     />
                 </div>
             </div>
