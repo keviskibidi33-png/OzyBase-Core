@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { X, Check, Plus, Trash2, Shield, Zap, Info, Link as LinkIcon, Settings, FileUp, FileText } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
 
@@ -26,6 +26,32 @@ const getDefaultColumns = () => ([
     createColumn({ name: 'created_at', type: 'timestamptz', defaultValue: 'now()', isSystem: true })
 ]);
 
+const normalizeIdentifier = (value) => {
+    const cleaned = String(value || '')
+        .replace(/^\ufeff/, '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_]/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '');
+
+    if (!cleaned) return '';
+    if (/^[0-9]/.test(cleaned)) return `t_${cleaned}`;
+    return cleaned.slice(0, 63);
+};
+
+const buildUniqueIdentifiers = (values, fallbackPrefix) => {
+    const used = new Map();
+    return values.map((value, index) => {
+        const baseRaw = normalizeIdentifier(value);
+        const base = baseRaw || `${fallbackPrefix}_${index + 1}`;
+        const count = used.get(base) || 0;
+        used.set(base, count + 1);
+        const next = count === 0 ? base : `${base}_${count + 1}`;
+        return next.slice(0, 63);
+    });
+};
+
 const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, schema = 'public' }) => {
     const [shouldRender, setShouldRender] = React.useState(isOpen);
     const [isVisible, setIsVisible] = React.useState(false);
@@ -45,6 +71,7 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
     const [error, setError] = useState(null);
     const [csvRecords, setCsvRecords] = useState([]);
     const [allTables, setAllTables] = useState([]); // For relations
+    const normalizedTableName = useMemo(() => normalizeIdentifier(name), [name]);
 
     React.useEffect(() => {
         const fetchTables = async () => {
@@ -246,8 +273,18 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
         setLoading(true);
         setError(null);
 
-        const customColumns = columns.filter(c => !c.isSystem).map(c => ({
-            name: c.name,
+        const tableName = normalizedTableName;
+        if (!tableName) {
+            setError('Invalid table name. Use letters, numbers, and underscores (spaces are converted automatically).');
+            setLoading(false);
+            return;
+        }
+
+        const customRawColumns = columns.filter(c => !c.isSystem);
+        const sanitizedColumnNames = buildUniqueIdentifiers(customRawColumns.map(c => c.name), 'column');
+
+        const customColumns = customRawColumns.map((c, idx) => ({
+            name: sanitizedColumnNames[idx],
             type: c.type,
             default: c.defaultValue || null,
             required: !!c.required,
@@ -260,7 +297,7 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
             const res = await fetchWithAuth('/api/collections', {
                 method: 'POST',
                 body: JSON.stringify({
-                    name,
+                    name: tableName,
                     schema: customColumns,
                     rls_enabled: isRLSEnabled,
                     rls_rule: isRLSEnabled ? rlsRule : '',
@@ -277,8 +314,8 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
 
             // Perform bulk import if records exist
             if (csvRecords.length > 0) {
-                console.log(`[CSV] Importing ${csvRecords.length} records into ${name}`);
-                await fetchWithAuth(`/api/tables/${name}/import`, {
+                console.log(`[CSV] Importing ${csvRecords.length} records into ${tableName}`);
+                await fetchWithAuth(`/api/tables/${tableName}/import`, {
                     method: 'POST',
                     body: JSON.stringify(csvRecords)
                 });
@@ -325,8 +362,11 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
                                 value={name}
                                 onChange={(e) => setName(e.target.value)}
                                 className="w-full bg-[#0c0c0c] border border-[#2e2e2e] rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-primary/50 transition-colors"
-                                placeholder="vlaber_table"
+                                placeholder="Mapeo de links"
                             />
+                            <p className="text-[11px] text-zinc-500">
+                                Technical name: <span className="font-mono text-zinc-300">{normalizedTableName || 'invalid_name'}</span>
+                            </p>
                         </div>
                         <div className="space-y-1">
                             <label className="text-sm font-medium text-zinc-300">Description</label>
