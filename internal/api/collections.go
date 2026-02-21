@@ -534,6 +534,7 @@ type ProjectInfo struct {
 	FunctionCount    int         `json:"function_count"`
 	SchemaCount      int         `json:"schema_count"`
 	DbSize           string      `json:"db_size"`
+	DbSizeBytes      int64       `json:"db_size_bytes"`
 	Version          string      `json:"version"`
 	Metrics          DbMetrics   `json:"metrics"`
 	SlowQueries      []SlowQuery `json:"slow_queries"`
@@ -617,6 +618,7 @@ func (h *Handler) GetProjectInfo(c echo.Context) error {
 	if err != nil {
 		info.DbSize = "unknown"
 	}
+	_ = h.DB.Pool.QueryRow(ctx, `SELECT pg_database_size(current_database())`).Scan(&info.DbSizeBytes)
 
 	// REAL METRICS FROM IN-MEMORY STORE
 	h.Metrics.RLock()

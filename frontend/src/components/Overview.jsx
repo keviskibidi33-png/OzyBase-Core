@@ -45,6 +45,26 @@ const formatRangeLabels = (minutes) => {
     };
 };
 
+const formatBytes = (bytesValue) => {
+    const bytes = Number(bytesValue);
+    if (!Number.isFinite(bytes) || bytes < 0) return null;
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ['KB', 'MB', 'GB', 'TB'];
+    let value = bytes;
+    let idx = -1;
+    while (value >= 1024 && idx < units.length - 1) {
+        value /= 1024;
+        idx += 1;
+    }
+    return `${value.toFixed(value < 10 ? 1 : 0)} ${units[idx]}`;
+};
+
+const getLatestNumericSample = (series) => {
+    if (!Array.isArray(series) || series.length === 0) return null;
+    const last = Number(series[series.length - 1]);
+    return Number.isFinite(last) ? last : null;
+};
+
 // --- Mini Charts Components ---
 const BarChart = ({ data = [], color, suffix = 'requests', maxOverride, timeRange = 60 }) => {
     const [hoveredIndex, setHoveredIndex] = useState(null);
@@ -129,57 +149,59 @@ const MetricSparkline = ({ data = [], tone = 'emerald', suffix = 'events', timeR
 
     return (
         <div className="mt-4">
-            <div className="relative h-24 rounded-xl border border-[#2e2e2e] bg-[#0e0e0e] p-2 overflow-hidden">
-                <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full">
-                    <defs>
-                        <linearGradient id={`spark-fill-${sparklineId}`} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={palette.fill} />
-                            <stop offset="100%" stopColor="rgba(0,0,0,0)" />
-                        </linearGradient>
-                    </defs>
-                    <path d={areaPath} fill={`url(#spark-fill-${sparklineId})`} />
-                    <polyline
-                        points={pointString}
-                        fill="none"
-                        stroke={palette.line}
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                    />
-                    {points.map((point) => (
-                        <circle
-                            key={point.idx}
-                            cx={point.x}
-                            cy={point.y}
-                            r={hoveredIndex === point.idx ? 2 : 1.4}
-                            fill={palette.line}
-                            opacity={hoveredIndex === point.idx ? 1 : 0.55}
-                            className="transition-all duration-150"
-                        />
-                    ))}
-                </svg>
-                <div className="absolute inset-0 flex">
-                    {points.map((point) => (
-                        <button
-                            key={`hover-${point.idx}`}
-                            type="button"
-                            className="flex-1 h-full opacity-0 cursor-crosshair"
-                            onMouseEnter={() => setHoveredIndex(point.idx)}
-                            onFocus={() => setHoveredIndex(point.idx)}
-                            onMouseLeave={() => setHoveredIndex(null)}
-                            onBlur={() => setHoveredIndex(null)}
-                            aria-label={`${point.value} ${suffix}`}
-                        />
-                    ))}
-                </div>
+            <div className="relative h-24 overflow-visible">
                 {hoveredPoint && (
                     <div
-                        className="pointer-events-none absolute -top-8 -translate-x-1/2 rounded-lg border border-zinc-700 bg-zinc-900/95 px-2 py-1 text-[9px] font-black text-zinc-100 shadow-xl"
+                        className="pointer-events-none absolute -top-8 z-30 -translate-x-1/2 rounded-lg border border-zinc-700 bg-zinc-900/95 px-2 py-1 text-[9px] font-black text-zinc-100 shadow-xl"
                         style={{ left: `${tooltipLeft}%` }}
                     >
                         {Number.isInteger(hoveredPoint.value) ? hoveredPoint.value : hoveredPoint.value.toFixed(1)} {suffix}
                     </div>
                 )}
+                <div className="relative h-full rounded-xl border border-[#2e2e2e] bg-[#0e0e0e] p-2 overflow-hidden">
+                    <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full">
+                        <defs>
+                            <linearGradient id={`spark-fill-${sparklineId}`} x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor={palette.fill} />
+                                <stop offset="100%" stopColor="rgba(0,0,0,0)" />
+                            </linearGradient>
+                        </defs>
+                        <path d={areaPath} fill={`url(#spark-fill-${sparklineId})`} />
+                        <polyline
+                            points={pointString}
+                            fill="none"
+                            stroke={palette.line}
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                        />
+                        {points.map((point) => (
+                            <circle
+                                key={point.idx}
+                                cx={point.x}
+                                cy={point.y}
+                                r={hoveredIndex === point.idx ? 2 : 1.4}
+                                fill={palette.line}
+                                opacity={hoveredIndex === point.idx ? 1 : 0.55}
+                                className="transition-all duration-150"
+                            />
+                        ))}
+                    </svg>
+                    <div className="absolute inset-0 flex">
+                        {points.map((point) => (
+                            <button
+                                key={`hover-${point.idx}`}
+                                type="button"
+                                className="flex-1 h-full opacity-0 cursor-crosshair"
+                                onMouseEnter={() => setHoveredIndex(point.idx)}
+                                onFocus={() => setHoveredIndex(point.idx)}
+                                onMouseLeave={() => setHoveredIndex(null)}
+                                onBlur={() => setHoveredIndex(null)}
+                                aria-label={`${point.value} ${suffix}`}
+                            />
+                        ))}
+                    </div>
+                </div>
             </div>
             <div className="flex justify-between mt-2 text-[8px] font-black text-zinc-700 uppercase tracking-[0.15em]">
                 <span>{labels.start}</span>
@@ -242,6 +264,9 @@ const ModuleCard = ({ icon, title, metricLabel, value, data, tone, signalText, t
                     <p className="mt-1 font-mono text-zinc-300">{formatCompactMetric(last)}</p>
                 </div>
             </div>
+            <p className="mt-2 text-[8px] font-black uppercase tracking-[0.15em] text-zinc-600">
+                Avg = mean | Peak = max | Now = latest sample
+            </p>
 
             <MetricSparkline data={safeData} tone={tone} suffix={metricUnit || 'events'} timeRange={timeRange} />
         </div>
@@ -303,6 +328,14 @@ const Overview = () => {
 
     const securityIssues = useMemo(() => healthIssues.filter(i => i.type === 'security').length, [healthIssues]);
     const performanceIssues = useMemo(() => healthIssues.filter(i => i.type === 'performance').length, [healthIssues]);
+    const databaseName = useMemo(() => projectInfo?.database || projectInfo?.name || 'ozybase', [projectInfo]);
+    const databaseSizeLabel = useMemo(() => {
+        const computed = formatBytes(projectInfo?.db_size_bytes);
+        if (computed) return computed;
+        return projectInfo?.db_size || 'Calculating...';
+    }, [projectInfo]);
+    const latestCPU = useMemo(() => getLatestNumericSample(projectInfo?.metrics?.cpu_history), [projectInfo]);
+    const latestRAM = useMemo(() => getLatestNumericSample(projectInfo?.metrics?.ram_history), [projectInfo]);
 
     const status = useMemo(() => {
         if (securityIssues > 2) return {
@@ -319,7 +352,7 @@ const Overview = () => {
             desc: 'Major anomalies detected in access layers. Significant system impact if unaddressed.',
             type: 'grave'
         };
-        if (performanceIssues > 0 || (projectInfo?.metrics?.cpu_history?.[projectInfo.metrics.cpu_history.length - 1] > 85)) return {
+        if (performanceIssues > 0 || ((latestCPU ?? 0) > 85)) return {
             label: 'MINOR INSTABILITY',
             color: 'bg-amber-500',
             glow: 'shadow-[0_0_12px_rgba(245,158,11,0.8)]',
@@ -333,7 +366,7 @@ const Overview = () => {
             desc: 'All core modules are performing within nominal parameters. System environment is stable.',
             type: 'estable'
         };
-    }, [securityIssues, performanceIssues, projectInfo]);
+    }, [securityIssues, performanceIssues, latestCPU]);
 
     return (
         <div className="flex flex-col h-full bg-[#111111] animate-in fade-in duration-500 overflow-y-auto custom-scrollbar p-10 font-sans">
@@ -341,10 +374,10 @@ const Overview = () => {
             {/* Top Bar / Header */}
             <div className="flex items-center justify-between mb-8">
                 <div className="flex items-center gap-4">
-                    <h1 className="text-2xl font-black text-white italic tracking-tighter uppercase">
-                        {projectInfo?.database || 'ozybase'}
+                    <h1 className="text-2xl font-black text-white italic tracking-tighter">
+                        {databaseName}
                         <span className="text-[10px] not-italic font-black text-zinc-500 border border-zinc-700 px-1.5 py-0.5 rounded ml-2 align-middle">
-                            {projectInfo?.db_size || 'NANO'}
+                            {databaseSizeLabel}
                         </span>
                     </h1>
                 </div>
@@ -386,15 +419,21 @@ const Overview = () => {
                             <ChevronDown size={10} className={`transition-transform ${showStatusMenu ? 'rotate-180' : ''}`} />
                         </button>
 
-                        {showStatusMenu && (
-                            <div className="absolute right-0 mt-3 w-80 bg-[#1a1a1a] border border-[#2e2e2e] rounded-2xl shadow-[0_25px_50px_-12px_rgba(0,0,0,0.7)] z-[100] p-5 animate-in fade-in slide-in-from-top-2 duration-300 backdrop-blur-xl">
+                        <div
+                            aria-hidden={!showStatusMenu}
+                            className={`absolute right-0 mt-3 w-80 bg-[#1a1a1a] border border-[#2e2e2e] rounded-2xl shadow-[0_25px_50px_-12px_rgba(0,0,0,0.7)] z-[100] p-5 backdrop-blur-xl origin-top-right transform-gpu transition-all ${
+                                showStatusMenu
+                                    ? 'pointer-events-auto opacity-100 translate-y-0 scale-100 duration-200'
+                                    : 'pointer-events-none opacity-0 -translate-y-1.5 scale-95 duration-150'
+                            }`}
+                        >
                                 <div className="flex items-center gap-4 mb-4 pb-4 border-b border-zinc-800/50">
                                     <div className={`w-3.5 h-3.5 rounded-full ${status.color} ${status.glow}`}></div>
                                     <div>
                                         <h4 className={`text-[11px] font-black uppercase tracking-widest ${status.color.replace('bg-', 'text-')}`}>
                                             {status.label}
                                         </h4>
-                                        <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-tight mt-0.5">Instance: {projectInfo?.database || 'ozybase-core'}</p>
+                                        <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-tight mt-0.5">Instance: {databaseName}</p>
                                     </div>
                                 </div>
 
@@ -429,8 +468,7 @@ const Overview = () => {
                                         Dismiss Diagnostics
                                     </button>
                                 </div>
-                            </div>
-                        )}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -536,7 +574,7 @@ const Overview = () => {
                     </div>
                     <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Total System Load</p>
                     <p className="text-2xl font-black text-white mb-6">
-                        {projectInfo?.metrics?.cpu_history?.[projectInfo.metrics.cpu_history.length - 1]?.toFixed(1) || 0}%
+                        {latestCPU !== null ? `${latestCPU.toFixed(1)}%` : 'Collecting...'}
                     </p>
                     <BarChart
                         data={projectInfo?.metrics?.cpu_history}
@@ -555,7 +593,7 @@ const Overview = () => {
                     </div>
                     <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Total System RAM</p>
                     <p className="text-2xl font-black text-white mb-6">
-                        {projectInfo?.metrics?.ram_history?.[projectInfo.metrics.ram_history.length - 1]?.toFixed(1) || 0}%
+                        {latestRAM !== null ? `${latestRAM.toFixed(1)}%` : 'Collecting...'}
                     </p>
                     <BarChart
                         data={projectInfo?.metrics?.ram_history}
