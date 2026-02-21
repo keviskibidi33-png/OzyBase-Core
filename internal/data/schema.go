@@ -460,14 +460,38 @@ func (db *DB) EnableRLS(ctx context.Context, tx pgx.Tx, tableName string) error 
 // CreatePolicy creates a simple RLS policy.
 // For now, it target the 'auth.uid() = [column]' pattern.
 func (db *DB) CreatePolicy(ctx context.Context, tx pgx.Tx, tableName, policyName, rule string) error {
+	return db.CreatePolicyForAction(ctx, tx, tableName, policyName, "all", rule)
+}
+
+// CreatePolicyForAction creates an RLS policy for a specific action.
+// Supported actions: select, insert, update, delete, all.
+func (db *DB) CreatePolicyForAction(ctx context.Context, tx pgx.Tx, tableName, policyName, action, rule string) error {
 	if !IsValidIdentifier(tableName) || !IsValidIdentifier(policyName) {
 		return fmt.Errorf("invalid identifiers")
 	}
 
-	// Supabase-like policy: CREATE POLICY [name] ON [table] USING ([rule])
-	// We allow SELECT, INSERT, UPDATE, DELETE for simplicity in this version
-	// #nosec G201
-	sql := fmt.Sprintf("CREATE POLICY %s ON %s FOR ALL USING (%s)", policyName, tableName, rule)
+	act := strings.ToLower(strings.TrimSpace(action))
+	var sql string
+	switch act {
+	case "select":
+		// #nosec G201
+		sql = fmt.Sprintf("CREATE POLICY %s ON %s FOR SELECT USING (%s)", policyName, tableName, rule)
+	case "insert":
+		// #nosec G201
+		sql = fmt.Sprintf("CREATE POLICY %s ON %s FOR INSERT WITH CHECK (%s)", policyName, tableName, rule)
+	case "update":
+		// #nosec G201
+		sql = fmt.Sprintf("CREATE POLICY %s ON %s FOR UPDATE USING (%s) WITH CHECK (%s)", policyName, tableName, rule, rule)
+	case "delete":
+		// #nosec G201
+		sql = fmt.Sprintf("CREATE POLICY %s ON %s FOR DELETE USING (%s)", policyName, tableName, rule)
+	case "all":
+		// #nosec G201
+		sql = fmt.Sprintf("CREATE POLICY %s ON %s FOR ALL USING (%s)", policyName, tableName, rule)
+	default:
+		return fmt.Errorf("invalid policy action: %s", action)
+	}
+
 	_, err := tx.Exec(ctx, sql)
 	return err
 }

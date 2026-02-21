@@ -26,6 +26,27 @@ const getDefaultColumns = () => ([
     createColumn({ name: 'created_at', type: 'timestamptz', defaultValue: 'now()', isSystem: true })
 ]);
 
+const RLS_PRESETS = {
+    owner_only: {
+        select: 'user_id = auth.uid()',
+        insert: 'user_id = auth.uid()',
+        update: 'user_id = auth.uid()',
+        delete: 'user_id = auth.uid()'
+    },
+    public_read_only: {
+        select: 'true',
+        insert: 'false',
+        update: 'false',
+        delete: 'false'
+    },
+    deny_all: {
+        select: 'false',
+        insert: 'false',
+        update: 'false',
+        delete: 'false'
+    }
+};
+
 const normalizeIdentifier = (value) => {
     const cleaned = String(value || '')
         .replace(/^\ufeff/, '')
@@ -61,7 +82,8 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [isRLSEnabled, setIsRLSEnabled] = useState(true);
-    const [rlsRule, setRlsRule] = useState('user_id = auth.uid()');
+    const [rlsPreset, setRlsPreset] = useState('owner_only');
+    const [rlsPolicies, setRlsPolicies] = useState(() => ({ ...RLS_PRESETS.owner_only }));
     const [isRealtimeEnabled, setIsRealtimeEnabled] = useState(false);
 
     // Default columns
@@ -72,6 +94,22 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
     const [csvRecords, setCsvRecords] = useState([]);
     const [allTables, setAllTables] = useState([]); // For relations
     const normalizedTableName = useMemo(() => normalizeIdentifier(name), [name]);
+    const usesUserIDInPolicies = useMemo(
+        () => Object.values(rlsPolicies).some(rule => String(rule || '').includes('user_id')),
+        [rlsPolicies]
+    );
+
+    const handleRlsPresetChange = (presetKey) => {
+        setRlsPreset(presetKey);
+        if (presetKey !== 'custom' && RLS_PRESETS[presetKey]) {
+            setRlsPolicies({ ...RLS_PRESETS[presetKey] });
+        }
+    };
+
+    const handleRlsPolicyChange = (action, value) => {
+        setRlsPreset('custom');
+        setRlsPolicies(prev => ({ ...prev, [action]: value }));
+    };
 
     React.useEffect(() => {
         const fetchTables = async () => {
@@ -282,8 +320,21 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
         }
 
         const hasUserIDColumn = columns.some(c => normalizeIdentifier(c.name) === 'user_id');
-        if (isRLSEnabled && rlsRule.includes('user_id') && !hasUserIDColumn) {
+        if (isRLSEnabled && usesUserIDInPolicies && !hasUserIDColumn) {
             setError('RLS rule requires a user_id column. Add user_id or choose a different policy preset.');
+            setLoading(false);
+            return;
+        }
+
+        const normalizedRlsPolicies = {
+            select: String(rlsPolicies.select || '').trim(),
+            insert: String(rlsPolicies.insert || '').trim(),
+            update: String(rlsPolicies.update || '').trim(),
+            delete: String(rlsPolicies.delete || '').trim()
+        };
+        const hasAnyPolicy = Object.values(normalizedRlsPolicies).some(Boolean);
+        if (isRLSEnabled && !hasAnyPolicy) {
+            setError('At least one RLS policy action is required when RLS is enabled.');
             setLoading(false);
             return;
         }
@@ -309,7 +360,8 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
                     display_name: String(name || '').trim() || tableName,
                     schema: customColumns,
                     rls_enabled: isRLSEnabled,
-                    rls_rule: isRLSEnabled ? rlsRule : '',
+                    rls_rule: isRLSEnabled ? normalizedRlsPolicies.select : '',
+                    rls_policies: isRLSEnabled ? normalizedRlsPolicies : {},
                     realtime_enabled: isRealtimeEnabled
                 })
             });
@@ -407,21 +459,45 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
                         {isRLSEnabled && (
                             <div className="bg-[#111111] border border-[#2e2e2e] rounded p-3 flex gap-3">
                                 <Info size={16} className="text-zinc-400 shrink-0 mt-0.5" />
-                                <div className="space-y-2">
-                                    <p className="text-xs text-zinc-500">You need to create an access policy before you can query data from this table. Without a policy, querying this table will return an <span className="underline decoration-zinc-600">empty array</span> of results.</p>
+                                <div className="space-y-3 w-full">
+                                    <p className="text-xs text-zinc-500">
+                                        Define policies per action. If an action has no policy, it is denied by default.
+                                    </p>
 
-                                    <div className="pt-2 space-y-2">
-                                        <label className="text-[10px] font-black uppercase tracking-widest text-zinc-600">Preset Policy</label>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black uppercase tracking-widest text-zinc-600">Policy Preset</label>
                                         <select
-                                            value={rlsRule}
-                                            onChange={(e) => setRlsRule(e.target.value)}
+                                            value={rlsPreset}
+                                            onChange={(e) => handleRlsPresetChange(e.target.value)}
                                             className="w-full bg-[#0c0c0c] border border-[#2e2e2e] rounded px-3 py-1.5 text-xs text-zinc-300 focus:outline-none focus:border-primary/50"
                                         >
-                                            <option value="user_id = auth.uid()">Only owner can access (user_id = auth.uid())</option>
-                                            <option value="true">Public access (Everyone)</option>
-                                            <option value="">Custom (Experimental)</option>
+                                            <option value="owner_only">Owner only (user_id = auth.uid())</option>
+                                            <option value="public_read_only">Public read only</option>
+                                            <option value="deny_all">Deny all</option>
+                                            <option value="custom">Custom</option>
                                         </select>
                                     </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                        {['select', 'insert', 'update', 'delete'].map((action) => (
+                                            <div key={action} className="space-y-1">
+                                                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-600">
+                                                    {action}
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    value={rlsPolicies[action] || ''}
+                                                    onChange={(e) => handleRlsPolicyChange(action, e.target.value)}
+                                                    className="w-full bg-[#0c0c0c] border border-[#2e2e2e] rounded px-3 py-1.5 text-xs text-zinc-300 focus:outline-none focus:border-primary/50 font-mono"
+                                                    placeholder="false"
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <p className="text-[11px] text-zinc-500">
+                                        Use SQL boolean expressions, e.g. <span className="font-mono">user_id = auth.uid()</span> or <span className="font-mono">true</span>.
+                                    </p>
 
                                     <button className="text-xs text-zinc-300 border border-zinc-700 rounded px-2 py-1 flex items-center gap-2 hover:bg-zinc-800 transition-colors">
                                         <FileText size={12} /> Documentation

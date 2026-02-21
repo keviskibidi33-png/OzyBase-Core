@@ -44,8 +44,77 @@ type CreateCollectionRequest struct {
 	CreateRule      string             `json:"create_rule"` // "auth", "admin"
 	RlsEnabled      bool               `json:"rls_enabled"`
 	RlsRule         string             `json:"rls_rule"`
+	RlsPolicies     map[string]string  `json:"rls_policies"`
 	RealtimeEnabled bool               `json:"realtime_enabled"`
 	WorkspaceID     string             `json:"workspace_id"`
+}
+
+func normalizeRLSPolicies(singleRule string, perAction map[string]string) map[string]string {
+	policies := map[string]string{
+		"select": "",
+		"insert": "",
+		"update": "",
+		"delete": "",
+	}
+
+	if perAction != nil {
+		for action, raw := range perAction {
+			key := strings.ToLower(strings.TrimSpace(action))
+			if _, ok := policies[key]; ok {
+				policies[key] = strings.TrimSpace(raw)
+			}
+		}
+	}
+
+	legacy := strings.TrimSpace(singleRule)
+	if legacy != "" {
+		for action, value := range policies {
+			if value == "" {
+				policies[action] = legacy
+			}
+		}
+	}
+
+	return policies
+}
+
+func makePolicyName(tableName, action string) string {
+	candidate := fmt.Sprintf("policy_ozy_%s_%s", tableName, action)
+	if len(candidate) <= 63 {
+		return candidate
+	}
+
+	// Keep deterministic suffix while respecting identifier length.
+	shortTable := tableName
+	maxTable := 63 - len("policy_ozy__") - len(action) - 8
+	if maxTable < 1 {
+		maxTable = 1
+	}
+	if len(shortTable) > maxTable {
+		shortTable = shortTable[:maxTable]
+	}
+	return fmt.Sprintf("policy_ozy_%s_%s", shortTable, action)
+}
+
+func validateRLSExpression(ctx context.Context, tx pgx.Tx, tableName, expr string) error {
+	expression := strings.TrimSpace(expr)
+	if expression == "" {
+		return fmt.Errorf("policy expression cannot be empty")
+	}
+
+	blocked := []string{";", "--", "/*", "*/"}
+	lower := strings.ToLower(expression)
+	for _, token := range blocked {
+		if strings.Contains(lower, token) {
+			return fmt.Errorf("policy expression contains disallowed token: %s", token)
+		}
+	}
+
+	// Ask Postgres to validate expression syntax and referenced columns.
+	// #nosec G201
+	validateSQL := fmt.Sprintf("EXPLAIN SELECT 1 FROM %s WHERE (%s) LIMIT 0", tableName, expression)
+	_, err := tx.Exec(ctx, validateSQL)
+	return err
 }
 
 // CreateCollection handles POST /api/collections
@@ -125,19 +194,41 @@ func (h *Handler) CreateCollection(c echo.Context) error {
 			})
 		}
 
-		if req.RlsRule != "" {
-			policyName := fmt.Sprintf("policy_ozy_%s", req.Name)
-			if err := h.DB.CreatePolicy(ctx, tx, req.Name, policyName, req.RlsRule); err != nil {
+		policies := normalizeRLSPolicies(req.RlsRule, req.RlsPolicies)
+		for action, expression := range policies {
+			if strings.TrimSpace(expression) == "" {
+				continue
+			}
+			if err := validateRLSExpression(ctx, tx, req.Name, expression); err != nil {
 				var pgErr *pgconn.PgError
-				if errors.As(err, &pgErr) && pgErr.Code == "42703" {
-					return c.JSON(http.StatusBadRequest, map[string]string{
-						"error": "Invalid RLS policy: one or more referenced columns do not exist",
-					})
+				if errors.As(err, &pgErr) {
+					if pgErr.Code == "42703" {
+						return c.JSON(http.StatusBadRequest, map[string]string{
+							"error": fmt.Sprintf("Invalid RLS %s policy: one or more referenced columns do not exist", action),
+						})
+					}
+					if pgErr.Code == "42601" || pgErr.Code == "42883" {
+						return c.JSON(http.StatusBadRequest, map[string]string{
+							"error": fmt.Sprintf("Invalid RLS %s policy expression: %s", action, pgErr.Message),
+						})
+					}
 				}
+				return c.JSON(http.StatusBadRequest, map[string]string{
+					"error": fmt.Sprintf("Invalid RLS %s policy expression", action),
+				})
+			}
+
+			policyName := makePolicyName(req.Name, action)
+			_, _ = tx.Exec(ctx, fmt.Sprintf("DROP POLICY IF EXISTS %s ON %s", policyName, req.Name))
+			if err := h.DB.CreatePolicyForAction(ctx, tx, req.Name, policyName, action, expression); err != nil {
 				return c.JSON(http.StatusInternalServerError, map[string]string{
 					"error": "Failed to create RLS policy: " + err.Error(),
 				})
 			}
+		}
+
+		if strings.TrimSpace(req.RlsRule) == "" {
+			req.RlsRule = policies["select"]
 		}
 	}
 
