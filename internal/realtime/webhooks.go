@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Xangel0s/OzyBase/internal/security"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -58,6 +59,14 @@ func (d *WebhookDispatcher) Dispatch(event Event) {
 	payload, _ := json.Marshal(event)
 	for _, target := range targets {
 		go func(t hookTarget) {
+			if _, err := security.ValidateOutboundURL(t.URL, security.OutboundURLOptions{
+				AllowHTTP:           false,
+				AllowPrivateNetwork: security.AllowPrivateOutboundFromEnv(),
+			}); err != nil {
+				log.Printf("Webhook blocked for %q: %v", t.URL, err)
+				return
+			}
+
 			req, err := http.NewRequest("POST", t.URL, bytes.NewBuffer(payload))
 			if err != nil {
 				log.Printf("Failed to create webhook request: %v", err)
@@ -76,6 +85,7 @@ func (d *WebhookDispatcher) Dispatch(event Event) {
 			}
 
 			client := &http.Client{Timeout: 10 * time.Second}
+			// #nosec G704 -- URL is validated with security.ValidateOutboundURL above.
 			resp, err := client.Do(req)
 			if err != nil {
 				log.Printf("Webhook failed to %s: %v", t.URL, err)

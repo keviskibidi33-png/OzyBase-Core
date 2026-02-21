@@ -11,12 +11,17 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/Xangel0s/OzyBase/internal/security"
 )
 
 const defaultRepo = "Xangel0s/OzyBase"
+
+var repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
 type releaseAsset struct {
 	Name string `json:"name"`
@@ -39,6 +44,9 @@ func Upgrade(opts Options) (string, error) {
 	repo := opts.Repo
 	if repo == "" {
 		repo = defaultRepo
+	}
+	if !repoPattern.MatchString(repo) {
+		return "", fmt.Errorf("invalid repository format")
 	}
 
 	release, err := fetchRelease(repo, opts.Version)
@@ -94,6 +102,14 @@ func fetchRelease(repo, version string) (*releaseResponse, error) {
 		}
 		endpoint = fmt.Sprintf("https://api.github.com/repos/%s/releases/tags/%s", repo, tag)
 	}
+	if _, err := security.ValidateOutboundURL(endpoint, security.OutboundURLOptions{
+		AllowHTTP: false,
+		AllowedHosts: map[string]struct{}{
+			"api.github.com": {},
+		},
+	}); err != nil {
+		return nil, fmt.Errorf("invalid release endpoint: %w", err)
+	}
 
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -103,6 +119,7 @@ func fetchRelease(repo, version string) (*releaseResponse, error) {
 	req.Header.Set("User-Agent", "ozybase-upgrader")
 
 	client := &http.Client{Timeout: 30 * time.Second}
+	// #nosec G704 -- endpoint is constrained to api.github.com via ValidateOutboundURL.
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch release metadata: %w", err)
@@ -147,6 +164,20 @@ func findAssetURL(assets []releaseAsset, name string) string {
 }
 
 func downloadFile(url, dest string) error {
+	if _, err := security.ValidateOutboundURL(url, security.OutboundURLOptions{
+		AllowHTTP: false,
+		AllowedHosts: map[string]struct{}{
+			"github.com":                            {},
+			"api.github.com":                        {},
+			"objects.githubusercontent.com":         {},
+			"release-assets.githubusercontent.com":  {},
+			"github-releases.githubusercontent.com": {},
+			"codeload.github.com":                   {},
+		},
+	}); err != nil {
+		return fmt.Errorf("invalid download url: %w", err)
+	}
+
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("build download request: %w", err)
@@ -155,6 +186,7 @@ func downloadFile(url, dest string) error {
 	req.Header.Set("User-Agent", "ozybase-upgrader")
 
 	client := &http.Client{Timeout: 2 * time.Minute}
+	// #nosec G704 -- download URL is validated against strict GitHub host allowlist.
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("download archive: %w", err)

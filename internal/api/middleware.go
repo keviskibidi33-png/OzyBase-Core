@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -376,8 +375,6 @@ func MetricsMiddleware(h *Handler) echo.MiddlewareFunc {
 			if isPolling {
 				return next(c)
 			}
-
-			fmt.Fprintf(os.Stderr, "📝 [Audit] Tracking Request: %s\n", path)
 
 			start := time.Now().UTC()
 			err := next(c)

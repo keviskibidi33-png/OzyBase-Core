@@ -11,12 +11,13 @@ import (
 
 func main() {
 	if err := godotenv.Load(".env"); err != nil {
-		fmt.Println("Warning: .env not found (trying default connection)")
+		fmt.Println("Warning: .env not found")
 	}
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "postgres://postgres:postgres@localhost:5432/ozybase_db"
+		fmt.Fprintln(os.Stderr, "DATABASE_URL is required")
+		os.Exit(1)
 	}
 
 	conn, err := pgx.Connect(context.Background(), dbURL)

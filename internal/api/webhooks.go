@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/Xangel0s/OzyBase/internal/data"
+	"github.com/Xangel0s/OzyBase/internal/security"
 	"github.com/labstack/echo/v4"
 )
 
@@ -61,6 +62,15 @@ func (h *WebhookHandler) Create(c echo.Context) error {
 	}
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+	}
+	if req.Name == "" || req.URL == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "name and url are required"})
+	}
+	if _, err := security.ValidateOutboundURL(req.URL, security.OutboundURLOptions{
+		AllowHTTP:           false,
+		AllowPrivateNetwork: security.AllowPrivateOutboundFromEnv(),
+	}); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid webhook url: " + err.Error()})
 	}
 
 	var id string

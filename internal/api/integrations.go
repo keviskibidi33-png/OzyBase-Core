@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/Xangel0s/OzyBase/internal/realtime"
+	"github.com/Xangel0s/OzyBase/internal/security"
 	"github.com/labstack/echo/v4"
 )
 
@@ -62,6 +63,12 @@ func (h *Handler) CreateIntegration(c echo.Context) error {
 
 	if req.Name == "" || req.WebhookURL == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "name and webhook_url are required"})
+	}
+	if _, err := security.ValidateOutboundURL(req.WebhookURL, security.OutboundURLOptions{
+		AllowHTTP:           false,
+		AllowPrivateNetwork: security.AllowPrivateOutboundFromEnv(),
+	}); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid webhook_url: " + err.Error()})
 	}
 
 	configJSON, _ := json.Marshal(req.Config)

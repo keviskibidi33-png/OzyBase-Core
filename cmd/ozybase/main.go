@@ -201,11 +201,10 @@ func handleCLI(db *data.DB) bool {
 	if len(os.Args) > 1 && os.Args[1] == "reset-admin" {
 		ctx := context.Background()
 		email := resolveInitialAdminEmail()
-		newPass := "admin123"
-
-		if len(os.Args) > 2 {
-			newPass = os.Args[2]
+		if len(os.Args) <= 2 || strings.TrimSpace(os.Args[2]) == "" {
+			log.Fatal("Usage: ozybase reset-admin <new-password>")
 		}
+		newPass := os.Args[2]
 
 		log.Printf("🔐 Resetting password for %s...", email)
 
@@ -219,7 +218,7 @@ func handleCLI(db *data.DB) bool {
 			log.Fatalf("Failed to update password: %v", err)
 		}
 
-		log.Printf("✅ Admin password reset successfully to: %s", newPass)
+		log.Printf("✅ Admin password reset successfully for: %s", email)
 		return true
 	}
 
@@ -341,6 +340,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		ServiceRoleKey: cfg.ServiceRoleKey,
 	})) // 🔐 API Key Auth (Enterprise Phase 1)
 	e.Use(api.RLSMiddleware(h.DB)) // 🛡️ RLS Context Injection
+	// #nosec G101 -- CSRF token lookup/cookie fields are static identifiers, not credentials.
 	e.Use(middleware.CSRFWithConfig(middleware.CSRFConfig{
 		TokenLookup:    "header:X-CSRF-Token",
 		ContextKey:     "csrf",
