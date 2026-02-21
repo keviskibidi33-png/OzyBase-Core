@@ -103,7 +103,7 @@ const CSVImportModal = ({
                     </button>
                 </div>
 
-                <div className="p-4 lg:p-6 space-y-4 lg:space-y-5 overflow-hidden">
+                <div className="flex-1 min-h-0 p-4 lg:p-6 flex flex-col gap-4 lg:gap-5 overflow-hidden">
                     <div className="flex flex-wrap gap-2.5 text-[10px] uppercase tracking-[0.2em] font-black">
                         <div className="px-3 py-1.5 rounded-full bg-[#111111] border border-[#2e2e2e] text-zinc-400">
                             {headers.length} headers detected
@@ -181,9 +181,10 @@ const CSVImportModal = ({
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 min-h-0">
-                        <div className="min-w-0 bg-[#111111] border border-[#2e2e2e] rounded-2xl p-3 overflow-auto custom-scrollbar max-h-[52vh]">
-                            <div className="space-y-2.5">
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 min-h-0 flex-1">
+                        <div className="min-w-0 bg-[#111111] border border-[#2e2e2e] rounded-2xl p-3 flex flex-col min-h-0">
+                            <div className="flex-1 min-h-0 overflow-auto custom-scrollbar pr-1">
+                                <div className="space-y-2.5">
                                 {headers.map((header) => (
                                     <div key={header.index} className="flex flex-col md:flex-row md:items-center gap-2.5 bg-[#0f0f0f] border border-[#222222] rounded-xl p-2.5">
                                         <div className="flex-1 min-w-0">
@@ -205,15 +206,16 @@ const CSVImportModal = ({
                                         </select>
                                     </div>
                                 ))}
+                                </div>
                             </div>
                         </div>
 
-                        <div className="min-w-0 bg-[#111111] border border-[#2e2e2e] rounded-2xl p-3 lg:p-4 overflow-hidden">
+                        <div className="min-w-0 bg-[#111111] border border-[#2e2e2e] rounded-2xl p-3 lg:p-4 overflow-hidden flex flex-col min-h-0">
                             <div className="flex items-center justify-between mb-3">
                                 <h4 className="text-xs font-black uppercase tracking-[0.2em] text-zinc-300">Data Preview</h4>
                                 <span className="text-[10px] text-zinc-500 uppercase tracking-widest">First {sampleRows.length} rows</span>
                             </div>
-                            <div className="min-w-0 overflow-auto custom-scrollbar max-h-[52vh] border border-[#1f1f1f] rounded-xl">
+                            <div className="min-w-0 flex-1 min-h-0 overflow-auto custom-scrollbar border border-[#1f1f1f] rounded-xl pb-1">
                                 <table className="min-w-full text-[11px] text-zinc-300">
                                     <thead className="sticky top-0 bg-[#121212] z-10 border-b border-[#1f1f1f]">
                                         <tr className="text-[10px] uppercase tracking-widest text-zinc-500">
