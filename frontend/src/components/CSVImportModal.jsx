@@ -181,8 +181,8 @@ const CSVImportModal = ({
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 lg:grid-cols-[1.02fr_1fr] gap-4 min-h-0">
-                        <div className="bg-[#111111] border border-[#2e2e2e] rounded-2xl p-3 overflow-auto custom-scrollbar max-h-[52vh]">
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 min-h-0">
+                        <div className="min-w-0 bg-[#111111] border border-[#2e2e2e] rounded-2xl p-3 overflow-auto custom-scrollbar max-h-[52vh]">
                             <div className="space-y-2.5">
                                 {headers.map((header) => (
                                     <div key={header.index} className="flex flex-col md:flex-row md:items-center gap-2.5 bg-[#0f0f0f] border border-[#222222] rounded-xl p-2.5">
@@ -208,12 +208,12 @@ const CSVImportModal = ({
                             </div>
                         </div>
 
-                        <div className="bg-[#111111] border border-[#2e2e2e] rounded-2xl p-3 lg:p-4">
+                        <div className="min-w-0 bg-[#111111] border border-[#2e2e2e] rounded-2xl p-3 lg:p-4 overflow-hidden">
                             <div className="flex items-center justify-between mb-3">
                                 <h4 className="text-xs font-black uppercase tracking-[0.2em] text-zinc-300">Data Preview</h4>
                                 <span className="text-[10px] text-zinc-500 uppercase tracking-widest">First {sampleRows.length} rows</span>
                             </div>
-                            <div className="overflow-auto custom-scrollbar max-h-[52vh] border border-[#1f1f1f] rounded-xl">
+                            <div className="min-w-0 overflow-auto custom-scrollbar max-h-[52vh] border border-[#1f1f1f] rounded-xl">
                                 <table className="min-w-full text-[11px] text-zinc-300">
                                     <thead className="sticky top-0 bg-[#121212] z-10 border-b border-[#1f1f1f]">
                                         <tr className="text-[10px] uppercase tracking-widest text-zinc-500">
