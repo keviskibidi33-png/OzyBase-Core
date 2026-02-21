@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -48,21 +49,28 @@ func NewWebhookIntegration(pool *pgxpool.Pool) *WebhookIntegration {
 
 // SendSecurityAlert sends a security alert to all active integrations
 func (w *WebhookIntegration) SendSecurityAlert(ctx context.Context, alert SecurityAlertPayload) error {
+	if w == nil || w.pool == nil {
+		log.Printf("[integrations] security alert skipped: integration provider unavailable (degraded mode)")
+		return nil
+	}
 	rows, err := w.pool.Query(ctx, `
 		SELECT id, name, type, webhook_url, config
 		FROM _v_integrations
 		WHERE is_active = true AND type IN ('slack', 'discord', 'siem', 'custom')
 	`)
 	if err != nil {
-		return err
+		log.Printf("[integrations] failed to list active integrations: %v (degraded mode, continuing)", err)
+		return nil
 	}
 	defer rows.Close()
 
+	dispatched := 0
 	for rows.Next() {
 		var integration Integration
 		var configJSON []byte
 
 		if err := rows.Scan(&integration.ID, &integration.Name, &integration.Type, &integration.WebhookURL, &configJSON); err != nil {
+			log.Printf("[integrations] skip malformed integration row: %v", err)
 			continue
 		}
 
@@ -71,6 +79,13 @@ func (w *WebhookIntegration) SendSecurityAlert(ctx context.Context, alert Securi
 		}
 
 		go w.sendToIntegration(integration, alert)
+		dispatched++
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[integrations] warning while iterating integrations: %v", err)
+	}
+	if dispatched == 0 {
+		log.Printf("[integrations] no active integrations configured; alert kept local only")
 	}
 
 	return nil
@@ -92,18 +107,21 @@ func (w *WebhookIntegration) sendToIntegration(integration Integration, alert Se
 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
+		log.Printf("[integrations] failed to encode payload for %s: %v", integration.Name, err)
 		return
 	}
 	if _, err := security.ValidateOutboundURL(integration.WebhookURL, security.OutboundURLOptions{
 		AllowHTTP:           false,
 		AllowPrivateNetwork: security.AllowPrivateOutboundFromEnv(),
 	}); err != nil {
+		log.Printf("[integrations] outbound URL rejected for %s: %v", integration.Name, err)
 		return
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest("POST", integration.WebhookURL, bytes.NewBuffer(jsonData))
 	if err != nil {
+		log.Printf("[integrations] request creation failed for %s: %v", integration.Name, err)
 		return
 	}
 
@@ -121,9 +139,13 @@ func (w *WebhookIntegration) sendToIntegration(integration Integration, alert Se
 	// #nosec G704 -- URL is validated with security.ValidateOutboundURL above.
 	resp, err := client.Do(req)
 	if err != nil {
+		log.Printf("[integrations] delivery failed for %s: %v", integration.Name, err)
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusBadRequest {
+		log.Printf("[integrations] delivery returned non-success for %s: status=%d", integration.Name, resp.StatusCode)
+	}
 }
 
 func (w *WebhookIntegration) formatSlackMessage(alert SecurityAlertPayload) map[string]any {
@@ -208,21 +230,28 @@ func formatDetails(details map[string]any) string {
 
 // SendLogBatch sends a batch of logs to SIEM integrations
 func (w *WebhookIntegration) SendLogBatch(ctx context.Context, logs []map[string]any) error {
+	if w == nil || w.pool == nil {
+		log.Printf("[integrations] SIEM log batch skipped: integration provider unavailable (degraded mode)")
+		return nil
+	}
 	rows, err := w.pool.Query(ctx, `
 		SELECT id, name, webhook_url, config
 		FROM _v_integrations
 		WHERE is_active = true AND type = 'siem'
 	`)
 	if err != nil {
-		return err
+		log.Printf("[integrations] failed to list SIEM integrations: %v (degraded mode, continuing)", err)
+		return nil
 	}
 	defer rows.Close()
 
+	dispatched := 0
 	for rows.Next() {
 		var integration Integration
 		var configJSON []byte
 
 		if err := rows.Scan(&integration.ID, &integration.Name, &integration.WebhookURL, &configJSON); err != nil {
+			log.Printf("[integrations] skip malformed SIEM row: %v", err)
 			continue
 		}
 
@@ -231,6 +260,13 @@ func (w *WebhookIntegration) SendLogBatch(ctx context.Context, logs []map[string
 		}
 
 		go w.sendLogBatchToSIEM(integration, logs)
+		dispatched++
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[integrations] warning while iterating SIEM integrations: %v", err)
+	}
+	if dispatched == 0 {
+		log.Printf("[integrations] no active SIEM integrations configured; batch retained locally")
 	}
 
 	return nil
@@ -246,18 +282,21 @@ func (w *WebhookIntegration) sendLogBatchToSIEM(integration Integration, logs []
 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
+		log.Printf("[integrations] failed to encode SIEM payload for %s: %v", integration.Name, err)
 		return
 	}
 	if _, err := security.ValidateOutboundURL(integration.WebhookURL, security.OutboundURLOptions{
 		AllowHTTP:           false,
 		AllowPrivateNetwork: security.AllowPrivateOutboundFromEnv(),
 	}); err != nil {
+		log.Printf("[integrations] outbound SIEM URL rejected for %s: %v", integration.Name, err)
 		return
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	req, err := http.NewRequest("POST", integration.WebhookURL, bytes.NewBuffer(jsonData))
 	if err != nil {
+		log.Printf("[integrations] SIEM request creation failed for %s: %v", integration.Name, err)
 		return
 	}
 
@@ -275,7 +314,11 @@ func (w *WebhookIntegration) sendLogBatchToSIEM(integration Integration, logs []
 	// #nosec G704 -- URL is validated with security.ValidateOutboundURL above.
 	resp, err := client.Do(req)
 	if err != nil {
+		log.Printf("[integrations] SIEM delivery failed for %s: %v", integration.Name, err)
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusBadRequest {
+		log.Printf("[integrations] SIEM delivery returned non-success for %s: status=%d", integration.Name, resp.StatusCode)
+	}
 }

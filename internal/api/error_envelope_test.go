@@ -107,6 +107,41 @@ func TestErrorEnvelopePreservesCustomErrorCode(t *testing.T) {
 	}
 }
 
+func TestErrorEnvelopeConvertsLegacyMessagePayload(t *testing.T) {
+	e := echo.New()
+	e.HTTPErrorHandler = HTTPErrorHandler
+	e.Use(RequestIDMiddleware())
+	e.Use(ErrorEnvelopeMiddleware())
+
+	e.GET("/legacy", func(c echo.Context) error {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"message": "legacy endpoint error",
+		})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/legacy", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to decode body: %v", err)
+	}
+	if body["error"] != "legacy endpoint error" {
+		t.Fatalf("expected legacy message to be mapped to error, got %v", body["error"])
+	}
+	if body["error_code"] != "BAD_REQUEST" {
+		t.Fatalf("expected BAD_REQUEST code, got %v", body["error_code"])
+	}
+	if body["request_id"] == nil || body["request_id"] == "" {
+		t.Fatalf("expected request_id in envelope")
+	}
+}
+
 func TestInferErrorCode(t *testing.T) {
 	tests := []struct {
 		status int
