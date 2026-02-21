@@ -166,12 +166,13 @@ const CSVImportModal = ({
                                 <h4 className="text-xs font-black uppercase tracking-[0.2em] text-zinc-300">Data Preview</h4>
                                 <span className="text-[10px] text-zinc-500 uppercase tracking-widest">First {sampleRows.length} rows</span>
                             </div>
-                            <div className="overflow-x-auto custom-scrollbar">
-                                <table className="w-full text-[11px] text-zinc-300">
-                                    <thead>
+                            <div className="overflow-auto custom-scrollbar max-h-[420px] border border-[#1f1f1f] rounded-xl">
+                                <table className="min-w-full text-[11px] text-zinc-300">
+                                    <thead className="sticky top-0 bg-[#121212] z-10 border-b border-[#1f1f1f]">
                                         <tr className="text-[10px] uppercase tracking-widest text-zinc-500">
+                                            <th className="w-12 text-left py-2 px-3 font-bold border-r border-[#1f1f1f]">#</th>
                                             {headers.map((header) => (
-                                                <th key={header.index} className="text-left pb-2 pr-4 font-bold">
+                                                <th key={header.index} className="text-left py-2 px-3 font-bold whitespace-nowrap">
                                                     {header.label}
                                                 </th>
                                             ))}
@@ -179,9 +180,12 @@ const CSVImportModal = ({
                                     </thead>
                                     <tbody className="text-zinc-400">
                                         {sampleRows.map((row, rowIdx) => (
-                                            <tr key={rowIdx} className="border-t border-[#1f1f1f]">
+                                            <tr key={rowIdx} className="border-t border-[#1f1f1f] hover:bg-[#151515]">
+                                                <td className="py-2 px-3 text-zinc-600 border-r border-[#1f1f1f]">
+                                                    {rowIdx + 1}
+                                                </td>
                                                 {headers.map((header) => (
-                                                    <td key={header.index} className="py-2 pr-4">
+                                                    <td key={header.index} className="py-2 px-3 whitespace-nowrap">
                                                         {row[header.index] ?? ''}
                                                     </td>
                                                 ))}

@@ -1560,7 +1560,7 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                 onClose={() => { setIsCsvImportOpen(false); setCsvImport(null); }}
                 fileName={csvImport?.fileName}
                 headers={csvImport?.headers || []}
-                sampleRows={(csvImport?.rows || []).slice(0, 5)}
+                sampleRows={(csvImport?.rows || []).slice(0, 10)}
                 totalRows={csvImport?.totalRows || 0}
                 columnOptions={csvImport?.columns || []}
                 initialMapping={csvImport?.initialMapping || {}}
