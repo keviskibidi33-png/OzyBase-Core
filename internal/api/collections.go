@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/Xangel0s/OzyBase/internal/data"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/labstack/echo/v4"
 )
 
@@ -120,6 +122,12 @@ func (h *Handler) CreateCollection(c echo.Context) error {
 		if req.RlsRule != "" {
 			policyName := fmt.Sprintf("policy_ozy_%s", req.Name)
 			if err := h.DB.CreatePolicy(ctx, tx, req.Name, policyName, req.RlsRule); err != nil {
+				var pgErr *pgconn.PgError
+				if errors.As(err, &pgErr) && pgErr.Code == "42703" {
+					return c.JSON(http.StatusBadRequest, map[string]string{
+						"error": "Invalid RLS policy: one or more referenced columns do not exist",
+					})
+				}
 				return c.JSON(http.StatusInternalServerError, map[string]string{
 					"error": "Failed to create RLS policy: " + err.Error(),
 				})

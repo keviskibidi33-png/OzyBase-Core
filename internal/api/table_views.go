@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/Xangel0s/OzyBase/internal/data"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/labstack/echo/v4"
 )
 
@@ -53,6 +55,11 @@ func (h *Handler) ListTableViews(c echo.Context) error {
 
 	rows, err := h.DB.Pool.Query(c.Request().Context(), query, args...)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42P01" {
+			// Backward compatibility for deployments before table views migration.
+			return c.JSON(http.StatusOK, []map[string]any{})
+		}
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to list views"})
 	}
 	defer rows.Close()

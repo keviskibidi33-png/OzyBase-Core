@@ -242,6 +242,7 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
             // Merge with system columns
             setColumns([
                 createColumn({ name: 'id', type: 'uuid', defaultValue: 'gen_random_uuid()', isPrimary: true, isSystem: true }),
+                createColumn({ name: 'user_id', type: 'uuid' }),
                 ...newCols,
                 createColumn({ name: 'created_at', type: 'timestamptz', defaultValue: 'now()', isSystem: true })
             ]);
@@ -276,6 +277,13 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
         const tableName = normalizedTableName;
         if (!tableName) {
             setError('Invalid table name. Use letters, numbers, and underscores (spaces are converted automatically).');
+            setLoading(false);
+            return;
+        }
+
+        const hasUserIDColumn = columns.some(c => normalizeIdentifier(c.name) === 'user_id');
+        if (isRLSEnabled && rlsRule.includes('user_id') && !hasUserIDColumn) {
+            setError('RLS rule requires a user_id column. Add user_id or choose a different policy preset.');
             setLoading(false);
             return;
         }
@@ -409,7 +417,7 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
                                             className="w-full bg-[#0c0c0c] border border-[#2e2e2e] rounded px-3 py-1.5 text-xs text-zinc-300 focus:outline-none focus:border-primary/50"
                                         >
                                             <option value="user_id = auth.uid()">Only owner can access (user_id = auth.uid())</option>
-                                            <option value="public">Public read-only (Everyone)</option>
+                                            <option value="true">Public access (Everyone)</option>
                                             <option value="">Custom (Experimental)</option>
                                         </select>
                                     </div>
