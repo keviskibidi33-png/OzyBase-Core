@@ -1641,6 +1641,7 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
             />
 
             <CSVImportModal
+                key={`${csvImport?.fileName || 'csv'}-${csvImport?.delimiter || 'auto'}-${csvImport?.headerRowIndex || 1}-${csvImport?.useHeaderRow ? 'h1' : 'h0'}`}
                 isOpen={isCsvImportOpen}
                 onClose={() => { setIsCsvImportOpen(false); setCsvImport(null); }}
                 fileName={csvImport?.fileName}
