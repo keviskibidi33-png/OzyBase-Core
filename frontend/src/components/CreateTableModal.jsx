@@ -90,6 +90,89 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
         }, MODAL_EXIT_MS);
     }, [onClose]);
 
+    const detectDelimiter = (sampleLines) => {
+        const candidates = [',', ';', '\t', '|'];
+        const scores = new Map(candidates.map((delim) => [delim, 0]));
+
+        sampleLines.forEach((line) => {
+            let inQuote = false;
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                if (char === '"' && line[i + 1] === '"') {
+                    i++;
+                    continue;
+                }
+                if (char === '"') {
+                    inQuote = !inQuote;
+                    continue;
+                }
+                if (!inQuote && scores.has(char)) {
+                    scores.set(char, scores.get(char) + 1);
+                }
+            }
+        });
+
+        let best = ',';
+        for (const delim of candidates) {
+            if (scores.get(delim) > scores.get(best)) best = delim;
+        }
+        return scores.get(best) > 0 ? best : ',';
+    };
+
+    const splitCSVLine = (line, delimiter) => {
+        const result = [];
+        let cur = '';
+        let inQuote = false;
+        for (let i = 0; i < line.length; i++) {
+            const char = line[i];
+            if (char === '"' && line[i + 1] === '"') {
+                cur += '"';
+                i++;
+            } else if (char === '"') {
+                inQuote = !inQuote;
+            } else if (char === delimiter && !inQuote) {
+                result.push(cur.trim());
+                cur = '';
+            } else {
+                cur += char;
+            }
+        }
+        result.push(cur.trim());
+        return result;
+    };
+
+    const sanitizeColumnName = (value, index) => {
+        const cleaned = String(value || '')
+            .replace(/^\ufeff/, '')
+            .toLowerCase()
+            .replace(/[^a-z0-9_]/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_+|_+$/g, '');
+        return cleaned || `column_${index + 1}`;
+    };
+
+    const uniqueColumnNames = (headers) => {
+        const seen = new Map();
+        return headers.map((header, index) => {
+            const base = sanitizeColumnName(header, index);
+            const count = seen.get(base) || 0;
+            seen.set(base, count + 1);
+            return count === 0 ? base : `${base}_${count + 1}`;
+        });
+    };
+
+    const inferTypeFromSamples = (samples) => {
+        const values = samples.filter(v => v !== undefined && v !== null && String(v).trim() !== '');
+        if (values.length === 0) return 'text';
+
+        if (values.every(v => /^-?\d+$/.test(String(v).trim()))) return 'int8';
+        if (values.every(v => /^-?\d+(\.\d+)?$/.test(String(v).trim()))) return 'numeric';
+        if (values.every(v => /^(true|false)$/i.test(String(v).trim()))) return 'boolean';
+        if (values.every(v => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v).trim()))) return 'uuid';
+        if (values.every(v => /^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?$/.test(String(v).trim()))) return 'timestamptz';
+        return 'text';
+    };
+
     const handleCSVImport = (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -100,53 +183,32 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
             const lines = text.split(/\r?\n/).filter(l => l.trim());
             if (lines.length < 1) return;
 
-            // Robust split (handles quotes)
-            const splitLine = (line) => {
-                const result = [];
-                let cur = '';
-                let inQuote = false;
-                for (let i = 0; i < line.length; i++) {
-                    const char = line[i];
-                    if (char === '"' && line[i + 1] === '"') { cur += '"'; i++; }
-                    else if (char === '"') { inQuote = !inQuote; }
-                    else if (char === ',' && !inQuote) { result.push(cur.trim()); cur = ''; }
-                    else { cur += char; }
-                }
-                result.push(cur.trim());
-                return result;
-            };
-
-            const headers = splitLine(lines[0]);
-            const firstRow = lines.length > 1 ? splitLine(lines[1]) : [];
+            const delimiter = detectDelimiter(lines.slice(0, 5));
+            const headers = splitCSVLine(lines[0], delimiter);
+            const normalizedHeaders = uniqueColumnNames(headers);
             const allRecords = [];
+            const columnSamples = normalizedHeaders.map(() => []);
 
             for (let i = 1; i < lines.length; i++) {
-                const values = splitLine(lines[i]);
+                const values = splitCSVLine(lines[i], delimiter);
                 const record = {};
-                headers.forEach((header, idx) => {
+                normalizedHeaders.forEach((header, idx) => {
                     const val = values[idx];
-                    if (val !== undefined) record[header.toLowerCase().replace(/[^a-z0-9_]/g, '_')] = val;
+                    if (val !== undefined) {
+                        record[header] = val;
+                        if (columnSamples[idx].length < 20 && String(val).trim() !== '') {
+                            columnSamples[idx].push(val);
+                        }
+                    }
                 });
                 if (Object.keys(record).length > 0) allRecords.push(record);
             }
             setCsvRecords(allRecords);
 
-            const newCols = headers.map((header, idx) => {
-                const val = firstRow[idx] || '';
-                let type = 'text';
-
-                // Simple type inference
-                if (!isNaN(val) && val !== '') {
-                    type = val.includes('.') ? 'numeric' : 'int8';
-                } else if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val)) {
-                    type = 'uuid';
-                } else if (val.toLowerCase() === 'true' || val.toLowerCase() === 'false') {
-                    type = 'boolean';
-                }
-
+            const newCols = normalizedHeaders.map((header, idx) => {
                 return createColumn({
-                    name: header.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
-                    type
+                    name: header,
+                    type: inferTypeFromSamples(columnSamples[idx])
                 });
             });
 
