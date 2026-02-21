@@ -47,6 +47,7 @@ const PermissionManager = () => {
                 setToast({ message: `Rule updated for ${colName}`, type: 'success' });
             }
         } catch (error) {
+            console.error(`Failed to update rule for ${colName}`, error);
             setToast({ message: 'Update failed', type: 'error' });
         } finally {
             setSaving(null);

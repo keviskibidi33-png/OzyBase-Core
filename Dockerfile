@@ -37,6 +37,9 @@ WORKDIR /app
 
 # Copy the binary from the builder
 COPY --from=backend-builder /app/ozybase .
+# Seed migrations into the image (will be copied into volume at runtime if empty)
+COPY --from=backend-builder /app/migrations /app/migrations_seed
+COPY ./entrypoint.sh /app/entrypoint.sh
 
 # Default environment variables
 ENV PORT=8090
@@ -46,7 +49,8 @@ ENV OZY_STORAGE_PATH=/app/data/storage
 
 # Create necessary directories
 RUN mkdir -p /app/data/storage /app/migrations /app/functions && \
-    chown -R ozybase:ozybase /app
+    chown -R ozybase:ozybase /app && \
+    chmod +x /app/entrypoint.sh
 
 # Expose the API port
 EXPOSE 8090
@@ -60,4 +64,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD wget -qO- http://127.0.0.1:8090/api/health >/dev/null || exit 1
 
 # Run OzyBase
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["./ozybase"]

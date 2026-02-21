@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Xangel0s/OzyBase/internal/data"
 	"github.com/labstack/echo/v4"
 )
 
@@ -230,6 +231,84 @@ func (h *Handler) DeleteRecord(c echo.Context) error {
 	}
 
 	return c.NoContent(http.StatusNoContent)
+}
+
+// BulkRowsAction handles POST /api/tables/:name/rows/bulk
+func (h *Handler) BulkRowsAction(c echo.Context) error {
+	collectionName := c.Param("name")
+	if collectionName == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Collection name is required",
+		})
+	}
+	if !data.IsValidIdentifier(collectionName) {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Invalid collection name",
+		})
+	}
+
+	var req struct {
+		Action string         `json:"action"`
+		IDs    []string       `json:"ids"`
+		Data   map[string]any `json:"data"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Invalid request body",
+		})
+	}
+
+	req.Action = strings.ToLower(strings.TrimSpace(req.Action))
+	if len(req.IDs) == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "At least one row ID is required",
+		})
+	}
+	if len(req.IDs) > 5000 {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Bulk operations are limited to 5000 rows per request",
+		})
+	}
+
+	ownerField, ownerID := h.extractRlsOwnerInfo(c)
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 20*time.Second)
+	defer cancel()
+
+	var (
+		affected int64
+		err      error
+	)
+
+	switch req.Action {
+	case "delete":
+		affected, err = h.DB.BulkDeleteRecords(ctx, collectionName, req.IDs, ownerField, ownerID)
+	case "update":
+		if len(req.Data) == 0 {
+			return c.JSON(http.StatusBadRequest, map[string]string{
+				"error": "Field data is required for bulk update",
+			})
+		}
+		affected, err = h.DB.BulkUpdateRecords(ctx, collectionName, req.IDs, req.Data, ownerField, ownerID)
+	default:
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Unsupported action. Use 'update' or 'delete'.",
+		})
+	}
+
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return c.NoContent(http.StatusRequestTimeout)
+		}
+		fmt.Printf("[ERROR] BulkRowsAction (%s): %v\n", collectionName, err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Bulk operation failed",
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"affected": affected,
+		"action":   req.Action,
+	})
 }
 
 // ImportRecords handles POST /api/tables/:name/import

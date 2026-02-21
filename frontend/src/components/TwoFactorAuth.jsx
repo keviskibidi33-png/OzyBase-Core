@@ -40,6 +40,7 @@ const TwoFactorAuth = () => {
             setSetupData(data);
             setStep('setup');
         } catch (error) {
+            console.error('Failed to setup 2FA', error);
             setToast({ message: 'Failed to setup 2FA', type: 'error' });
         } finally {
             setLoading(false);
@@ -69,6 +70,7 @@ const TwoFactorAuth = () => {
                 setToast({ message: 'Invalid verification code', type: 'error' });
             }
         } catch (error) {
+            console.error('Failed to enable 2FA', error);
             setToast({ message: 'Failed to enable 2FA', type: 'error' });
         } finally {
             setLoading(false);
@@ -90,6 +92,7 @@ const TwoFactorAuth = () => {
                 setToast({ message: '2FA disabled', type: 'success' });
             }
         } catch (error) {
+            console.error('Failed to disable 2FA', error);
             setToast({ message: 'Failed to disable 2FA', type: 'error' });
         } finally {
             setLoading(false);

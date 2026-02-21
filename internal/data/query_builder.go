@@ -62,8 +62,44 @@ func (qb *QueryBuilder) Where(column, operator string, value any) *QueryBuilder 
 
 // Order sets the sorting rule
 func (qb *QueryBuilder) Order(orderBy string) *QueryBuilder {
-	if IsValidIdentifier(strings.ReplaceAll(orderBy, ".", "")) {
-		qb.orderBy = strings.ReplaceAll(orderBy, ".", " ")
+	orderBy = strings.TrimSpace(orderBy)
+	if orderBy == "" {
+		return qb
+	}
+
+	clauses := strings.Split(orderBy, ",")
+	safeClauses := make([]string, 0, len(clauses))
+
+	for _, clause := range clauses {
+		normalized := strings.TrimSpace(strings.ReplaceAll(clause, ".", " "))
+		if normalized == "" {
+			continue
+		}
+
+		parts := strings.Fields(normalized)
+		if len(parts) == 0 || len(parts) > 2 {
+			continue
+		}
+
+		column := parts[0]
+		if !IsValidIdentifier(column) {
+			continue
+		}
+
+		direction := "ASC"
+		if len(parts) == 2 {
+			dir := strings.ToUpper(parts[1])
+			if dir != "ASC" && dir != "DESC" {
+				continue
+			}
+			direction = dir
+		}
+
+		safeClauses = append(safeClauses, fmt.Sprintf("%s %s", column, direction))
+	}
+
+	if len(safeClauses) > 0 {
+		qb.orderBy = strings.Join(safeClauses, ", ")
 	}
 	return qb
 }

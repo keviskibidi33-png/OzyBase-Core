@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { X, Check, Plus, Trash2, Shield, Zap, Info, Link as LinkIcon, Settings, FileUp, FileText } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
 
+const MODAL_ENTER_MS = 200;
+const MODAL_EXIT_MS = 160;
+
 const makeColumnId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
 const createColumn = (overrides = {}) => ({
@@ -24,6 +27,11 @@ const getDefaultColumns = () => ([
 ]);
 
 const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, schema = 'public' }) => {
+    const [shouldRender, setShouldRender] = React.useState(isOpen);
+    const [isVisible, setIsVisible] = React.useState(false);
+    const closeTimerRef = React.useRef(null);
+    const closingRef = React.useRef(false);
+
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [isRLSEnabled, setIsRLSEnabled] = useState(true);
@@ -50,6 +58,37 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
         };
         if (isOpen) fetchTables();
     }, [isOpen]);
+
+    React.useEffect(() => {
+        if (isOpen) {
+            closingRef.current = false;
+            setShouldRender(true);
+            const frame = requestAnimationFrame(() => setIsVisible(true));
+            return () => cancelAnimationFrame(frame);
+        }
+
+        if (!shouldRender) return undefined;
+        setIsVisible(false);
+        const timer = setTimeout(() => {
+            setShouldRender(false);
+        }, MODAL_EXIT_MS);
+        return () => clearTimeout(timer);
+    }, [isOpen, shouldRender]);
+
+    React.useEffect(() => () => {
+        if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    }, []);
+
+    const requestClose = React.useCallback(() => {
+        if (closingRef.current) return;
+        closingRef.current = true;
+        setIsVisible(false);
+        if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = setTimeout(() => {
+            closingRef.current = false;
+            onClose?.();
+        }, MODAL_EXIT_MS);
+    }, [onClose]);
 
     const handleCSVImport = (e) => {
         const file = e.target.files?.[0];
@@ -127,7 +166,7 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
         reader.readAsText(file);
     };
 
-    if (!isOpen) return null;
+    if (!shouldRender) return null;
 
     const handleAddColumn = () => {
         setColumns(prev => [...prev, createColumn()]);
@@ -183,7 +222,7 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
                 });
             }
 
-            onClose();
+            requestClose();
         } catch (err) {
             setError(err.message);
         } finally {
@@ -193,17 +232,21 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
 
     return (
         <div
-            className="fixed inset-0 z-50 flex items-center justify-end bg-black/50 backdrop-blur-sm"
-            onClick={(e) => e.target === e.currentTarget && onClose()}
+            className={`fixed inset-0 z-50 flex items-center justify-end bg-black/50 backdrop-blur-sm transition-opacity ${isVisible ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+            style={{ transitionDuration: `${isVisible ? MODAL_ENTER_MS : MODAL_EXIT_MS}ms` }}
+            onClick={(e) => e.target === e.currentTarget && requestClose()}
         >
-            <div className="w-full max-w-2xl h-full bg-[#111111] border-l border-[#2e2e2e] shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
+            <div
+                className={`w-full max-w-2xl h-full bg-[#111111] border-l border-[#2e2e2e] shadow-2xl flex flex-col transform-gpu transition-all ${isVisible ? 'translate-x-0 opacity-100' : 'translate-x-4 opacity-0'}`}
+                style={{ transitionDuration: `${isVisible ? MODAL_ENTER_MS : MODAL_EXIT_MS}ms` }}
+            >
 
                 {/* Header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-[#2e2e2e]">
                     <h2 className="text-sm font-medium text-zinc-100">
                         Create a new table under <span className="font-mono bg-zinc-800 px-1 py-0.5 rounded textxs text-zinc-300">{schema}</span>
                     </h2>
-                    <button onClick={onClose} className="text-zinc-500 hover:text-white transition-colors">
+                    <button onClick={requestClose} className="text-zinc-500 hover:text-white transition-colors">
                         <X size={20} />
                     </button>
                 </div>
@@ -473,7 +516,7 @@ const CreateTableModal = ({ isOpen, onClose, onTableCreated, onMenuViewSelect, s
                 {/* Footer */}
                 <div className="p-6 border-t border-[#2e2e2e] flex justify-end gap-3 bg-[#0c0c0c]">
                     <button
-                        onClick={onClose}
+                        onClick={requestClose}
                         className="px-4 py-2 text-xs font-medium text-zinc-400 hover:text-white transition-colors"
                     >
                         Cancel

@@ -18,6 +18,9 @@ import {
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
 
+const MODAL_ENTER_MS = 200;
+const MODAL_EXIT_MS = 160;
+
 const AddColumnModal = ({ isOpen, onClose, tableName, onColumnAdded }) => {
     const [name, setName] = useState('');
     const [type, setType] = useState('text');
@@ -25,8 +28,60 @@ const AddColumnModal = ({ isOpen, onClose, tableName, onColumnAdded }) => {
     const [defaultValue, setDefaultValue] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState(null);
+    const [shouldRender, setShouldRender] = React.useState(isOpen);
+    const [isVisible, setIsVisible] = React.useState(false);
+    const closeTimerRef = React.useRef(null);
+    const closingRef = React.useRef(false);
 
-    if (!isOpen) return null;
+    React.useEffect(() => {
+        if (closeTimerRef.current) {
+            clearTimeout(closeTimerRef.current);
+            closeTimerRef.current = null;
+        }
+
+        if (isOpen) {
+            closingRef.current = false;
+            setShouldRender(true);
+            requestAnimationFrame(() => setIsVisible(true));
+            return undefined;
+        }
+
+        if (!shouldRender) return undefined;
+
+        closingRef.current = true;
+        setIsVisible(false);
+        closeTimerRef.current = setTimeout(() => {
+            setShouldRender(false);
+            closingRef.current = false;
+        }, MODAL_EXIT_MS);
+
+        return () => {
+            if (closeTimerRef.current) {
+                clearTimeout(closeTimerRef.current);
+                closeTimerRef.current = null;
+            }
+        };
+    }, [isOpen, shouldRender]);
+
+    React.useEffect(() => () => {
+        if (closeTimerRef.current) {
+            clearTimeout(closeTimerRef.current);
+        }
+    }, []);
+
+    const requestClose = React.useCallback(() => {
+        if (closingRef.current) return;
+        closingRef.current = true;
+        setIsVisible(false);
+        if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = setTimeout(() => {
+            setShouldRender(false);
+            closingRef.current = false;
+            onClose();
+        }, MODAL_EXIT_MS);
+    }, [onClose]);
+
+    if (!shouldRender) return null;
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -50,7 +105,7 @@ const AddColumnModal = ({ isOpen, onClose, tableName, onColumnAdded }) => {
             }
 
             onColumnAdded();
-            onClose();
+            requestClose();
             setName('');
             setType('text');
             setRequired(false);
@@ -91,8 +146,15 @@ const AddColumnModal = ({ isOpen, onClose, tableName, onColumnAdded }) => {
     ];
 
     return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="w-full max-w-2xl bg-[#171717] border border-[#2e2e2e] rounded-xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+        <div
+            className={`fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm transition-opacity ${isVisible ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+            style={{ transitionDuration: `${isVisible ? MODAL_ENTER_MS : MODAL_EXIT_MS}ms` }}
+            onClick={(e) => e.target === e.currentTarget && requestClose()}
+        >
+            <div
+                className={`w-full max-w-2xl bg-[#171717] border border-[#2e2e2e] rounded-xl shadow-2xl overflow-hidden origin-top transition-all transform-gpu ${isVisible ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-1.5 scale-95'}`}
+                style={{ transitionDuration: `${isVisible ? MODAL_ENTER_MS : MODAL_EXIT_MS}ms` }}
+            >
                 <div className="flex items-center justify-between px-6 py-4 border-b border-[#2e2e2e]">
                     <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
@@ -103,7 +165,7 @@ const AddColumnModal = ({ isOpen, onClose, tableName, onColumnAdded }) => {
                             <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold">Table: {tableName}</p>
                         </div>
                     </div>
-                    <button onClick={onClose} className="text-zinc-500 hover:text-zinc-200 transition-colors">
+                    <button onClick={requestClose} className="text-zinc-500 hover:text-zinc-200 transition-colors">
                         <X size={20} />
                     </button>
                 </div>
@@ -179,7 +241,7 @@ const AddColumnModal = ({ isOpen, onClose, tableName, onColumnAdded }) => {
                     <div className="pt-4 flex items-center justify-end gap-3">
                         <button
                             type="button"
-                            onClick={onClose}
+                            onClick={requestClose}
                             className="px-4 py-2 text-xs font-bold text-zinc-500 hover:text-zinc-300 uppercase tracking-widest transition-colors"
                         >
                             Cancel

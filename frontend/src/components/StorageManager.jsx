@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     FolderOpen,
     Plus,
@@ -23,15 +23,7 @@ const StorageManager = () => {
     const [loading, setLoading] = useState(true);
     const fileInputRef = React.useRef(null);
 
-    useEffect(() => {
-        fetchBuckets();
-    }, []);
-
-    useEffect(() => {
-        fetchFiles();
-    }, [selectedBucket]);
-
-    const fetchBuckets = async () => {
+    const fetchBuckets = useCallback(async () => {
         try {
             const token = localStorage.getItem('ozy_token');
             const res = await fetch('/api/files/buckets', {
@@ -48,9 +40,9 @@ const StorageManager = () => {
         } catch (error) {
             console.error('Failed to fetch buckets:', error);
         }
-    };
+    }, [selectedBucket]);
 
-    const fetchFiles = async () => {
+    const fetchFiles = useCallback(async () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('ozy_token');
@@ -68,7 +60,15 @@ const StorageManager = () => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [selectedBucket]);
+
+    useEffect(() => {
+        fetchBuckets();
+    }, [fetchBuckets]);
+
+    useEffect(() => {
+        fetchFiles();
+    }, [fetchFiles]);
 
     const createBucket = async () => {
         const name = prompt("Enter bucket name:");

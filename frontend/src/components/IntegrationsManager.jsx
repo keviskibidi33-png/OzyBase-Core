@@ -54,6 +54,7 @@ const IntegrationsManager = () => {
                 setToast({ message: 'Failed to add integration', type: 'error' });
             }
         } catch (error) {
+            console.error('Failed to add integration', error);
             setToast({ message: 'Network error', type: 'error' });
         } finally {
             setTimeout(() => setToast(null), 3000);
@@ -73,6 +74,7 @@ const IntegrationsManager = () => {
                 setToast({ message: 'Integration deleted', type: 'success' });
             }
         } catch (error) {
+            console.error('Failed to delete integration', error);
             setToast({ message: 'Failed to delete', type: 'error' });
         } finally {
             setTimeout(() => setToast(null), 3000);
@@ -91,6 +93,7 @@ const IntegrationsManager = () => {
                 setToast({ message: 'Failed to send test alert', type: 'error' });
             }
         } catch (error) {
+            console.error('Failed to test integration', error);
             setToast({ message: 'Network error', type: 'error' });
         } finally {
             setTimeout(() => setToast(null), 3000);
