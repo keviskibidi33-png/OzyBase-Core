@@ -685,12 +685,8 @@ func (h *Handler) GetProjectInfo(c echo.Context) error {
 		}
 	}
 
-	// If no active queries found, provide some interesting stats from information_schema
-	if len(info.SlowQueries) == 0 {
-		info.SlowQueries = []SlowQuery{
-			{Query: "SELECT * FROM users", AvgTime: 0.001, Calls: 12},
-			{Query: "SELECT name FROM _v_collections", AvgTime: 0.002, Calls: 45},
-		}
+	if info.SlowQueries == nil {
+		info.SlowQueries = []SlowQuery{}
 	}
 
 	// Connection info

@@ -371,12 +371,7 @@ func MetricsMiddleware(h *Handler) echo.MiddlewareFunc {
 
 			// 🛡️ [Refined Exclusion] Strictly block automated polling noise
 			// We block only the HEAD and background fetch events, allowing actual interactions
-			isPolling := lowerPath == "/api/project/logs" ||
-				lowerPath == "/api/analytics/traffic" ||
-				lowerPath == "/api/analytics/geo" ||
-				lowerPath == "/api/project/security/alerts" ||
-				lowerPath == "/api/health" ||
-				lowerPath == "/api/system/status"
+			isPolling := isMetricsPollingPath(lowerPath)
 
 			if isPolling {
 				return next(c)
@@ -392,6 +387,13 @@ func MetricsMiddleware(h *Handler) echo.MiddlewareFunc {
 			ip := c.RealIP()
 			latency := stop.Sub(start)
 			status := c.Response().Status
+			method := c.Request().Method
+			if method != http.MethodOptions &&
+				method != http.MethodHead &&
+				status >= http.StatusOK &&
+				status < http.StatusBadRequest {
+				incrementMetricsCounter(h, lowerPath)
+			}
 
 			// Handle userID as UUID: convert "" to nil for Postgres safety
 			rawUserID := c.Get("user_id")
@@ -484,5 +486,56 @@ func MetricsMiddleware(h *Handler) echo.MiddlewareFunc {
 
 			return err
 		}
+	}
+}
+
+func isMetricsPollingPath(path string) bool {
+	switch path {
+	case "/api/project/logs",
+		"/api/project/info",
+		"/api/project/health",
+		"/api/project/stats",
+		"/api/project/security/alerts",
+		"/api/project/security/stats",
+		"/api/analytics/traffic",
+		"/api/analytics/geo",
+		"/api/health",
+		"/api/system/status":
+		return true
+	default:
+		return false
+	}
+}
+
+func incrementMetricsCounter(h *Handler, lowerPath string) {
+	module := resolveMetricsModule(lowerPath)
+	if module == "" {
+		return
+	}
+
+	h.Metrics.Lock()
+	switch module {
+	case "auth":
+		h.Metrics.AuthRequests++
+	case "storage":
+		h.Metrics.StorageRequests++
+	case "db":
+		h.Metrics.DbRequests++
+	}
+	h.Metrics.Unlock()
+}
+
+func resolveMetricsModule(path string) string {
+	switch {
+	case strings.HasPrefix(path, "/api/auth/"):
+		return "auth"
+	case strings.HasPrefix(path, "/api/files"):
+		return "storage"
+	case strings.HasPrefix(path, "/api/realtime"):
+		return ""
+	case strings.HasPrefix(path, "/api/"):
+		return "db"
+	default:
+		return ""
 	}
 }
