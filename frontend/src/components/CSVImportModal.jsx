@@ -34,7 +34,9 @@ const CSVImportModal = ({
     detectedDelimiter,
     useHeaderRow,
     onDelimiterChange,
-    onHeaderToggle
+    onHeaderToggle,
+    headerRowIndex,
+    onHeaderRowChange
 }) => {
     const [mapping, setMapping] = useState({});
     const [error, setError] = useState('');
@@ -165,6 +167,17 @@ const CSVImportModal = ({
                             />
                             <span>Use first row as headers</span>
                         </label>
+                        <div className="flex items-center gap-2">
+                            <span>Header row</span>
+                            <input
+                                type="number"
+                                min={1}
+                                value={headerRowIndex || 1}
+                                onChange={(e) => onHeaderRowChange?.(Math.max(1, Number(e.target.value) || 1))}
+                                className="w-16 bg-black border border-[#2e2e2e] text-[10px] text-zinc-300 rounded-lg px-2 py-1"
+                                disabled={!useHeaderRow}
+                            />
+                        </div>
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

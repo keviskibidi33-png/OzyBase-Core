@@ -487,7 +487,7 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                 return counts[bestIndex] > 0 ? candidates[bestIndex] : ',';
             };
 
-            const parseCsv = (rawLines, delimiter, useHeaderRow) => {
+            const parseCsv = (rawLines, delimiter, useHeaderRow, headerRowIndex) => {
                 const splitLine = (line) => {
                     const result = [];
                     let cur = '';
@@ -503,7 +503,8 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                     return result;
                 };
 
-                const headerLine = useHeaderRow ? rawLines[0] : '';
+                const headerRow = Math.max(1, headerRowIndex || 1);
+                const headerLine = useHeaderRow ? rawLines[headerRow - 1] || '' : '';
                 const headerValues = useHeaderRow ? splitLine(headerLine) : [];
                 const firstRowValues = useHeaderRow ? null : splitLine(rawLines[0]);
                 const columnCount = Math.max(headerValues.length, firstRowValues?.length || 0);
@@ -520,7 +521,7 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                     });
 
                 const parsedRows = [];
-                const startIndex = useHeaderRow ? 1 : 0;
+                const startIndex = useHeaderRow ? headerRow : 0;
                 for (let i = startIndex; i < rawLines.length; i++) {
                     const values = splitLine(rawLines[i]);
                     if (values.length === 1 && values[0] === '') continue;
@@ -540,7 +541,8 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
 
             const detectedDelimiter = detectDelimiter(lines[0]);
             const useHeaderRow = true;
-            const { rawHeaders, parsedRows } = parseCsv(lines, detectedDelimiter, useHeaderRow);
+            const headerRowIndex = 1;
+            const { rawHeaders, parsedRows } = parseCsv(lines, detectedDelimiter, useHeaderRow, headerRowIndex);
 
             const editableColumns = schema
                 .map(col => col.name)
@@ -552,6 +554,7 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                 delimiter: 'auto',
                 detectedDelimiter,
                 useHeaderRow,
+                headerRowIndex,
                 headers: rawHeaders,
                 rows: parsedRows,
                 totalRows: parsedRows.length,
@@ -567,7 +570,7 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
         reader.readAsText(file);
     }, [schema, buildInitialMapping]);
 
-    const updateCsvImport = useCallback((nextDelimiter, nextUseHeaderRow) => {
+    const updateCsvImport = useCallback((nextDelimiter, nextUseHeaderRow, nextHeaderRowIndex) => {
         setCsvImport((prev) => {
             if (!prev) return prev;
             const effectiveDelimiter = nextDelimiter === 'auto' ? (prev.detectedDelimiter || ',') : nextDelimiter;
@@ -587,7 +590,8 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                 return result;
             };
 
-            const headerLine = nextUseHeaderRow ? prev.lines[0] : '';
+            const headerRow = Math.max(1, nextHeaderRowIndex || 1);
+            const headerLine = nextUseHeaderRow ? prev.lines[headerRow - 1] || '' : '';
             const headerValues = nextUseHeaderRow ? splitLine(headerLine) : [];
             const firstRowValues = nextUseHeaderRow ? null : splitLine(prev.lines[0]);
             const columnCount = Math.max(headerValues.length, firstRowValues?.length || 0);
@@ -604,7 +608,7 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                 });
 
             const parsedRows = [];
-            const startIndex = nextUseHeaderRow ? 1 : 0;
+            const startIndex = nextUseHeaderRow ? headerRow : 0;
             for (let i = startIndex; i < prev.lines.length; i++) {
                 const values = splitLine(prev.lines[i]);
                 if (values.length === 1 && values[0] === '') continue;
@@ -623,6 +627,7 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                 ...prev,
                 delimiter: nextDelimiter,
                 useHeaderRow: nextUseHeaderRow,
+                headerRowIndex: headerRow,
                 headers: rawHeaders,
                 rows: parsedRows,
                 totalRows: parsedRows.length,
@@ -1647,8 +1652,10 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                 delimiter={csvImport?.delimiter}
                 detectedDelimiter={csvImport?.detectedDelimiter}
                 useHeaderRow={csvImport?.useHeaderRow}
-                onDelimiterChange={(value) => updateCsvImport(value, csvImport?.useHeaderRow ?? true)}
-                onHeaderToggle={(value) => updateCsvImport(csvImport?.delimiter || 'auto', value)}
+                headerRowIndex={csvImport?.headerRowIndex}
+                onDelimiterChange={(value) => updateCsvImport(value, csvImport?.useHeaderRow ?? true, csvImport?.headerRowIndex ?? 1)}
+                onHeaderToggle={(value) => updateCsvImport(csvImport?.delimiter || 'auto', value, csvImport?.headerRowIndex ?? 1)}
+                onHeaderRowChange={(value) => updateCsvImport(csvImport?.delimiter || 'auto', csvImport?.useHeaderRow ?? true, value)}
                 onConfirm={handleCSVImportConfirm}
             />
         </div>
