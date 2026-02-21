@@ -27,12 +27,15 @@ import {
     Lock,
     GripVertical,
     Wifi,
-    Settings
+    Settings,
+    SlidersHorizontal,
+    CheckSquare
 } from 'lucide-react';
 
 import AddRowModal from './AddRowModal';
 import AddColumnModal from './AddColumnModal';
 import ConfirmModal from './ConfirmModal';
+import BulkEditModal from './BulkEditModal';
 import InlineCellEditor from './InlineCellEditor';
 import { fetchWithAuth } from '../utils/api';
 
@@ -63,6 +66,18 @@ const getDefaultWidth = (colName, colType) => {
 };
 
 const MAX_COLUMN_WIDTH = 5000;
+const DEFAULT_VIEWPORT_HEIGHT = 600;
+const VIRTUAL_OVERSCAN_ROWS = 8;
+const PAGE_SIZE_OPTIONS = [50, 100, 250, 500, 1000, 2000];
+const FILTER_OPS = [
+    { label: 'Equals', value: 'eq' },
+    { label: 'Not equal', value: 'neq' },
+    { label: 'Greater than', value: 'gt' },
+    { label: 'Greater or equal', value: 'gte' },
+    { label: 'Less than', value: 'lt' },
+    { label: 'Less or equal', value: 'lte' },
+    { label: 'Contains', value: 'ilike' }
+];
 
 // Dynamic minimum width based on header content
 const calculateMinColumnWidth = () => {
@@ -103,6 +118,17 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
     const [alertMessage, setAlertMessage] = useState(null);
     const [realtimeEnabled, setRealtimeEnabled] = useState(false);
     const [isRealtimeLoading, setIsRealtimeLoading] = useState(false);
+    const [filters, setFilters] = useState([]);
+    const [sorts, setSorts] = useState([]);
+    const [isFilterOpen, setIsFilterOpen] = useState(false);
+    const [isSortOpen, setIsSortOpen] = useState(false);
+    const [views, setViews] = useState([]);
+    const [activeViewId, setActiveViewId] = useState(null);
+    const [viewName, setViewName] = useState('');
+    const [isViewsOpen, setIsViewsOpen] = useState(false);
+    const [selectedIds, setSelectedIds] = useState(new Set());
+    const [isBulkEditOpen, setIsBulkEditOpen] = useState(false);
+    const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
 
     // Pagination State
     const [pageSize, setPageSize] = useState(100);
@@ -116,6 +142,7 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
     const resizeStartX = useRef(0);
     const resizeStartWidth = useRef(0);
     const columnWidthsRef = useRef({});
+    const selectAllRef = useRef(null);
 
     // Keep ref in sync with state
     useEffect(() => {
@@ -155,16 +182,69 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
         } catch (e) { console.error(e); }
     }, [tableName]);
 
+    const applyView = useCallback((view) => {
+        const config = view?.config || {};
+        setFilters(Array.isArray(config.filters) ? config.filters : []);
+        setSorts(Array.isArray(config.sorts) ? config.sorts : []);
+        setSearchTerm(typeof config.searchTerm === 'string' ? config.searchTerm : '');
+        setPageSize(Number.isFinite(config.pageSize) ? config.pageSize : 100);
+        setCurrentPage(1);
+        setActiveViewId(view?.id || null);
+        setIsViewsOpen(false);
+    }, []);
+
+    const fetchViews = useCallback(async () => {
+        if (!tableName) return;
+        try {
+            const res = await fetchWithAuth(`/api/tables/${tableName}/views`);
+            if (!res.ok) return;
+            const data = await res.json();
+            const list = Array.isArray(data) ? data : [];
+            setViews(list);
+            const defaultView = list.find(v => v.is_default);
+            if (defaultView) {
+                applyView(defaultView);
+            } else if (activeViewId) {
+                const stillExists = list.find(v => v.id === activeViewId);
+                if (!stillExists) setActiveViewId(null);
+            }
+        } catch (e) {
+            console.error('Failed to fetch table views', e);
+        }
+    }, [tableName, activeViewId, applyView]);
+
+    const currentViewConfig = useMemo(() => ({
+        filters,
+        sorts,
+        searchTerm,
+        pageSize
+    }), [filters, sorts, searchTerm, pageSize]);
+
     const fetchData = useCallback(async () => {
         if (!tableName) return;
         setLoading(true);
         try {
             const offset = (currentPage - 1) * pageSize;
-            const searchParam = debouncedSearch ? `&q=${encodeURIComponent(debouncedSearch)}` : '';
+            const params = new URLSearchParams();
+            params.set('limit', String(pageSize));
+            params.set('offset', String(offset));
+            if (debouncedSearch) params.set('q', debouncedSearch);
+
+            const orderParam = sorts
+                .filter(s => s.column && s.direction)
+                .map(s => `${s.column}.${s.direction}`)
+                .join(',');
+            if (orderParam) params.set('order', orderParam);
+
+            filters
+                .filter(f => f.column && f.value !== undefined && f.value !== '')
+                .forEach((f) => {
+                    params.append(f.column, `${f.op}.${f.value}`);
+                });
 
             const [schemaRes, dataRes] = await Promise.all([
                 fetchWithAuth(`/api/schema/${tableName}`),
-                fetchWithAuth(`/api/tables/${tableName}?limit=${pageSize}&offset=${offset}${searchParam}`)
+                fetchWithAuth(`/api/tables/${tableName}?${params.toString()}`)
             ]);
 
             if (!schemaRes.ok) throw new Error(`Table '${tableName}' schema lookup failed`);
@@ -185,15 +265,26 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
         } finally {
             setLoading(false);
         }
-    }, [tableName, currentPage, pageSize, debouncedSearch]);
+    }, [tableName, currentPage, pageSize, debouncedSearch, filters, sorts]);
 
     useEffect(() => {
         if (tableName) {
             fetchData();
+        }
+    }, [tableName, fetchData]);
+
+    useEffect(() => {
+        if (tableName) {
             fetchRealtimeStatus();
+        }
+    }, [tableName, fetchRealtimeStatus]);
+
+    useEffect(() => {
+        if (tableName) {
+            fetchViews();
             setEditingCell(null); // Clear editing state when table changes
         }
-    }, [tableName, fetchData, fetchRealtimeStatus]);
+    }, [tableName, fetchViews]);
 
     const toggleRealtime = useCallback(async () => {
         setIsRealtimeLoading(true);
@@ -250,16 +341,71 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
     const [scrollTop, setScrollTop] = useState(0);
     const containerRef = useRef(null);
     const ROW_HEIGHT = 45;
+    const [viewportHeight, setViewportHeight] = useState(DEFAULT_VIEWPORT_HEIGHT);
+
+    useEffect(() => {
+        if (!containerRef.current) return undefined;
+
+        const node = containerRef.current;
+        const updateViewportHeight = () => {
+            const nextHeight = node.clientHeight || DEFAULT_VIEWPORT_HEIGHT;
+            setViewportHeight(Math.max(ROW_HEIGHT * 4, nextHeight));
+        };
+
+        updateViewportHeight();
+
+        if (typeof ResizeObserver === 'undefined') {
+            window.addEventListener('resize', updateViewportHeight);
+            return () => window.removeEventListener('resize', updateViewportHeight);
+        }
+
+        const observer = new ResizeObserver(updateViewportHeight);
+        observer.observe(node);
+        return () => observer.disconnect();
+    }, []);
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchTerm]);
+
+    useEffect(() => {
+        if (!containerRef.current) return;
+        containerRef.current.scrollTop = 0;
+        setScrollTop(0);
+    }, [tableName, currentPage, pageSize, debouncedSearch, filters, sorts]);
+
+    useEffect(() => {
+        setSelectedIds(new Set());
+    }, [tableName, currentPage, pageSize, debouncedSearch, filters, sorts]);
 
     const handleScroll = useCallback((e) => {
         setScrollTop(e.target.scrollTop);
     }, []);
 
-    const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 5);
-    const endIndex = Math.min(data.length, startIndex + Math.ceil(600 / ROW_HEIGHT) + 10);
-    const visibleData = data.slice(startIndex, endIndex);
+    const visibleRowCount = Math.max(1, Math.ceil(viewportHeight / ROW_HEIGHT));
+    const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - VIRTUAL_OVERSCAN_ROWS);
+    const endIndex = Math.min(data.length, startIndex + visibleRowCount + (VIRTUAL_OVERSCAN_ROWS * 2));
+    const visibleData = useMemo(() => data.slice(startIndex, endIndex), [data, startIndex, endIndex]);
     const topPadding = startIndex * ROW_HEIGHT;
     const bottomPadding = (data.length - endIndex) * ROW_HEIGHT;
+    const totalPages = Math.max(1, Math.ceil(totalRecords / pageSize));
+    const pageStartRecord = totalRecords === 0 ? 0 : ((currentPage - 1) * pageSize) + 1;
+    const pageEndRecord = totalRecords === 0 ? 0 : Math.min(currentPage * pageSize, totalRecords);
+    const visibleIds = useMemo(() => visibleData.map(row => String(row.id)), [visibleData]);
+    const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id));
+    const someVisibleSelected = visibleIds.some(id => selectedIds.has(id));
+    const selectedCount = selectedIds.size;
+
+    useEffect(() => {
+        if (currentPage > totalPages) {
+            setCurrentPage(totalPages);
+        }
+    }, [currentPage, totalPages]);
+
+    useEffect(() => {
+        if (!selectAllRef.current) return;
+        selectAllRef.current.indeterminate = !allVisibleSelected && someVisibleSelected;
+    }, [allVisibleSelected, someVisibleSelected]);
 
     // --- Cell Editing Handlers ---
     const handleCellClick = useCallback((rowId, colName) => {
@@ -349,6 +495,31 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
         setConfirmDeleteId(id);
     }, []);
 
+    const toggleSelectRow = useCallback((id) => {
+        const rowId = String(id);
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(rowId)) {
+                next.delete(rowId);
+            } else {
+                next.add(rowId);
+            }
+            return next;
+        });
+    }, []);
+
+    const toggleSelectAllVisible = useCallback(() => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (allVisibleSelected) {
+                visibleIds.forEach(id => next.delete(id));
+            } else {
+                visibleIds.forEach(id => next.add(id));
+            }
+            return next;
+        });
+    }, [allVisibleSelected, visibleIds]);
+
     const confirmRowDeletion = useCallback(async () => {
         const id = confirmDeleteId;
         try {
@@ -385,6 +556,71 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
         a.download = `${tableName}_export.csv`;
         a.click();
     }, [data, schema, tableName]);
+
+    const handleExportSelected = useCallback(() => {
+        if (selectedIds.size === 0) return;
+        const headers = ['id', ...schema.map(c => c.name), 'created_at'];
+        const selectedRows = data.filter(row => selectedIds.has(String(row.id)));
+        const csvRows = [
+            headers.join(','),
+            ...selectedRows.map(row => headers.map(h => {
+                const val = row[h];
+                return typeof val === 'string' ? `"${val.replace(/"/g, '""')}"` : val;
+            }).join(','))
+        ];
+        const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${tableName}_selected_export.csv`;
+        a.click();
+    }, [data, schema, tableName, selectedIds]);
+
+    const handleBulkDelete = useCallback(async () => {
+        if (selectedIds.size === 0) return;
+        try {
+            const res = await fetchWithAuth(`/api/tables/${tableName}/rows/bulk`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    action: 'delete',
+                    ids: Array.from(selectedIds)
+                })
+            });
+            if (res.ok) {
+                setSelectedIds(new Set());
+                setIsBulkDeleteOpen(false);
+                fetchData();
+            } else {
+                setAlertMessage({ title: 'Bulk Delete Failed', message: 'Could not delete selected rows.', type: 'danger' });
+            }
+        } catch (err) {
+            console.error(err);
+            setAlertMessage({ title: 'Bulk Delete Failed', message: 'Network error during bulk delete.', type: 'danger' });
+        }
+    }, [selectedIds, tableName, fetchData]);
+
+    const handleBulkUpdate = useCallback(async (payload) => {
+        try {
+            const res = await fetchWithAuth(`/api/tables/${tableName}/rows/bulk`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    action: 'update',
+                    ids: Array.from(selectedIds),
+                    data: payload
+                })
+            });
+            if (res.ok) {
+                setSelectedIds(new Set());
+                setIsBulkEditOpen(false);
+                fetchData();
+            } else {
+                setAlertMessage({ title: 'Bulk Update Failed', message: 'Could not update selected rows.', type: 'danger' });
+            }
+        } catch (err) {
+            console.error(err);
+            setAlertMessage({ title: 'Bulk Update Failed', message: 'Network error during bulk update.', type: 'danger' });
+        }
+    }, [selectedIds, tableName, fetchData]);
 
     const handleEditRow = useCallback((row) => {
         setEditingRow(row);
@@ -487,6 +723,133 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
 
                     <div className="relative">
                         <button
+                            onClick={() => setIsViewsOpen(!isViewsOpen)}
+                            className="flex items-center gap-2 px-3 py-1.5 bg-[#111111] border border-[#2e2e2e] rounded-lg hover:border-zinc-500 transition-all text-[10px] font-black uppercase tracking-widest text-zinc-300 shrink-0"
+                        >
+                            <SlidersHorizontal size={14} />
+                            Views
+                            <ChevronDown size={14} className={`transition-transform ${isViewsOpen ? 'rotate-180' : ''}`} />
+                        </button>
+
+                        {isViewsOpen && (
+                            <>
+                                <div className="fixed inset-0 z-40" onClick={() => setIsViewsOpen(false)} />
+                                <div className="absolute top-full left-0 mt-2 w-80 bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                                    <div className="p-3 space-y-3">
+                                        <div className="space-y-2">
+                                            <p className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Saved Views</p>
+                                            <div className="max-h-40 overflow-y-auto custom-scrollbar space-y-1">
+                                                {views.length === 0 && (
+                                                    <div className="text-[10px] text-zinc-600 px-2 py-2 border border-dashed border-zinc-800 rounded-lg">
+                                                        No saved views yet.
+                                                    </div>
+                                                )}
+                                                {views.map(view => (
+                                                    <button
+                                                        key={view.id}
+                                                        onClick={() => applyView(view)}
+                                                        className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex items-center justify-between ${activeViewId === view.id ? 'bg-primary/10 text-primary font-bold' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}
+                                                    >
+                                                        <span className="truncate">{view.name}</span>
+                                                        {view.is_default && <span className="text-[9px] font-black uppercase tracking-widest">default</span>}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        <div className="h-[1px] bg-[#2e2e2e]" />
+
+                                        <div className="space-y-2">
+                                            <p className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Save Current</p>
+                                            <div className="flex gap-2">
+                                                <input
+                                                    value={viewName}
+                                                    onChange={(e) => setViewName(e.target.value)}
+                                                    placeholder="View name"
+                                                    className="flex-1 bg-[#111111] border border-[#2e2e2e] rounded-lg px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-primary/50"
+                                                />
+                                                <button
+                                                    onClick={async () => {
+                                                        if (!viewName.trim()) return;
+                                                        const res = await fetchWithAuth(`/api/tables/${tableName}/views`, {
+                                                            method: 'POST',
+                                                            body: JSON.stringify({ name: viewName.trim(), config: currentViewConfig })
+                                                        });
+                                                        if (res.ok) {
+                                                            setViewName('');
+                                                            fetchViews();
+                                                        }
+                                                    }}
+                                                    className="px-3 py-2 bg-primary text-black rounded-lg text-[10px] font-black uppercase tracking-widest"
+                                                >
+                                                    Save
+                                                </button>
+                                            </div>
+                                            {activeViewId && (
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={async () => {
+                                                            const res = await fetchWithAuth(`/api/tables/${tableName}/views/${activeViewId}`, {
+                                                                method: 'PATCH',
+                                                                body: JSON.stringify({ config: currentViewConfig })
+                                                            });
+                                                            if (res.ok) fetchViews();
+                                                        }}
+                                                        className="flex-1 px-3 py-2 bg-[#111111] border border-[#2e2e2e] rounded-lg text-[10px] font-black uppercase tracking-widest text-zinc-300"
+                                                    >
+                                                        Update
+                                                    </button>
+                                                    <button
+                                                        onClick={async () => {
+                                                            const res = await fetchWithAuth(`/api/tables/${tableName}/views/${activeViewId}`, {
+                                                                method: 'PATCH',
+                                                                body: JSON.stringify({ is_default: true })
+                                                            });
+                                                            if (res.ok) fetchViews();
+                                                        }}
+                                                        className="flex-1 px-3 py-2 bg-[#111111] border border-[#2e2e2e] rounded-lg text-[10px] font-black uppercase tracking-widest text-zinc-300"
+                                                    >
+                                                        Set Default
+                                                    </button>
+                                                    <button
+                                                        onClick={async () => {
+                                                            const res = await fetchWithAuth(`/api/tables/${tableName}/views/${activeViewId}`, {
+                                                                method: 'DELETE'
+                                                            });
+                                                            if (res.ok) {
+                                                                setActiveViewId(null);
+                                                                fetchViews();
+                                                            }
+                                                        }}
+                                                        className="px-3 py-2 bg-red-500/10 border border-red-500/20 rounded-lg text-[10px] font-black uppercase tracking-widest text-red-400"
+                                                    >
+                                                        Delete
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="h-[1px] bg-[#2e2e2e]" />
+                                        <button
+                                            onClick={() => {
+                                                setFilters([]);
+                                                setSorts([]);
+                                                setSearchTerm('');
+                                                setPageSize(100);
+                                                setActiveViewId(null);
+                                            }}
+                                            className="w-full px-3 py-2 bg-[#111111] border border-[#2e2e2e] rounded-lg text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-zinc-200"
+                                        >
+                                            Reset View
+                                        </button>
+                                    </div>
+                                </div>
+                            </>
+                        )}
+                    </div>
+
+                    <div className="relative">
+                        <button
                             onClick={() => setIsInsertDropdownOpen(!isInsertDropdownOpen)}
                             className="flex items-center gap-2 bg-primary text-black px-4 py-1.5 rounded-lg font-black text-[10px] uppercase tracking-widest hover:bg-[#E6E600] transition-all transform active:scale-95 shadow-[0_0_20px_rgba(254,254,0,0.1) shrink-0"
                         >
@@ -556,11 +919,17 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                     </div>
 
                     <div className="h-4 w-[1px] bg-[#2e2e2e] mx-2" />
-                    <button className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800/50 rounded-md transition-colors text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-zinc-200 shrink-0">
+                    <button
+                        onClick={() => setIsFilterOpen(!isFilterOpen)}
+                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800/50 rounded-md transition-colors text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-zinc-200 shrink-0"
+                    >
                         <Filter size={14} />
                         Filter
                     </button>
-                    <button className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800/50 rounded-md transition-colors text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-zinc-200 shrink-0">
+                    <button
+                        onClick={() => setIsSortOpen(!isSortOpen)}
+                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800/50 rounded-md transition-colors text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-zinc-200 shrink-0"
+                    >
                         <ArrowUpDown size={14} />
                         Sort
                     </button>
@@ -609,6 +978,175 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                 </div>
             </div>
 
+            {/* Filter Panel */}
+            {isFilterOpen && (
+                <div className="border-b border-[#2e2e2e] bg-[#111111] px-6 py-4 flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Filters</p>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => setFilters(prev => [...prev, { id: Date.now(), column: '', op: 'eq', value: '' }])}
+                                className="px-2 py-1 bg-[#1a1a1a] border border-[#2e2e2e] rounded text-[10px] font-black uppercase tracking-widest text-zinc-400"
+                            >
+                                Add Filter
+                            </button>
+                            <button
+                                onClick={() => setFilters([])}
+                                className="px-2 py-1 bg-[#1a1a1a] border border-[#2e2e2e] rounded text-[10px] font-black uppercase tracking-widest text-zinc-400"
+                            >
+                                Clear
+                            </button>
+                        </div>
+                    </div>
+                    {filters.length === 0 && (
+                        <div className="text-[10px] text-zinc-600">No filters applied.</div>
+                    )}
+                    {filters.map((f, idx) => (
+                        <div key={f.id} className="grid grid-cols-[1fr_140px_1fr_28px] gap-2 items-center">
+                            <select
+                                value={f.column}
+                                onChange={(e) => {
+                                    const value = e.target.value;
+                                    setFilters(prev => prev.map(item => item.id === f.id ? { ...item, column: value } : item));
+                                }}
+                                className="bg-[#0c0c0c] border border-[#2e2e2e] rounded-lg px-3 py-2 text-xs text-zinc-200"
+                            >
+                                <option value="">Select column</option>
+                                {schema.map(col => (
+                                    <option key={col.name} value={col.name}>{col.name}</option>
+                                ))}
+                            </select>
+                            <select
+                                value={f.op}
+                                onChange={(e) => {
+                                    const value = e.target.value;
+                                    setFilters(prev => prev.map(item => item.id === f.id ? { ...item, op: value } : item));
+                                }}
+                                className="bg-[#0c0c0c] border border-[#2e2e2e] rounded-lg px-3 py-2 text-xs text-zinc-200"
+                            >
+                                {FILTER_OPS.map(op => (
+                                    <option key={op.value} value={op.value}>{op.label}</option>
+                                ))}
+                            </select>
+                            <input
+                                value={f.value}
+                                onChange={(e) => {
+                                    const value = e.target.value;
+                                    setFilters(prev => prev.map(item => item.id === f.id ? { ...item, value } : item));
+                                }}
+                                placeholder="Value"
+                                className="bg-[#0c0c0c] border border-[#2e2e2e] rounded-lg px-3 py-2 text-xs text-zinc-200"
+                            />
+                            <button
+                                onClick={() => setFilters(prev => prev.filter(item => item.id !== f.id))}
+                                className="text-zinc-600 hover:text-red-400"
+                                aria-label={`Remove filter ${idx + 1}`}
+                            >
+                                <Trash2 size={14} />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* Sort Panel */}
+            {isSortOpen && (
+                <div className="border-b border-[#2e2e2e] bg-[#111111] px-6 py-4 flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Sort</p>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => setSorts(prev => [...prev, { id: Date.now(), column: '', direction: 'asc' }])}
+                                className="px-2 py-1 bg-[#1a1a1a] border border-[#2e2e2e] rounded text-[10px] font-black uppercase tracking-widest text-zinc-400"
+                            >
+                                Add Sort
+                            </button>
+                            <button
+                                onClick={() => setSorts([])}
+                                className="px-2 py-1 bg-[#1a1a1a] border border-[#2e2e2e] rounded text-[10px] font-black uppercase tracking-widest text-zinc-400"
+                            >
+                                Clear
+                            </button>
+                        </div>
+                    </div>
+                    {sorts.length === 0 && (
+                        <div className="text-[10px] text-zinc-600">No sorting applied.</div>
+                    )}
+                    {sorts.map((s) => (
+                        <div key={s.id} className="grid grid-cols-[1fr_140px_28px] gap-2 items-center">
+                            <select
+                                value={s.column}
+                                onChange={(e) => {
+                                    const value = e.target.value;
+                                    setSorts(prev => prev.map(item => item.id === s.id ? { ...item, column: value } : item));
+                                }}
+                                className="bg-[#0c0c0c] border border-[#2e2e2e] rounded-lg px-3 py-2 text-xs text-zinc-200"
+                            >
+                                <option value="">Select column</option>
+                                {schema.map(col => (
+                                    <option key={col.name} value={col.name}>{col.name}</option>
+                                ))}
+                            </select>
+                            <select
+                                value={s.direction}
+                                onChange={(e) => {
+                                    const value = e.target.value;
+                                    setSorts(prev => prev.map(item => item.id === s.id ? { ...item, direction: value } : item));
+                                }}
+                                className="bg-[#0c0c0c] border border-[#2e2e2e] rounded-lg px-3 py-2 text-xs text-zinc-200"
+                            >
+                                <option value="asc">Ascending</option>
+                                <option value="desc">Descending</option>
+                            </select>
+                            <button
+                                onClick={() => setSorts(prev => prev.filter(item => item.id !== s.id))}
+                                className="text-zinc-600 hover:text-red-400"
+                                aria-label="Remove sort"
+                            >
+                                <Trash2 size={14} />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* Bulk Actions */}
+            {selectedCount > 0 && (
+                <div className="border-b border-[#2e2e2e] bg-[#0f0f0f] px-6 py-3 flex items-center justify-between text-[10px] font-black uppercase tracking-widest">
+                    <div className="flex items-center gap-3 text-zinc-400">
+                        <CheckSquare size={14} className="text-primary" />
+                        <span>{selectedCount} selected</span>
+                        <span className="text-zinc-600">Selection is limited to the current page.</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setSelectedIds(new Set())}
+                            className="px-3 py-1.5 bg-[#111111] border border-[#2e2e2e] rounded text-zinc-400"
+                        >
+                            Clear
+                        </button>
+                        <button
+                            onClick={() => setIsBulkEditOpen(true)}
+                            className="px-3 py-1.5 bg-[#111111] border border-[#2e2e2e] rounded text-zinc-300"
+                        >
+                            Bulk Edit
+                        </button>
+                        <button
+                            onClick={() => setIsBulkDeleteOpen(true)}
+                            className="px-3 py-1.5 bg-red-500/10 border border-red-500/20 rounded text-red-400"
+                        >
+                            Delete
+                        </button>
+                        <button
+                            onClick={handleExportSelected}
+                            className="px-3 py-1.5 bg-[#111111] border border-[#2e2e2e] rounded text-zinc-300"
+                        >
+                            Export
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* Table Content - Dynamic Width */}
             <div
                 ref={containerRef}
@@ -620,7 +1158,13 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                     <div className="sticky top-0 bg-[#111111] z-10 border-b border-[#2e2e2e] flex">
                         {/* Checkbox column */}
                         <div className="w-10 px-4 py-3 flex items-center shrink-0">
-                            <input type="checkbox" className="rounded border-border bg-transparent accent-primary" />
+                            <input
+                                ref={selectAllRef}
+                                type="checkbox"
+                                checked={allVisibleSelected}
+                                onChange={toggleSelectAllVisible}
+                                className="rounded border-border bg-transparent accent-primary"
+                            />
                         </div>
 
                         {/* Dynamic columns */}
@@ -713,7 +1257,12 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                                         >
                                             {/* Checkbox */}
                                             <div className="w-10 px-4 flex items-center shrink-0">
-                                                <input type="checkbox" className="rounded border-border bg-transparent accent-primary" />
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedIds.has(String(row.id))}
+                                                    onChange={() => toggleSelectRow(row.id)}
+                                                    className="rounded border-border bg-transparent accent-primary"
+                                                />
                                             </div>
 
                                             {/* Data cells */}
@@ -790,7 +1339,7 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                     <div className="flex items-center gap-3">
                         <div className="flex items-center gap-1 group">
                             <span className="text-zinc-600 uppercase">Per Page:</span>
-                            {[100, 500, 1000].map(size => (
+                            {PAGE_SIZE_OPTIONS.map(size => (
                                 <button
                                     key={size}
                                     onClick={() => { setPageSize(size); setCurrentPage(1); }}
@@ -804,6 +1353,9 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                         <div className="h-4 w-[1px] bg-[#2e2e2e]" />
 
                         <div className="flex items-center gap-4">
+                            <span className="text-zinc-600">
+                                SHOWING <span className="text-zinc-300">{pageStartRecord}-{pageEndRecord}</span>
+                            </span>
                             <button
                                 disabled={currentPage === 1}
                                 onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
@@ -812,10 +1364,10 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                                 <ChevronLeft size={14} />
                             </button>
                             <span className="text-zinc-500 flex items-center gap-2">
-                                PAGE <span className="text-primary">{currentPage}</span> OF {Math.ceil(totalRecords / pageSize) || 1}
+                                PAGE <span className="text-primary">{currentPage}</span> OF {totalPages}
                             </span>
                             <button
-                                disabled={currentPage >= Math.ceil(totalRecords / pageSize)}
+                                disabled={currentPage >= totalPages}
                                 onClick={() => setCurrentPage(prev => prev + 1)}
                                 className="p-1 hover:text-primary disabled:opacity-30 transition-colors"
                             >
@@ -863,6 +1415,13 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                 onColumnAdded={fetchData}
             />
 
+            <BulkEditModal
+                isOpen={isBulkEditOpen}
+                onClose={() => setIsBulkEditOpen(false)}
+                schema={schema}
+                onSubmit={handleBulkUpdate}
+            />
+
             <ConfirmModal
                 isOpen={!!confirmDeleteId}
                 onClose={() => setConfirmDeleteId(null)}
@@ -870,6 +1429,15 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                 title="Delete Record"
                 message="Are you sure you want to delete this record? This action will permanently remove the data from OzyBase."
                 confirmText="Delete Record"
+            />
+
+            <ConfirmModal
+                isOpen={isBulkDeleteOpen}
+                onClose={() => setIsBulkDeleteOpen(false)}
+                onConfirm={handleBulkDelete}
+                title="Delete Selected Records"
+                message="Delete all selected records? This action cannot be undone."
+                confirmText="Delete Records"
             />
 
             <ConfirmModal

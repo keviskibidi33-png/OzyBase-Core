@@ -31,7 +31,7 @@ type SecurityConfig struct {
 // DefaultSecurityConfig returns production-ready security headers configuration
 func DefaultSecurityConfig() SecurityConfig {
 	return SecurityConfig{
-		ContentSecurityPolicy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'",
+		ContentSecurityPolicy: "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://flagcdn.com; font-src 'self' data:; connect-src 'self' https://ipapi.co; worker-src 'self' blob:",
 		XFrameOptions:         "DENY",
 		XContentTypeOptions:   "nosniff",
 		XSSProtection:         "1; mode=block",

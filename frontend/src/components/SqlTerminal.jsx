@@ -31,8 +31,13 @@ import {
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
 import { useRef, useEffect, useCallback, lazy, Suspense } from 'react';
+import loader from '@monaco-editor/loader';
+import * as monaco from 'monaco-editor';
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'));
+
+// Force local Monaco bundle instead of CDN loader to satisfy strict CSP.
+loader.config({ monaco });
 
 const BarChart = ({ data, columns }) => {
     if (!data || data.length === 0) return null;

@@ -107,3 +107,12 @@ Notifications must use high-contrast status colors to communicate urgency instan
 - **Backdrop**: Uses `backdrop-blur-md` and a semi-transparent background to maintain context while appearing elevated.
 - **Progress Bar**: A subtle underline progress bar indicates the time remaining before auto-dismissal.
 - **Micro-Animations**: Success notifications should use a subtle bounce on the check icon to reward the user.
+
+## 8. Motion Consistency
+Small overlays (notification center, user dropdown, compact menus) must follow one shared pattern:
+
+- **Entry**: 180-220ms, `opacity + translateY(-6px to 0) + scale(0.95 to 1)`.
+- **Exit**: 140-180ms, reverse transform, never instant-hide.
+- **Origin**: Top-right (`origin-top-right`) for header actions.
+- **Interaction Safety**: Hidden overlays must use `pointer-events-none` while closed.
+- **Priority**: Motion should guide focus, not distract; avoid bounce or long chained easing on critical actions.

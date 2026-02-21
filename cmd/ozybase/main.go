@@ -57,6 +57,12 @@ func run() error {
 	if cfg.GeneratedJWTSecret {
 		logger.Log.Warn().Msg("JWT_SECRET was missing and has been generated automatically into .ozy_secret")
 	}
+	if cfg.GeneratedAnonKey {
+		logger.Log.Warn().Msg("ANON_KEY was missing and has been generated automatically into .ozy_anon_key")
+	}
+	if cfg.GeneratedServiceRoleKey {
+		logger.Log.Warn().Msg("SERVICE_ROLE_KEY was missing and has been generated automatically into .ozy_service_role_key")
+	}
 	if cfg.DerivedAllowedOrigin {
 		logger.Log.Info().Strs("origins", cfg.AllowedOrigins).Msg("ALLOWED_ORIGINS was auto-derived from SITE_URL/APP_DOMAIN")
 	}
@@ -109,8 +115,13 @@ func run() error {
 		return err
 	}
 
-	// Auto-setup admin user
-	ozyauth.EnsureAdminUser(db)
+	// Optional admin bootstrap.
+	// Default flow keeps system uninitialized so Setup Wizard appears first.
+	if shouldBootstrapAdminFromEnv() {
+		ozyauth.EnsureAdminUser(db)
+	} else {
+		logger.Log.Info().Msg("Admin bootstrap skipped. Setup Wizard will handle first-time initialization.")
+	}
 
 	// CLI Commands handling
 	if handleCLI(db) {
@@ -190,11 +201,10 @@ func handleCLI(db *data.DB) bool {
 	if len(os.Args) > 1 && os.Args[1] == "reset-admin" {
 		ctx := context.Background()
 		email := resolveInitialAdminEmail()
-		newPass := "admin123"
-
-		if len(os.Args) > 2 {
-			newPass = os.Args[2]
+		if len(os.Args) <= 2 || strings.TrimSpace(os.Args[2]) == "" {
+			log.Fatal("Usage: ozybase reset-admin <new-password>")
 		}
+		newPass := os.Args[2]
 
 		log.Printf("🔐 Resetting password for %s...", email)
 
@@ -208,7 +218,7 @@ func handleCLI(db *data.DB) bool {
 			log.Fatalf("Failed to update password: %v", err)
 		}
 
-		log.Printf("✅ Admin password reset successfully to: %s", newPass)
+		log.Printf("✅ Admin password reset successfully for: %s", email)
 		return true
 	}
 
@@ -237,6 +247,19 @@ func resolveInitialAdminEmail() string {
 		return "system@ozybase.local"
 	}
 	return "admin@" + appDomain
+}
+
+func shouldBootstrapAdminFromEnv() bool {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("OZY_AUTO_BOOTSTRAP_ADMIN")), "true") {
+		return true
+	}
+	if strings.TrimSpace(os.Getenv("INITIAL_ADMIN_EMAIL")) != "" {
+		return true
+	}
+	if strings.TrimSpace(os.Getenv("INITIAL_ADMIN_PASSWORD")) != "" {
+		return true
+	}
+	return false
 }
 
 func initOAuth() {
@@ -312,8 +335,12 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 	e.Use(api.SecurityHeadersDefault())
 	e.Use(middleware.BodyLimit(cfg.BodyLimit))
 	e.Use(api.PrometheusMiddleware()) // 📊 Stats
-	e.Use(api.APIKeyMiddleware(h.DB)) // 🔐 API Key Auth (Enterprise Phase 1)
-	e.Use(api.RLSMiddleware(h.DB))    // 🛡️ RLS Context Injection
+	e.Use(api.APIKeyMiddleware(h.DB, api.StaticAPIKeys{
+		AnonKey:        cfg.AnonKey,
+		ServiceRoleKey: cfg.ServiceRoleKey,
+	})) // 🔐 API Key Auth (Enterprise Phase 1)
+	e.Use(api.RLSMiddleware(h.DB)) // 🛡️ RLS Context Injection
+	// #nosec G101 -- CSRF token lookup/cookie fields are static identifiers, not credentials.
 	e.Use(middleware.CSRFWithConfig(middleware.CSRFConfig{
 		TokenLookup:    "header:X-CSRF-Token",
 		ContextKey:     "csrf",
@@ -392,11 +419,12 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		// ... (Auth/System/etc) ...
 
 		// API Keys (Enterprise Phase 1)
-		keysGroup := apiGroup.Group("/project/keys", authRequired)
+		keysGroup := apiGroup.Group("/project/keys", authRequired, adminOnly)
 		keysGroup.GET("", h.ListAPIKeys)
 		keysGroup.POST("", h.CreateAPIKey)
 		keysGroup.DELETE("/:id", h.DeleteAPIKey)
 		keysGroup.PATCH("/:id/toggle", h.ToggleAPIKey)
+		keysGroup.POST("/:id/rotate", h.RotateAPIKey)
 
 		// Auth
 		authGroup := apiGroup.Group("/auth")
@@ -416,6 +444,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		// Sessions (Enterprise Phase 2)
 		authGroup.GET("/sessions", authHandler.ListSessions, authRequired)
 		authGroup.DELETE("/sessions/:id", authHandler.RevokeSession, authRequired)
+		authGroup.POST("/sessions/revoke-all", authHandler.RevokeAllSessions, authRequired, adminOnly)
 
 		// System Setup (Public, but protected by logic inside)
 		apiGroup.GET("/system/status", h.GetSystemStatus)
@@ -467,6 +496,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.GET("/project/security/notifications", h.GetNotificationRecipients, authRequired)
 		apiGroup.POST("/project/security/notifications", h.AddNotificationRecipient, authRequired)
 		apiGroup.DELETE("/project/security/notifications/:id", h.DeleteNotificationRecipient, authRequired)
+		apiGroup.POST("/project/security/rls/enforce", h.EnforceRLSAll, authRequired, adminOnly)
 
 		// Integrations (Slack, Discord, SIEM)
 		apiGroup.GET("/project/integrations", h.ListIntegrations, authRequired)
@@ -521,9 +551,14 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.POST("/tables/:name/rows", h.CreateRecord, authRequired)
 		apiGroup.PATCH("/tables/:name/rows/:id", h.UpdateRecord, authRequired)
 		apiGroup.DELETE("/tables/:name/rows/:id", h.DeleteRecord, authRequired)
+		apiGroup.POST("/tables/:name/rows/bulk", h.BulkRowsAction, authRequired)
 		apiGroup.POST("/tables/:name/import", h.ImportRecords, authRequired)
 		apiGroup.POST("/tables/:name/columns", h.AddColumn, authRequired)           // New
 		apiGroup.DELETE("/tables/:name/columns/:col", h.DeleteColumn, authRequired) // New
+		apiGroup.GET("/tables/:name/views", h.ListTableViews, authRequired)
+		apiGroup.POST("/tables/:name/views", h.CreateTableView, authRequired)
+		apiGroup.PATCH("/tables/:name/views/:id", h.UpdateTableView, authRequired)
+		apiGroup.DELETE("/tables/:name/views/:id", h.DeleteTableView, authRequired)
 	}
 
 	// Create users table for demo if missing

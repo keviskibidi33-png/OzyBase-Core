@@ -211,9 +211,19 @@ func (db *DB) UpdateRecord(ctx context.Context, collectionName, id string, data 
 			return nil
 		}
 
-		query := fmt.Sprintf("UPDATE %s SET %s, updated_at = NOW() WHERE id = $%d",
+		query := fmt.Sprintf("UPDATE %s SET %s, updated_at = NOW() WHERE id::text = $%d",
 			collectionName, strings.Join(updates, ", "), i)
 		values = append(values, id)
+		i++
+
+		if db.HasColumn(ctx, collectionName, "deleted_at") {
+			query += " AND deleted_at IS NULL"
+		}
+
+		if ownerField != "" && ownerID != "" && db.HasColumn(ctx, collectionName, ownerField) {
+			query += fmt.Sprintf(" AND %s = $%d", ownerField, i)
+			values = append(values, ownerID)
+		}
 
 		_, err := tx.Exec(ctx, query, values...)
 		return err
@@ -223,10 +233,113 @@ func (db *DB) UpdateRecord(ctx context.Context, collectionName, id string, data 
 // DeleteRecord soft-deletes a record, respecting RLS
 func (db *DB) DeleteRecord(ctx context.Context, collectionName, id string, ownerField, ownerID string) error {
 	return db.WithTransactionAndRLS(ctx, func(tx pgx.Tx) error {
-		query := fmt.Sprintf("UPDATE %s SET deleted_at = NOW() WHERE id = $1", collectionName)
-		_, err := tx.Exec(ctx, query, id)
+		query := fmt.Sprintf("UPDATE %s SET deleted_at = NOW() WHERE id::text = $1", collectionName)
+		args := []any{id}
+		argIdx := 2
+
+		if db.HasColumn(ctx, collectionName, "deleted_at") {
+			query += " AND deleted_at IS NULL"
+		}
+
+		if ownerField != "" && ownerID != "" && db.HasColumn(ctx, collectionName, ownerField) {
+			query += fmt.Sprintf(" AND %s = $%d", ownerField, argIdx)
+			args = append(args, ownerID)
+		}
+
+		_, err := tx.Exec(ctx, query, args...)
 		return err
 	})
+}
+
+// BulkUpdateRecords updates multiple records in one statement.
+func (db *DB) BulkUpdateRecords(ctx context.Context, collectionName string, ids []string, data map[string]any, ownerField, ownerID string) (int64, error) {
+	if !IsValidIdentifier(collectionName) {
+		return 0, fmt.Errorf("invalid collection name: %s", collectionName)
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+
+	var affected int64
+	err := db.WithTransactionAndRLS(ctx, func(tx pgx.Tx) error {
+		var updates []string
+		var args []any
+		argIdx := 1
+
+		for col, val := range data {
+			if !IsValidIdentifier(col) {
+				continue
+			}
+			if col == "id" || col == "created_at" || col == "updated_at" || col == "deleted_at" {
+				continue
+			}
+			updates = append(updates, fmt.Sprintf("%s = $%d", col, argIdx))
+			args = append(args, val)
+			argIdx++
+		}
+
+		if len(updates) == 0 {
+			return fmt.Errorf("no valid fields provided for bulk update")
+		}
+		if db.HasColumn(ctx, collectionName, "updated_at") {
+			updates = append(updates, "updated_at = NOW()")
+		}
+
+		query := fmt.Sprintf("UPDATE %s SET %s WHERE id::text = ANY($%d::text[])", collectionName, strings.Join(updates, ", "), argIdx)
+		args = append(args, ids)
+		argIdx++
+
+		if db.HasColumn(ctx, collectionName, "deleted_at") {
+			query += " AND deleted_at IS NULL"
+		}
+
+		if ownerField != "" && ownerID != "" && db.HasColumn(ctx, collectionName, ownerField) {
+			query += fmt.Sprintf(" AND %s = $%d", ownerField, argIdx)
+			args = append(args, ownerID)
+		}
+
+		result, err := tx.Exec(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		affected = result.RowsAffected()
+		return nil
+	})
+	return affected, err
+}
+
+// BulkDeleteRecords soft-deletes multiple records in one statement.
+func (db *DB) BulkDeleteRecords(ctx context.Context, collectionName string, ids []string, ownerField, ownerID string) (int64, error) {
+	if !IsValidIdentifier(collectionName) {
+		return 0, fmt.Errorf("invalid collection name: %s", collectionName)
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+
+	var affected int64
+	err := db.WithTransactionAndRLS(ctx, func(tx pgx.Tx) error {
+		query := fmt.Sprintf("UPDATE %s SET deleted_at = NOW() WHERE id::text = ANY($1::text[])", collectionName)
+		args := []any{ids}
+		argIdx := 2
+
+		if db.HasColumn(ctx, collectionName, "deleted_at") {
+			query += " AND deleted_at IS NULL"
+		}
+
+		if ownerField != "" && ownerID != "" && db.HasColumn(ctx, collectionName, ownerField) {
+			query += fmt.Sprintf(" AND %s = $%d", ownerField, argIdx)
+			args = append(args, ownerID)
+		}
+
+		result, err := tx.Exec(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		affected = result.RowsAffected()
+		return nil
+	})
+	return affected, err
 }
 
 func rowsToMaps(rows pgx.Rows) ([]map[string]any, error) {

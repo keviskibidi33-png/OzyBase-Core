@@ -4,13 +4,18 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
 
 func main() {
-	dbURL := "postgres://ozyuser:ozypassword123@localhost:5432/Ozydb?sslmode=disable"
+	dbURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	if dbURL == "" {
+		log.Fatal("DATABASE_URL is required")
+	}
 	ctx := context.Background()
 
 	db, err := pgxpool.New(ctx, dbURL)
@@ -19,8 +24,14 @@ func main() {
 	}
 	defer db.Close()
 
-	email := "system@ozybase.local"
-	newPassword := "admin123"
+	email := strings.TrimSpace(os.Getenv("RESET_ADMIN_EMAIL"))
+	if email == "" {
+		email = "system@ozybase.local"
+	}
+	newPassword := strings.TrimSpace(os.Getenv("RESET_ADMIN_PASSWORD"))
+	if newPassword == "" {
+		log.Fatal("RESET_ADMIN_PASSWORD is required")
+	}
 
 	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), 12)

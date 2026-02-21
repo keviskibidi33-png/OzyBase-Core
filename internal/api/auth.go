@@ -22,6 +22,7 @@ type AuthService interface {
 	HandleOAuthLogin(ctx context.Context, provider, providerID, email string, data map[string]any) (string, *core.User, error)
 	ListSessions(ctx context.Context, userID string) ([]core.Session, error)
 	RevokeSession(ctx context.Context, sessionID, userID string) error
+	RevokeAllSessions(ctx context.Context) error
 }
 
 type AuthHandler struct {
@@ -236,4 +237,17 @@ func (h *AuthHandler) RevokeSession(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 	return c.NoContent(http.StatusNoContent)
+}
+
+func (h *AuthHandler) RevokeAllSessions(c echo.Context) error {
+	if role, _ := c.Get("role").(string); role != "admin" {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "admin role required"})
+	}
+	if err := h.authService.RevokeAllSessions(c.Request().Context()); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]string{
+		"status":  "ok",
+		"message": "all sessions revoked successfully",
+	})
 }

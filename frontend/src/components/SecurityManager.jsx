@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Globe, Bell, Check, X, AlertTriangle, Save, Loader2, Info } from 'lucide-react';
+import { Shield, Globe, Check, X, AlertTriangle, Loader2, Info } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
 
 const SecurityManager = () => {
@@ -36,6 +36,7 @@ const SecurityManager = () => {
                 setToast({ message: 'Policy updated successfully', type: 'success' });
             }
         } catch (error) {
+            console.error('Failed to update security policy', error);
             setToast({ message: 'Failed to update policy', type: 'error' });
         } finally {
             setSaving(false);
@@ -110,9 +111,10 @@ const SecurityManager = () => {
                     </div>
                     <button
                         onClick={toggleGeoFencing}
+                        disabled={saving}
                         className={`px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${geo.enabled ? 'bg-primary text-black hover:scale-105' : 'bg-zinc-800 text-zinc-400 hover:text-white'}`}
                     >
-                        {geo.enabled ? 'Enabled' : 'Disabled'}
+                        {saving ? 'Saving...' : geo.enabled ? 'Enabled' : 'Disabled'}
                     </button>
                 </div>
 
@@ -130,9 +132,10 @@ const SecurityManager = () => {
                             />
                             <button
                                 onClick={addCountry}
+                                disabled={saving}
                                 className="px-6 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
                             >
-                                Add
+                                {saving ? 'Saving' : 'Add'}
                             </button>
                         </div>
 
@@ -147,7 +150,7 @@ const SecurityManager = () => {
                                 geo.allowed_countries.map(country => (
                                     <div key={country} className="flex items-center gap-2 bg-primary/10 border border-primary/20 text-primary px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest group">
                                         {country}
-                                        <button onClick={() => removeCountry(country)} className="hover:text-red-500 transition-colors">
+                                        <button disabled={saving} onClick={() => removeCountry(country)} className="hover:text-red-500 transition-colors disabled:opacity-50">
                                             <X size={14} />
                                         </button>
                                     </div>

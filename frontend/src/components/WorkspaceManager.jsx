@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
     Plus, 
     Search, 
@@ -7,7 +7,10 @@ import {
     Briefcase,
     Globe,
     Shield,
-    ArrowRight
+    ArrowRight,
+    Layers,
+    Clock3,
+    Sparkles
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
 
@@ -17,8 +20,20 @@ const WorkspaceManager = ({ onWorkspaceChange, onViewSelect, view = 'wm_overview
     const [searchQuery, setSearchQuery] = useState('');
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [newWorkspaceName, setNewWorkspaceName] = useState('');
+    const [workspaceMembers, setWorkspaceMembers] = useState({});
 
-    const fetchWorkspaces = async () => {
+    const currentUserEmail = useMemo(() => {
+        const raw = localStorage.getItem('ozy_user');
+        if (!raw) return '';
+        try {
+            const parsed = JSON.parse(raw);
+            return String(parsed?.email || '').toLowerCase();
+        } catch {
+            return '';
+        }
+    }, []);
+
+    const fetchWorkspaces = useCallback(async () => {
         try {
             const res = await fetchWithAuth('/api/workspaces');
             if (res.ok) {
@@ -30,19 +45,46 @@ const WorkspaceManager = ({ onWorkspaceChange, onViewSelect, view = 'wm_overview
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
+
+    const fetchMembersForWorkspaces = useCallback(async (items) => {
+        if (!Array.isArray(items) || items.length === 0) {
+            setWorkspaceMembers({});
+            return;
+        }
+
+        const memberEntries = await Promise.all(
+            items.map(async (workspace) => {
+                try {
+                    const res = await fetchWithAuth(`/api/workspaces/${workspace.id}/members`);
+                    if (!res.ok) return [workspace.id, []];
+                    const data = await res.json();
+                    return [workspace.id, Array.isArray(data) ? data : []];
+                } catch {
+                    return [workspace.id, []];
+                }
+            })
+        );
+
+        setWorkspaceMembers(Object.fromEntries(memberEntries));
+    }, []);
 
     useEffect(() => {
         fetchWorkspaces();
-    }, []);
+    }, [fetchWorkspaces]);
 
-    const handleCreate = async () => {
-        if (!newWorkspaceName.trim()) return;
+    useEffect(() => {
+        fetchMembersForWorkspaces(workspaces);
+    }, [workspaces, fetchMembersForWorkspaces]);
+
+    const createWorkspace = useCallback(async (nameToUse) => {
+        const normalized = String(nameToUse || '').trim();
+        if (!normalized) return;
         try {
             const res = await fetchWithAuth('/api/workspaces', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: newWorkspaceName })
+                body: JSON.stringify({ name: normalized })
             });
             if (res.ok) {
                 setNewWorkspaceName('');
@@ -52,7 +94,11 @@ const WorkspaceManager = ({ onWorkspaceChange, onViewSelect, view = 'wm_overview
         } catch (err) {
             console.error("Failed to create workspace", err);
         }
-    };
+    }, [fetchWorkspaces]);
+
+    const handleCreate = useCallback(async () => {
+        await createWorkspace(newWorkspaceName);
+    }, [createWorkspace, newWorkspaceName]);
 
     const handleSelect = (workspace) => {
         localStorage.setItem('ozy_workspace_id', workspace.id);
@@ -74,9 +120,64 @@ const WorkspaceManager = ({ onWorkspaceChange, onViewSelect, view = 'wm_overview
     };
 
     const filteredWorkspaces = workspaces.filter(w => 
-        w.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        w.slug.toLowerCase().includes(searchQuery.toLowerCase())
+        String(w.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+        String(w.slug || '').toLowerCase().includes(searchQuery.toLowerCase())
     );
+
+    const enrichedWorkspaces = useMemo(() => {
+        return filteredWorkspaces.map((workspace) => {
+            const members = workspaceMembers[workspace.id] || [];
+            const currentMembership = members.find((member) => {
+                return String(member?.email || '').toLowerCase() === currentUserEmail;
+            });
+
+            return {
+                ...workspace,
+                members,
+                currentRole: currentMembership?.role || 'owner',
+                memberCount: members.length || 1
+            };
+        });
+    }, [filteredWorkspaces, workspaceMembers, currentUserEmail]);
+
+    const sharedWorkspaces = useMemo(() => {
+        return enrichedWorkspaces.filter((workspace) => workspace.currentRole !== 'owner');
+    }, [enrichedWorkspaces]);
+
+    const overviewStats = useMemo(() => {
+        const recent = [...enrichedWorkspaces]
+            .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))[0];
+        return {
+            total: enrichedWorkspaces.length,
+            shared: sharedWorkspaces.length,
+            recentName: recent?.name || 'No projects yet'
+        };
+    }, [enrichedWorkspaces, sharedWorkspaces.length]);
+
+    const templates = useMemo(() => ([
+        {
+            id: 'saas',
+            name: 'SaaS Starter',
+            hint: 'Auth + billing-ready structure',
+            quickSeed: 'SaaS Workspace'
+        },
+        {
+            id: 'ecommerce',
+            name: 'E-commerce',
+            hint: 'Catalog, orders and analytics baseline',
+            quickSeed: 'Commerce Workspace'
+        },
+        {
+            id: 'internal',
+            name: 'Internal Tool',
+            hint: 'Admin ops and automation workflows',
+            quickSeed: 'Ops Workspace'
+        }
+    ]), []);
+
+    const createFromTemplate = async (template) => {
+        await createWorkspace(`${template.quickSeed} ${new Date().getFullYear()}`);
+    };
 
     return (
         <div className="flex flex-col h-full bg-[#050505] p-10 overflow-y-auto custom-scrollbar">
@@ -103,6 +204,29 @@ const WorkspaceManager = ({ onWorkspaceChange, onViewSelect, view = 'wm_overview
             <>
                 {/* Search and Filters */}
                 <div className="mb-8">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                        <div className="bg-[#0a0a0a] border border-[#2e2e2e] rounded-2xl p-4">
+                            <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.18em] mb-2">Total Projects</p>
+                            <div className="flex items-center gap-2">
+                                <Layers size={14} className="text-primary" />
+                                <span className="text-xl font-black text-white">{overviewStats.total}</span>
+                            </div>
+                        </div>
+                        <div className="bg-[#0a0a0a] border border-[#2e2e2e] rounded-2xl p-4">
+                            <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.18em] mb-2">Shared Access</p>
+                            <div className="flex items-center gap-2">
+                                <Users size={14} className="text-blue-500" />
+                                <span className="text-xl font-black text-white">{overviewStats.shared}</span>
+                            </div>
+                        </div>
+                        <div className="bg-[#0a0a0a] border border-[#2e2e2e] rounded-2xl p-4">
+                            <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.18em] mb-2">Last Created</p>
+                            <div className="flex items-center gap-2">
+                                <Clock3 size={14} className="text-amber-500" />
+                                <span className="text-sm font-black text-white truncate">{overviewStats.recentName}</span>
+                            </div>
+                        </div>
+                    </div>
                     <div className="relative max-w-md">
                         <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-600" size={18} />
                         <input
@@ -139,7 +263,7 @@ const WorkspaceManager = ({ onWorkspaceChange, onViewSelect, view = 'wm_overview
                     </div>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                        {filteredWorkspaces.map(w => {
+                        {enrichedWorkspaces.map(w => {
                             const icon = getWorkspaceIcon(w.name);
                             return (
                                 <div 
@@ -177,12 +301,12 @@ const WorkspaceManager = ({ onWorkspaceChange, onViewSelect, view = 'wm_overview
                                         <div className="flex items-center gap-4 border-t border-zinc-900 pt-6">
                                             <div className="flex items-center gap-1.5">
                                                 <Users size={12} className="text-zinc-500" />
-                                                <span className="text-[10px] font-bold text-zinc-400">Owner</span>
+                                                <span className="text-[10px] font-bold text-zinc-400">{w.memberCount} member{w.memberCount > 1 ? 's' : ''}</span>
                                             </div>
                                             <div className="w-[1px] h-3 bg-zinc-800" />
                                             <div className="flex items-center gap-1.5">
                                                 <Shield size={12} className="text-zinc-500" />
-                                                <span className="text-[10px] font-bold text-zinc-400">Production</span>
+                                                <span className="text-[10px] font-bold text-zinc-400">{w.currentRole}</span>
                                             </div>
                                         </div>
                                     </div>
@@ -199,26 +323,57 @@ const WorkspaceManager = ({ onWorkspaceChange, onViewSelect, view = 'wm_overview
             )}
 
             {view === 'wm_shared' && (
-                <div className="flex-1 flex flex-col items-center justify-center bg-[#0a0a0a] border border-dashed border-[#2e2e2e] rounded-3xl p-20 text-center animate-in fade-in duration-500">
-                    <div className="w-20 h-20 rounded-full bg-zinc-900 flex items-center justify-center mb-6">
-                        <Users size={40} className="text-zinc-700" />
-                    </div>
-                    <h2 className="text-2xl font-black text-white uppercase tracking-tighter mb-2">No Shared Projects</h2>
-                    <p className="text-zinc-500 font-bold uppercase text-[10px] tracking-widest mb-8 max-w-xs">
-                        Projects shared with you by other team members will appear here.
-                    </p>
-                </div>
+                <>
+                    {sharedWorkspaces.length === 0 ? (
+                        <div className="flex-1 flex flex-col items-center justify-center bg-[#0a0a0a] border border-dashed border-[#2e2e2e] rounded-3xl p-20 text-center animate-in fade-in duration-500">
+                            <div className="w-20 h-20 rounded-full bg-zinc-900 flex items-center justify-center mb-6">
+                                <Users size={40} className="text-zinc-700" />
+                            </div>
+                            <h2 className="text-2xl font-black text-white uppercase tracking-tighter mb-2">No Shared Projects</h2>
+                            <p className="text-zinc-500 font-bold uppercase text-[10px] tracking-widest mb-8 max-w-xs">
+                                Shared projects will appear here with your role and member scope.
+                            </p>
+                        </div>
+                    ) : (
+                        <div className="space-y-4 animate-in fade-in duration-500">
+                            {sharedWorkspaces.map((workspace) => (
+                                <button
+                                    key={workspace.id}
+                                    onClick={() => handleSelect(workspace)}
+                                    className="w-full bg-[#0a0a0a] border border-[#2e2e2e] rounded-2xl p-5 text-left hover:border-primary/40 transition-all group"
+                                >
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <p className="text-lg font-black text-white group-hover:text-primary transition-colors">{workspace.name}</p>
+                                            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mt-1">
+                                                Role: {workspace.currentRole} • {workspace.memberCount} member{workspace.memberCount > 1 ? 's' : ''}
+                                            </p>
+                                        </div>
+                                        <ArrowRight size={18} className="text-zinc-500 group-hover:text-primary transition-colors" />
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </>
             )}
 
             {view === 'wm_templates' && (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in fade-in duration-500">
-                    {['SaaS Starter', 'E-commerce', 'Internal Tool'].map((template, i) => (
-                        <div key={i} className="group bg-[#0a0a0a] border border-[#2e2e2e] rounded-3xl p-6 hover:border-primary/50 transition-all cursor-pointer">
+                    {templates.map((template) => (
+                        <div key={template.id} className="group bg-[#0a0a0a] border border-[#2e2e2e] rounded-3xl p-6 hover:border-primary/50 transition-all">
                             <div className="h-32 bg-zinc-900 rounded-2xl mb-6 flex items-center justify-center">
-                                <span className="text-4xl font-black text-zinc-800 group-hover:text-zinc-700 transition-colors">{template.charAt(0)}</span>
+                                <span className="text-4xl font-black text-zinc-800 group-hover:text-zinc-700 transition-colors">{template.name.charAt(0)}</span>
                             </div>
-                            <h3 className="text-lg font-black text-white uppercase tracking-tight mb-2">{template}</h3>
-                            <button className="w-full py-3 bg-[#1a1a1a] text-zinc-400 font-black uppercase text-xs tracking-widest rounded-xl group-hover:bg-primary group-hover:text-black transition-all">
+                            <h3 className="text-lg font-black text-white uppercase tracking-tight mb-2">{template.name}</h3>
+                            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-4 min-h-[32px]">
+                                {template.hint}
+                            </p>
+                            <button
+                                onClick={() => createFromTemplate(template)}
+                                className="w-full py-3 bg-[#1a1a1a] text-zinc-400 font-black uppercase text-xs tracking-widest rounded-xl group-hover:bg-primary group-hover:text-black transition-all flex items-center justify-center gap-2"
+                            >
+                                <Sparkles size={14} />
                                 Use Template
                             </button>
                         </div>

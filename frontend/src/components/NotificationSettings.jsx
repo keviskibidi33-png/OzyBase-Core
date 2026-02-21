@@ -53,6 +53,7 @@ const NotificationSettings = () => {
                 setToast({ message: 'Failed to add recipient', type: 'error' });
             }
         } catch (error) {
+            console.error('Failed to add recipient', error);
             setToast({ message: 'Network error', type: 'error' });
         } finally {
             setAdding(false);
@@ -71,6 +72,7 @@ const NotificationSettings = () => {
                 setToast({ message: 'Recipient removed', type: 'success' });
             }
         } catch (error) {
+            console.error('Failed to delete recipient', error);
             setToast({ message: 'Failed to delete', type: 'error' });
         } finally {
             setTimeout(() => setToast(null), 3000);

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -216,7 +215,12 @@ func WorkspaceMiddleware(db *data.DB, jwtSecret string) echo.MiddlewareFunc {
 }
 
 // APIKeyMiddleware validates OzyBase API keys (Enterprise Phase 1)
-func APIKeyMiddleware(db *data.DB) echo.MiddlewareFunc {
+type StaticAPIKeys struct {
+	AnonKey        string
+	ServiceRoleKey string
+}
+
+func APIKeyMiddleware(db *data.DB, staticKeys StaticAPIKeys) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			// Skip if already authenticated by JWT
@@ -231,6 +235,23 @@ func APIKeyMiddleware(db *data.DB) echo.MiddlewareFunc {
 
 			if key == "" {
 				return next(c) // Proceed for public routes or will fail in AccessMiddleware
+			}
+
+			// Supabase-like static keys from environment (auto-generated if missing).
+			// These keys are compared in constant time to reduce side-channel leakage.
+			if staticKeys.ServiceRoleKey != "" && ConstantTimeCompare(key, staticKeys.ServiceRoleKey) {
+				c.Set("user_id", "service_role_static")
+				c.Set("role", "admin")
+				c.Set("api_key_role", "service_role")
+				c.Set("is_service_role", true)
+				c.Set("is_api_key", true)
+				return next(c)
+			}
+			if staticKeys.AnonKey != "" && ConstantTimeCompare(key, staticKeys.AnonKey) {
+				c.Set("role", "anon")
+				c.Set("api_key_role", "anon")
+				c.Set("is_api_key", true)
+				return next(c)
 			}
 
 			// Validate Key
@@ -253,10 +274,23 @@ func APIKeyMiddleware(db *data.DB) echo.MiddlewareFunc {
 				return next(c)
 			}
 
-			// Service roles are treated as admin if specifically configured,
-			// otherwise they are elevated system users.
-			c.Set("user_id", "api_key_"+id)
-			c.Set("role", role)
+			// Formal API key model:
+			// - anon: public-capable key (must NOT satisfy auth-required rules)
+			// - service_role: trusted server key with admin-level capabilities
+			switch role {
+			case "service_role":
+				c.Set("user_id", "service_role_"+id)
+				c.Set("role", "admin")
+				c.Set("api_key_role", role)
+				c.Set("is_service_role", true)
+			case "anon":
+				c.Set("role", "anon")
+				c.Set("api_key_role", role)
+			default:
+				c.Set("user_id", "api_key_"+id)
+				c.Set("role", role)
+				c.Set("api_key_role", role)
+			}
 			c.Set("is_api_key", true)
 
 			return next(c)
@@ -336,18 +370,11 @@ func MetricsMiddleware(h *Handler) echo.MiddlewareFunc {
 
 			// 🛡️ [Refined Exclusion] Strictly block automated polling noise
 			// We block only the HEAD and background fetch events, allowing actual interactions
-			isPolling := lowerPath == "/api/project/logs" ||
-				lowerPath == "/api/analytics/traffic" ||
-				lowerPath == "/api/analytics/geo" ||
-				lowerPath == "/api/project/security/alerts" ||
-				lowerPath == "/api/health" ||
-				lowerPath == "/api/system/status"
+			isPolling := isMetricsPollingPath(lowerPath)
 
 			if isPolling {
 				return next(c)
 			}
-
-			fmt.Fprintf(os.Stderr, "📝 [Audit] Tracking Request: %s\n", path)
 
 			start := time.Now().UTC()
 			err := next(c)
@@ -357,6 +384,13 @@ func MetricsMiddleware(h *Handler) echo.MiddlewareFunc {
 			ip := c.RealIP()
 			latency := stop.Sub(start)
 			status := c.Response().Status
+			method := c.Request().Method
+			if method != http.MethodOptions &&
+				method != http.MethodHead &&
+				status >= http.StatusOK &&
+				status < http.StatusBadRequest {
+				incrementMetricsCounter(h, lowerPath)
+			}
 
 			// Handle userID as UUID: convert "" to nil for Postgres safety
 			rawUserID := c.Get("user_id")
@@ -449,5 +483,56 @@ func MetricsMiddleware(h *Handler) echo.MiddlewareFunc {
 
 			return err
 		}
+	}
+}
+
+func isMetricsPollingPath(path string) bool {
+	switch path {
+	case "/api/project/logs",
+		"/api/project/info",
+		"/api/project/health",
+		"/api/project/stats",
+		"/api/project/security/alerts",
+		"/api/project/security/stats",
+		"/api/analytics/traffic",
+		"/api/analytics/geo",
+		"/api/health",
+		"/api/system/status":
+		return true
+	default:
+		return false
+	}
+}
+
+func incrementMetricsCounter(h *Handler, lowerPath string) {
+	module := resolveMetricsModule(lowerPath)
+	if module == "" {
+		return
+	}
+
+	h.Metrics.Lock()
+	switch module {
+	case "auth":
+		h.Metrics.AuthRequests++
+	case "storage":
+		h.Metrics.StorageRequests++
+	case "db":
+		h.Metrics.DbRequests++
+	}
+	h.Metrics.Unlock()
+}
+
+func resolveMetricsModule(path string) string {
+	switch {
+	case strings.HasPrefix(path, "/api/auth/"):
+		return "auth"
+	case strings.HasPrefix(path, "/api/files"):
+		return "storage"
+	case strings.HasPrefix(path, "/api/realtime"):
+		return ""
+	case strings.HasPrefix(path, "/api/"):
+		return "db"
+	default:
+		return ""
 	}
 }

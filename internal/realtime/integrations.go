@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Xangel0s/OzyBase/internal/security"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -93,6 +94,12 @@ func (w *WebhookIntegration) sendToIntegration(integration Integration, alert Se
 	if err != nil {
 		return
 	}
+	if _, err := security.ValidateOutboundURL(integration.WebhookURL, security.OutboundURLOptions{
+		AllowHTTP:           false,
+		AllowPrivateNetwork: security.AllowPrivateOutboundFromEnv(),
+	}); err != nil {
+		return
+	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest("POST", integration.WebhookURL, bytes.NewBuffer(jsonData))
@@ -111,6 +118,7 @@ func (w *WebhookIntegration) sendToIntegration(integration Integration, alert Se
 		}
 	}
 
+	// #nosec G704 -- URL is validated with security.ValidateOutboundURL above.
 	resp, err := client.Do(req)
 	if err != nil {
 		return
@@ -240,6 +248,12 @@ func (w *WebhookIntegration) sendLogBatchToSIEM(integration Integration, logs []
 	if err != nil {
 		return
 	}
+	if _, err := security.ValidateOutboundURL(integration.WebhookURL, security.OutboundURLOptions{
+		AllowHTTP:           false,
+		AllowPrivateNetwork: security.AllowPrivateOutboundFromEnv(),
+	}); err != nil {
+		return
+	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	req, err := http.NewRequest("POST", integration.WebhookURL, bytes.NewBuffer(jsonData))
@@ -258,6 +272,7 @@ func (w *WebhookIntegration) sendLogBatchToSIEM(integration Integration, logs []
 		}
 	}
 
+	// #nosec G704 -- URL is validated with security.ValidateOutboundURL above.
 	resp, err := client.Do(req)
 	if err != nil {
 		return

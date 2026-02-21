@@ -854,31 +854,36 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
                                 {user?.email?.charAt(0).toUpperCase() || 'A'}
                             </div>
 
-                            {isUserDropdownOpen && (
-                                <div className="absolute top-10 right-0 w-48 bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl shadow-2xl z-[100] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                                    <div className="px-4 py-3 border-b border-[#2e2e2e] bg-[#111111]">
-                                        <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Signed in as</p>
-                                        <p className="text-xs font-bold text-white truncate">{user?.email}</p>
-                                    </div>
-                                    <div className="p-1">
-                                        <button
-                                            onClick={() => {
-                                                onMenuViewSelect('settings');
-                                                setIsUserDropdownOpen(false);
-                                            }}
-                                            className="w-full flex items-center gap-3 px-3 py-2 text-xs font-medium text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all rounded-lg"
-                                        >
-                                            <Settings size={14} /> Settings
-                                        </button>
-                                        <button
-                                            onClick={handleLogout}
-                                            className="w-full flex items-center gap-3 px-3 py-2 text-xs font-medium text-red-400 hover:text-red-500 hover:bg-red-500/5 transition-all rounded-lg"
-                                        >
-                                            <LogOut size={14} /> Sign Out
-                                        </button>
-                                    </div>
+                            <div
+                                className={`absolute top-10 right-0 w-48 bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl shadow-2xl z-[100] overflow-hidden origin-top-right transition-all duration-200 ${
+                                    isUserDropdownOpen
+                                        ? 'opacity-100 scale-100 translate-y-0 pointer-events-auto'
+                                        : 'opacity-0 scale-95 -translate-y-2 pointer-events-none'
+                                }`}
+                                aria-hidden={!isUserDropdownOpen}
+                            >
+                                <div className="px-4 py-3 border-b border-[#2e2e2e] bg-[#111111]">
+                                    <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Signed in as</p>
+                                    <p className="text-xs font-bold text-white truncate">{user?.email}</p>
                                 </div>
-                            )}
+                                <div className="p-1">
+                                    <button
+                                        onClick={() => {
+                                            onMenuViewSelect('settings');
+                                            setIsUserDropdownOpen(false);
+                                        }}
+                                        className="w-full flex items-center gap-3 px-3 py-2 text-xs font-medium text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all rounded-lg"
+                                    >
+                                        <Settings size={14} /> Settings
+                                    </button>
+                                    <button
+                                        onClick={handleLogout}
+                                        className="w-full flex items-center gap-3 px-3 py-2 text-xs font-medium text-red-400 hover:text-red-500 hover:bg-red-500/5 transition-all rounded-lg"
+                                    >
+                                        <LogOut size={14} /> Sign Out
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </header>

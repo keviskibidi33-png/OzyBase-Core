@@ -21,11 +21,23 @@ func TestLoad_GeneratesJWTSecretAndDerivesOrigins(t *testing.T) {
 	if !cfg.GeneratedJWTSecret {
 		t.Fatalf("expected GeneratedJWTSecret=true")
 	}
+	if !cfg.GeneratedAnonKey {
+		t.Fatalf("expected GeneratedAnonKey=true")
+	}
+	if !cfg.GeneratedServiceRoleKey {
+		t.Fatalf("expected GeneratedServiceRoleKey=true")
+	}
 	if !cfg.DerivedAllowedOrigin {
 		t.Fatalf("expected DerivedAllowedOrigin=true")
 	}
 	if len(cfg.JWTSecret) < 32 {
 		t.Fatalf("expected generated JWT secret length >= 32, got %d", len(cfg.JWTSecret))
+	}
+	if len(cfg.AnonKey) < 40 {
+		t.Fatalf("expected generated ANON_KEY length >= 40, got %d", len(cfg.AnonKey))
+	}
+	if len(cfg.ServiceRoleKey) < 40 {
+		t.Fatalf("expected generated SERVICE_ROLE_KEY length >= 40, got %d", len(cfg.ServiceRoleKey))
 	}
 	if len(cfg.AllowedOrigins) == 0 {
 		t.Fatalf("expected non-empty allowed origins")
@@ -109,11 +121,14 @@ func resetEnv(t *testing.T) {
 	t.Helper()
 	keys := []string{
 		"DATABASE_URL", "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME", "DB_SSLMODE",
-		"JWT_SECRET", "SITE_URL", "APP_DOMAIN", "ALLOWED_ORIGINS", "DEBUG", "OZY_STRICT_SECURITY",
+		"JWT_SECRET", "ANON_KEY", "SERVICE_ROLE_KEY", "OZY_SERVICE_ROLE_KEY",
+		"SITE_URL", "APP_DOMAIN", "ALLOWED_ORIGINS", "DEBUG", "OZY_STRICT_SECURITY",
 	}
 	for _, k := range keys {
 		t.Setenv(k, "")
 	}
 	// Ensure test does not inherit persisted local secret.
 	_ = os.Remove(filepath.Join(".", ".ozy_secret"))
+	_ = os.Remove(filepath.Join(".", ".ozy_anon_key"))
+	_ = os.Remove(filepath.Join(".", ".ozy_service_role_key"))
 }
