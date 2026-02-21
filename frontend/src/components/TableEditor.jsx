@@ -467,6 +467,28 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
             const lines = text.split(/\r?\n/).filter(l => l.trim());
             if (lines.length < 1) return;
 
+            const detectDelimiter = (sampleLine) => {
+                const candidates = [',', ';', '\t', '|'];
+                const counts = candidates.map((delim) => {
+                    let count = 0;
+                    let inQuote = false;
+                    for (let i = 0; i < sampleLine.length; i++) {
+                        const char = sampleLine[i];
+                        if (char === '"' && sampleLine[i + 1] === '"') { i++; continue; }
+                        if (char === '"') { inQuote = !inQuote; continue; }
+                        if (!inQuote && char === delim) count++;
+                    }
+                    return count;
+                });
+                let bestIndex = 0;
+                counts.forEach((count, idx) => {
+                    if (count > counts[bestIndex]) bestIndex = idx;
+                });
+                return counts[bestIndex] > 0 ? candidates[bestIndex] : ',';
+            };
+
+            const delimiter = detectDelimiter(lines[0]);
+
             // Robust split (handles quotes)
             const splitLine = (line) => {
                 const result = [];
@@ -476,7 +498,7 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                     const char = line[i];
                     if (char === '"' && line[i + 1] === '"') { cur += '"'; i++; }
                     else if (char === '"') { inQuote = !inQuote; }
-                    else if (char === ',' && !inQuote) { result.push(cur.trim()); cur = ''; }
+                    else if (char === delimiter && !inQuote) { result.push(cur.trim()); cur = ''; }
                     else { cur += char; }
                 }
                 result.push(cur.trim());
