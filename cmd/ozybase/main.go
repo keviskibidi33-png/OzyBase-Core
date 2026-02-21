@@ -421,6 +421,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		// API Keys (Enterprise Phase 1)
 		keysGroup := apiGroup.Group("/project/keys", authRequired, adminOnly)
 		keysGroup.GET("", h.ListAPIKeys)
+		keysGroup.GET("/events", h.ListAPIKeyEvents)
 		keysGroup.POST("", h.CreateAPIKey)
 		keysGroup.DELETE("/:id", h.DeleteAPIKey)
 		keysGroup.PATCH("/:id/toggle", h.ToggleAPIKey)
