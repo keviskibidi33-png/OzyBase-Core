@@ -49,6 +49,23 @@ type CreateCollectionRequest struct {
 	WorkspaceID     string             `json:"workspace_id"`
 }
 
+var allowedRLSPolicyActions = map[string]struct{}{
+	"select": {},
+	"insert": {},
+	"update": {},
+	"delete": {},
+}
+
+func validateRLSPolicyActions(perAction map[string]string) error {
+	for action := range perAction {
+		key := strings.ToLower(strings.TrimSpace(action))
+		if _, ok := allowedRLSPolicyActions[key]; !ok {
+			return fmt.Errorf("invalid RLS policy action: %s", action)
+		}
+	}
+	return nil
+}
+
 func normalizeRLSPolicies(singleRule string, perAction map[string]string) map[string]string {
 	policies := map[string]string{
 		"select": "",
@@ -101,8 +118,11 @@ func validateRLSExpression(ctx context.Context, tx pgx.Tx, tableName, expr strin
 	if expression == "" {
 		return fmt.Errorf("policy expression cannot be empty")
 	}
+	if len(expression) > 1024 {
+		return fmt.Errorf("policy expression is too long")
+	}
 
-	blocked := []string{";", "--", "/*", "*/"}
+	blocked := []string{";", "--", "/*", "*/", "pg_sleep(", "set_config("}
 	lower := strings.ToLower(expression)
 	for _, token := range blocked {
 		if strings.Contains(lower, token) {
@@ -188,6 +208,13 @@ func (h *Handler) CreateCollection(c echo.Context) error {
 
 	// Native Postgres RLS Enforcement
 	if req.RlsEnabled {
+		if err := validateRLSPolicyActions(req.RlsPolicies); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{
+				"error":      err.Error(),
+				"error_code": "RLS_INVALID_ACTION",
+			})
+		}
+
 		if err := h.DB.EnableRLS(ctx, tx, req.Name); err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{
 				"error": "Failed to enable native RLS: " + err.Error(),
@@ -204,17 +231,20 @@ func (h *Handler) CreateCollection(c echo.Context) error {
 				if errors.As(err, &pgErr) {
 					if pgErr.Code == "42703" {
 						return c.JSON(http.StatusBadRequest, map[string]string{
-							"error": fmt.Sprintf("Invalid RLS %s policy: one or more referenced columns do not exist", action),
+							"error":      fmt.Sprintf("Invalid RLS %s policy: one or more referenced columns do not exist", action),
+							"error_code": "RLS_INVALID_COLUMN",
 						})
 					}
 					if pgErr.Code == "42601" || pgErr.Code == "42883" {
 						return c.JSON(http.StatusBadRequest, map[string]string{
-							"error": fmt.Sprintf("Invalid RLS %s policy expression: %s", action, pgErr.Message),
+							"error":      fmt.Sprintf("Invalid RLS %s policy expression: %s", action, pgErr.Message),
+							"error_code": "RLS_INVALID_EXPRESSION",
 						})
 					}
 				}
 				return c.JSON(http.StatusBadRequest, map[string]string{
-					"error": fmt.Sprintf("Invalid RLS %s policy expression", action),
+					"error":      fmt.Sprintf("Invalid RLS %s policy expression", action),
+					"error_code": "RLS_INVALID_EXPRESSION",
 				})
 			}
 

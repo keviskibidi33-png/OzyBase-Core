@@ -13,6 +13,12 @@ This roadmap focuses on enterprise readiness for self-hosted and Coolify deploym
 - API keys, RLS tools, security headers, rate limits
 - GitHub Actions + GoReleaser pipelines in place
 
+### Recent Progress (Security/Enterprise)
+- RLS policy builder now supports per-action rules (`select/insert/update/delete`).
+- Formal RLS expression validation runs before policy creation and returns stable `error_code` values.
+- API key lifecycle is now auditable with `_v_api_key_events` (create/rotate/toggle/delete).
+- API keys now persist ownership metadata (`created_by_user_id`) for accountability.
+
 ---
 
 ## 0-30 Days (Stabilize Core)

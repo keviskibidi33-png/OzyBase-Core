@@ -271,6 +271,20 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 			last_used_at TIMESTAMPTZ
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_api_keys_active ON _v_api_keys(is_active)`,
+		`ALTER TABLE _v_api_keys ADD COLUMN IF NOT EXISTS created_by_user_id UUID REFERENCES _v_users(id) ON DELETE SET NULL`,
+
+		// API Key Lifecycle Events (Enterprise Security Program v2)
+		`CREATE TABLE IF NOT EXISTS _v_api_key_events (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			api_key_id UUID,
+			workspace_id UUID REFERENCES _v_workspaces(id) ON DELETE CASCADE,
+			action VARCHAR(30) NOT NULL CHECK (action IN ('create', 'rotate', 'toggle', 'delete')),
+			actor_user_id UUID REFERENCES _v_users(id) ON DELETE SET NULL,
+			details JSONB NOT NULL DEFAULT '{}',
+			created_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_key_events_created_at ON _v_api_key_events(created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_key_events_api_key_id ON _v_api_key_events(api_key_id)`,
 
 		// Metrics Cache (Prometheus)
 		`CREATE TABLE IF NOT EXISTS _v_metrics_cache (
