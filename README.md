@@ -76,6 +76,7 @@ Install-to-play defaults:
 - If `JWT_SECRET` is missing, OzyBase auto-generates it into `.ozy_secret`.
 - If `ALLOWED_ORIGINS` is missing, OzyBase derives safe defaults from `SITE_URL` and `APP_DOMAIN`.
 - Set `OZY_STRICT_SECURITY=true` in production to fail fast on insecure config.
+- `OZY_SKIP_MIGRATIONS_SEED=true` disables seeding `/app/migrations` from the image (advanced).
 - `ozybase init` generates strong random secrets for `JWT_SECRET` and `DB_PASSWORD`.
 - `ozybase init` auto-adjusts DB TLS mode:
   - local DB host (`db`/`localhost`) -> `sslmode=disable`

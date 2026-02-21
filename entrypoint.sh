@@ -3,6 +3,11 @@ set -eu
 
 seed_dir="/app/migrations_seed"
 target_dir="/app/migrations"
+skip_seed="${OZY_SKIP_MIGRATIONS_SEED:-false}"
+
+if [ "$skip_seed" = "true" ] || [ "$skip_seed" = "1" ]; then
+  exec "$@"
+fi
 
 if [ -d "$seed_dir" ]; then
   if [ ! -d "$target_dir" ]; then

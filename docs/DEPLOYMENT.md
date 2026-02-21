@@ -169,6 +169,7 @@ Auto defaults in Coolify compose:
 ### Notes
 - Keep PostgreSQL private and use TLS in `DATABASE_URL` (`sslmode=require` or stronger).
 - With `OZY_STRICT_SECURITY=true`, startup fails on insecure public DB URLs or wildcard origins.
+- `OZY_SKIP_MIGRATIONS_SEED=true` skips copying `/app/migrations` from the image into the mounted volume.
 - Persist volumes:
   - `/app/data`
   - `/app/migrations`
