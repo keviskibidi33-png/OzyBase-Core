@@ -29,7 +29,12 @@ const CSVImportModal = ({
     totalRows,
     columnOptions,
     initialMapping,
-    onConfirm
+    onConfirm,
+    delimiter,
+    detectedDelimiter,
+    useHeaderRow,
+    onDelimiterChange,
+    onHeaderToggle
 }) => {
     const [mapping, setMapping] = useState({});
     const [error, setError] = useState('');
@@ -134,6 +139,32 @@ const CSVImportModal = ({
                                 Clear
                             </button>
                         </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-4 text-[10px] uppercase tracking-[0.2em] font-black text-zinc-500">
+                        <div className="flex items-center gap-2">
+                            <span>Delimiter</span>
+                            <select
+                                value={delimiter === 'auto' ? 'auto' : (delimiter || detectedDelimiter || ',')}
+                                onChange={(e) => onDelimiterChange?.(e.target.value)}
+                                className="bg-black border border-[#2e2e2e] text-[10px] text-zinc-300 rounded-lg px-2 py-1"
+                            >
+                                <option value="auto">Auto ({detectedDelimiter || ','})</option>
+                                <option value=",">Comma (,)</option>
+                                <option value=";">Semicolon (;)</option>
+                                <option value="\t">Tab</option>
+                                <option value="|">Pipe (|)</option>
+                            </select>
+                        </div>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={!!useHeaderRow}
+                                onChange={(e) => onHeaderToggle?.(e.target.checked)}
+                                className="rounded border-border bg-transparent accent-primary"
+                            />
+                            <span>Use first row as headers</span>
+                        </label>
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
