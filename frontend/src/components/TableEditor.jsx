@@ -37,6 +37,7 @@ import AddColumnModal from './AddColumnModal';
 import ConfirmModal from './ConfirmModal';
 import BulkEditModal from './BulkEditModal';
 import InlineCellEditor from './InlineCellEditor';
+import CSVImportModal from './CSVImportModal';
 import { fetchWithAuth } from '../utils/api';
 
 // --- Custom Hooks ---
@@ -129,6 +130,8 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
     const [selectedIds, setSelectedIds] = useState(new Set());
     const [isBulkEditOpen, setIsBulkEditOpen] = useState(false);
     const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
+    const [isCsvImportOpen, setIsCsvImportOpen] = useState(false);
+    const [csvImport, setCsvImport] = useState(null);
 
     // Pagination State
     const [pageSize, setPageSize] = useState(100);
@@ -143,6 +146,7 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
     const resizeStartWidth = useRef(0);
     const columnWidthsRef = useRef({});
     const selectAllRef = useRef(null);
+    const csvInputRef = useRef(null);
 
     // Keep ref in sync with state
     useEffect(() => {
@@ -425,6 +429,34 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
         setEditingCell(null);
     }, []);
 
+    const normalizeHeader = useCallback((value) => {
+        return String(value || '')
+            .toLowerCase()
+            .replace(/^\ufeff/, '')
+            .replace(/[^a-z0-9]+/g, '_')
+            .replace(/^_+|_+$/g, '');
+    }, []);
+
+    const buildInitialMapping = useCallback((headers, schemaColumns) => {
+        const normalizedSchema = new Map();
+        schemaColumns.forEach((col) => {
+            normalizedSchema.set(normalizeHeader(col), col);
+        });
+
+        const mapping = {};
+        headers.forEach((header) => {
+            const normalized = normalizeHeader(header.raw || header.label);
+            if (normalizedSchema.has(normalized)) {
+                mapping[header.index] = normalizedSchema.get(normalized);
+                return;
+            }
+            const alt = normalized.replace(/_/g, '');
+            const fallback = [...normalizedSchema.entries()].find(([key]) => key.replace(/_/g, '') === alt);
+            mapping[header.index] = fallback ? fallback[1] : '';
+        });
+        return mapping;
+    }, [normalizeHeader]);
+
     const handleCSVImport = useCallback(async (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -451,45 +483,95 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                 return result;
             };
 
-            const headers = splitLine(lines[0]);
-            const records = [];
+            const rawHeaders = splitLine(lines[0]).map((header, index) => {
+                const label = header?.trim() || `Column ${index + 1}`;
+                return {
+                    raw: header || '',
+                    label,
+                    index,
+                    sampleValues: []
+                };
+            });
 
+            const parsedRows = [];
             for (let i = 1; i < lines.length; i++) {
                 const values = splitLine(lines[i]);
-                const record = {};
-                headers.forEach((header, index) => {
-                    const val = values[index];
-                    if (val !== undefined) {
-                        record[header] = val;
+                if (values.length === 1 && values[0] === '') continue;
+                parsedRows.push(values);
+                rawHeaders.forEach((header) => {
+                    if (header.sampleValues.length < 3) {
+                        const value = values[header.index];
+                        if (value !== undefined && value !== '') {
+                            header.sampleValues.push(value);
+                        }
                     }
                 });
-                if (Object.keys(record).length > 0) {
-                    records.push(record);
-                }
             }
 
-            try {
-                setLoading(true);
-                const res = await fetchWithAuth(`/api/tables/${tableName}/import`, {
-                    method: 'POST',
-                    body: JSON.stringify(records)
-                });
-                if (res.ok) {
-                    setAlertMessage({ title: 'Success', message: 'Imported successfully!', type: 'success' });
-                    fetchData();
-                } else {
-                    const err = await res.json();
-                    setAlertMessage({ title: 'Import Failed', message: err.error, type: 'danger' });
-                }
-            } catch {
-                setAlertMessage({ title: 'Error', message: 'Import failed due to network error', type: 'danger' });
-            } finally {
-                setLoading(false);
-                setIsInsertDropdownOpen(false);
+            const editableColumns = schema
+                .map(col => col.name)
+                .filter(col => col !== 'id' && col !== 'created_at');
+
+            setCsvImport({
+                fileName: file.name,
+                headers: rawHeaders,
+                rows: parsedRows,
+                totalRows: parsedRows.length,
+                columns: editableColumns,
+                initialMapping: buildInitialMapping(rawHeaders, editableColumns)
+            });
+            setIsCsvImportOpen(true);
+            setIsInsertDropdownOpen(false);
+            if (csvInputRef.current) {
+                csvInputRef.current.value = '';
             }
         };
         reader.readAsText(file);
-    }, [tableName, fetchData]);
+    }, [schema, buildInitialMapping]);
+
+    const handleCSVImportConfirm = useCallback(async (mapping) => {
+        if (!csvImport) return;
+        const { headers, rows } = csvImport;
+
+        const records = rows.map((values) => {
+            const record = {};
+            headers.forEach((header) => {
+                const target = mapping[header.index];
+                if (!target) return;
+                const val = values[header.index];
+                if (val !== undefined && val !== '') {
+                    record[target] = val;
+                }
+            });
+            return record;
+        }).filter(record => Object.keys(record).length > 0);
+
+        if (records.length === 0) {
+            setAlertMessage({ title: 'Import Failed', message: 'No valid columns mapped for import.', type: 'danger' });
+            return;
+        }
+
+        try {
+            setLoading(true);
+            const res = await fetchWithAuth(`/api/tables/${tableName}/import`, {
+                method: 'POST',
+                body: JSON.stringify(records)
+            });
+            if (res.ok) {
+                setAlertMessage({ title: 'Success', message: 'Imported successfully!', type: 'success' });
+                fetchData();
+                setIsCsvImportOpen(false);
+                setCsvImport(null);
+            } else {
+                const err = await res.json();
+                setAlertMessage({ title: 'Import Failed', message: err.error || 'Import failed', type: 'danger' });
+            }
+        } catch {
+            setAlertMessage({ title: 'Error', message: 'Import failed due to network error', type: 'danger' });
+        } finally {
+            setLoading(false);
+        }
+    }, [csvImport, tableName, fetchData]);
 
     const handleDeleteRow = useCallback((id) => {
         setConfirmDeleteId(id);
@@ -905,6 +987,7 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                                                 <span className="text-[9px] text-zinc-600">Upload bulk data</span>
                                             </div>
                                             <input
+                                                ref={csvInputRef}
                                                 type="file"
                                                 accept=".csv"
                                                 onChange={handleCSVImport}
@@ -1448,6 +1531,18 @@ const TableEditor = ({ tableName, onTableSelect, allTables = [] }) => {
                 message={alertMessage?.message}
                 confirmText="Dismiss"
                 type={alertMessage?.type || 'success'}
+            />
+
+            <CSVImportModal
+                isOpen={isCsvImportOpen}
+                onClose={() => { setIsCsvImportOpen(false); setCsvImport(null); }}
+                fileName={csvImport?.fileName}
+                headers={csvImport?.headers || []}
+                sampleRows={(csvImport?.rows || []).slice(0, 5)}
+                totalRows={csvImport?.totalRows || 0}
+                columnOptions={csvImport?.columns || []}
+                initialMapping={csvImport?.initialMapping || {}}
+                onConfirm={handleCSVImportConfirm}
             />
         </div>
     );
