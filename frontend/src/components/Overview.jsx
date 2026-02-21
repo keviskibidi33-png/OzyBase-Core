@@ -60,10 +60,93 @@ const BarChart = ({ data = [], color, suffix = 'requests', maxOverride }) => {
     );
 };
 
+const SignalBand = ({ data = [], tone = 'emerald', suffix = 'events' }) => {
+    const safeData = Array.isArray(data) && data.length > 0 ? data : new Array(12).fill(0);
+    const maxVal = Math.max(...safeData, 1);
+
+    const toneMap = {
+        emerald: {
+            bar: 'bg-emerald-400/70',
+            glow: 'shadow-[0_0_12px_rgba(16,185,129,0.35)]'
+        },
+        cyan: {
+            bar: 'bg-cyan-400/70',
+            glow: 'shadow-[0_0_12px_rgba(34,211,238,0.35)]'
+        },
+        amber: {
+            bar: 'bg-amber-400/70',
+            glow: 'shadow-[0_0_12px_rgba(251,191,36,0.35)]'
+        },
+        violet: {
+            bar: 'bg-violet-400/70',
+            glow: 'shadow-[0_0_12px_rgba(167,139,250,0.35)]'
+        }
+    };
+
+    const palette = toneMap[tone] || toneMap.emerald;
+
+    return (
+        <div className="mt-5">
+            <div className="flex items-end gap-1.5 h-16">
+                {safeData.map((v, i) => {
+                    const normalized = Number(v) > 0 ? (Number(v) / maxVal) : 0;
+                    const h = Math.max(8, Math.round(normalized * 100));
+                    return (
+                        <div key={i} className="flex-1 flex items-end h-full">
+                            <div
+                                className={`w-full rounded-t-md transition-all duration-300 ${palette.bar} ${palette.glow}`}
+                                style={{ height: `${h}%`, opacity: 0.35 + (i / 30) }}
+                                title={`${Number(v) || 0} ${suffix}`}
+                            />
+                        </div>
+                    );
+                })}
+            </div>
+            <div className="flex justify-between mt-2 text-[8px] font-black text-zinc-700 uppercase tracking-[0.18em]">
+                <span>10:00</span>
+                <span>11:00</span>
+            </div>
+        </div>
+    );
+};
+
+const ModuleCard = ({ icon: Icon, title, metricLabel, value, data, tone, signalText }) => {
+    const toneMap = {
+        emerald: 'text-emerald-300 border-emerald-400/20 bg-emerald-400/10',
+        cyan: 'text-cyan-300 border-cyan-400/20 bg-cyan-400/10',
+        amber: 'text-amber-300 border-amber-400/20 bg-amber-400/10',
+        violet: 'text-violet-300 border-violet-400/20 bg-violet-400/10'
+    };
+    const toneClass = toneMap[tone] || toneMap.emerald;
+
+    return (
+        <div className="relative overflow-hidden rounded-2xl border border-zinc-800 bg-[#141414] p-5 group transition-all duration-300 hover:border-zinc-600 hover:-translate-y-0.5">
+            <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_top_right,rgba(255,255,255,0.06),transparent_55%)] opacity-70" />
+            <div className="absolute left-0 top-0 h-full w-[2px] bg-gradient-to-b from-primary via-transparent to-transparent opacity-40 group-hover:opacity-100 transition-opacity" />
+
+            <div className="relative z-10 flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-700 flex items-center justify-center">
+                        <Icon size={15} className="text-zinc-300" />
+                    </div>
+                    <span className="text-sm font-black text-zinc-100 tracking-tight">{title}</span>
+                </div>
+                <span className={`px-2 py-1 rounded-full border text-[9px] font-black uppercase tracking-widest ${toneClass}`}>
+                    {signalText}
+                </span>
+            </div>
+
+            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.18em] mb-1.5">{metricLabel}</p>
+            <p className="text-3xl font-black text-white leading-none">{value}</p>
+
+            <SignalBand data={data} tone={tone} suffix={metricLabel.toLowerCase()} />
+        </div>
+    );
+};
+
 const Overview = () => {
     const [projectInfo, setProjectInfo] = useState(null);
     const [healthIssues, setHealthIssues] = useState([]);
-    const [loading, setLoading] = useState(true);
     const [issuesTab, setIssuesTab] = useState('security');
     const [timeRange, setTimeRange] = useState(60);
     const [showTimeMenu, setShowTimeMenu] = useState(false);
@@ -88,8 +171,6 @@ const Overview = () => {
             }
         } catch (err) {
             console.error('Failed to load overview data:', err);
-        } finally {
-            setLoading(false);
         }
     }, []);
 
@@ -106,9 +187,14 @@ const Overview = () => {
     }, [showTimeMenu, showStatusMenu]);
 
     useEffect(() => {
-        loadData();
+        const boot = setTimeout(() => {
+            loadData();
+        }, 0);
         const interval = setInterval(loadData, 5000);
-        return () => clearInterval(interval);
+        return () => {
+            clearTimeout(boot);
+            clearInterval(interval);
+        };
     }, [loadData]);
 
     const securityIssues = useMemo(() => healthIssues.filter(i => i.type === 'security').length, [healthIssues]);
@@ -286,62 +372,42 @@ const Overview = () => {
 
             {/* Metrics Cards Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-12">
-                {/* Database Card */}
-                <div className="bg-[#171717] border border-[#2e2e2e] rounded-xl p-5 hover:border-zinc-700 transition-colors">
-                    <div className="flex items-center gap-2 mb-4">
-                        <Database size={16} className="text-zinc-500" />
-                        <span className="text-sm font-bold text-zinc-200">Database</span>
-                    </div>
-                    <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">REST Requests</p>
-                    <p className="text-2xl font-black text-white mb-6">{projectInfo?.metrics?.db_requests || 0}</p>
-                    <BarChart
-                        data={projectInfo?.metrics?.db_history}
-                        color="bg-green-500"
-                    />
-                </div>
-
-                {/* Auth Card */}
-                <div className="bg-[#171717] border border-[#2e2e2e] rounded-xl p-5 hover:border-zinc-700 transition-colors">
-                    <div className="flex items-center gap-2 mb-4">
-                        <Lock size={16} className="text-zinc-500" />
-                        <span className="text-sm font-bold text-zinc-200">Auth</span>
-                    </div>
-                    <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Auth Requests</p>
-                    <p className="text-2xl font-black text-white mb-6">{projectInfo?.metrics?.auth_requests || 0}</p>
-                    <BarChart
-                        data={projectInfo?.metrics?.auth_history}
-                        color="bg-green-500"
-                    />
-                </div>
-
-                {/* Storage Card */}
-                <div className="bg-[#171717] border border-[#2e2e2e] rounded-xl p-5 hover:border-zinc-700 transition-colors">
-                    <div className="flex items-center gap-2 mb-4">
-                        <FolderOpen size={16} className="text-zinc-500" />
-                        <span className="text-sm font-bold text-zinc-200">Storage</span>
-                    </div>
-                    <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Storage Requests</p>
-                    <p className="text-2xl font-black text-white mb-6">{projectInfo?.metrics?.storage_requests || 0}</p>
-                    <BarChart
-                        data={projectInfo?.metrics?.storage_history}
-                        color="bg-green-500"
-                    />
-                </div>
-
-                {/* Realtime Card */}
-                <div className="bg-[#171717] border border-[#2e2e2e] rounded-xl p-5 hover:border-zinc-700 transition-colors">
-                    <div className="flex items-center gap-2 mb-4">
-                        <MousePointer2 size={16} className="text-zinc-500" />
-                        <span className="text-sm font-bold text-zinc-200">Realtime</span>
-                    </div>
-                    <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Active Connections</p>
-                    <p className="text-2xl font-black text-white mb-6">{projectInfo?.metrics?.realtime_requests || 0}</p>
-                    <BarChart
-                        data={projectInfo?.metrics?.realtime_history}
-                        color={projectInfo?.metrics?.realtime_requests > 0 ? "bg-green-500" : "bg-zinc-700"}
-                        suffix="backends"
-                    />
-                </div>
+                <ModuleCard
+                    icon={Database}
+                    title="Database"
+                    metricLabel="REST Requests"
+                    value={projectInfo?.metrics?.db_requests || 0}
+                    data={projectInfo?.metrics?.db_history}
+                    tone="emerald"
+                    signalText={(projectInfo?.metrics?.db_requests || 0) > 0 ? 'live' : 'idle'}
+                />
+                <ModuleCard
+                    icon={Lock}
+                    title="Auth"
+                    metricLabel="Auth Requests"
+                    value={projectInfo?.metrics?.auth_requests || 0}
+                    data={projectInfo?.metrics?.auth_history}
+                    tone="cyan"
+                    signalText={(projectInfo?.metrics?.auth_requests || 0) > 0 ? 'verified' : 'quiet'}
+                />
+                <ModuleCard
+                    icon={FolderOpen}
+                    title="Storage"
+                    metricLabel="Storage Requests"
+                    value={projectInfo?.metrics?.storage_requests || 0}
+                    data={projectInfo?.metrics?.storage_history}
+                    tone="amber"
+                    signalText={(projectInfo?.metrics?.storage_requests || 0) > 0 ? 'active' : 'cold'}
+                />
+                <ModuleCard
+                    icon={MousePointer2}
+                    title="Realtime"
+                    metricLabel="Active Connections"
+                    value={projectInfo?.metrics?.realtime_requests || 0}
+                    data={projectInfo?.metrics?.realtime_history}
+                    tone="violet"
+                    signalText={(projectInfo?.metrics?.realtime_requests || 0) > 0 ? 'streaming' : 'standby'}
+                />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-12">
