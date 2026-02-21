@@ -39,6 +39,13 @@ const MonacoEditor = lazy(() => import('@monaco-editor/react'));
 // Force local Monaco bundle instead of CDN loader to satisfy strict CSP.
 loader.config({ monaco });
 
+const SQL_KEYWORDS = [
+    'SELECT', 'FROM', 'WHERE', 'INSERT', 'UPDATE', 'DELETE', 'JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN',
+    'GROUP BY', 'ORDER BY', 'LIMIT', 'OFFSET', 'HAVING', 'DISTINCT', 'AS', 'ON', 'IN', 'NOT IN', 'EXISTS',
+    'CREATE TABLE', 'ALTER TABLE', 'DROP TABLE', 'TRUNCATE', 'VALUES', 'SET', 'AND', 'OR', 'NOT', 'NULL',
+    'TRUE', 'FALSE', 'COUNT', 'SUM', 'AVG', 'MIN', 'MAX', 'NOW()', 'CURRENT_DATE'
+];
+
 const BarChart = ({ data, columns }) => {
     if (!data || data.length === 0) return null;
 
@@ -136,7 +143,11 @@ const SqlTerminal = () => {
     const [queryName, setQueryName] = useState('');
     const [timeRange, setTimeRange] = useState(60); // minutes
     const [showTimeMenu, setShowTimeMenu] = useState(false);
+    const [catalog, setCatalog] = useState({ tables: [], columnsByTable: {}, allColumns: [] });
     const isResizing = useRef(false);
+    const monacoRef = useRef(null);
+    const editorRef = useRef(null);
+    const completionProviderRef = useRef(null);
 
     // Derived states for filtering
     const filteredSaved = savedQueries.filter(item =>
@@ -175,6 +186,167 @@ const SqlTerminal = () => {
     useEffect(() => {
         localStorage.setItem('ozy_sql_saved', JSON.stringify(savedQueries));
     }, [savedQueries]);
+
+    const normalizeToken = useCallback((value) => {
+        return String(value || '').toLowerCase().replace(/_/g, '');
+    }, []);
+
+    const rankSuggestion = useCallback((needle, candidate) => {
+        if (!needle) return 50;
+        const a = needle.toLowerCase();
+        const b = candidate.toLowerCase();
+        const an = normalizeToken(a);
+        const bn = normalizeToken(b);
+        if (b.startsWith(a)) return 0;
+        if (b.includes(a)) return 1;
+        if (bn.startsWith(an)) return 2;
+        if (bn.includes(an)) return 3;
+        return 9;
+    }, [normalizeToken]);
+
+    const fetchCatalog = useCallback(async () => {
+        try {
+            const res = await fetchWithAuth('/api/collections');
+            if (!res.ok) return;
+            const data = await res.json();
+            const tables = [];
+            const columnsByTable = {};
+            const allColumnsSet = new Set();
+
+            (Array.isArray(data) ? data : []).forEach((collection) => {
+                const tableName = collection?.name;
+                if (!tableName) return;
+                tables.push(tableName);
+                const schemaCols = Array.isArray(collection?.schema)
+                    ? collection.schema.map((field) => field?.name).filter(Boolean)
+                    : [];
+                columnsByTable[tableName] = schemaCols;
+                schemaCols.forEach((col) => allColumnsSet.add(col));
+            });
+
+            setCatalog({
+                tables,
+                columnsByTable,
+                allColumns: Array.from(allColumnsSet)
+            });
+        } catch (e) {
+            console.error('Failed to load SQL autocomplete catalog', e);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchCatalog();
+    }, [fetchCatalog]);
+
+    useEffect(() => {
+        if (syncSuccess) {
+            fetchCatalog();
+        }
+    }, [syncSuccess, fetchCatalog]);
+
+    const registerCompletionProvider = useCallback(() => {
+        if (!monacoRef.current) return;
+
+        if (completionProviderRef.current) {
+            completionProviderRef.current.dispose();
+        }
+
+        completionProviderRef.current = monacoRef.current.languages.registerCompletionItemProvider('sql', {
+            triggerCharacters: ['.', '_'],
+            provideCompletionItems: (model, position) => {
+                const linePrefix = model.getValueInRange({
+                    startLineNumber: position.lineNumber,
+                    startColumn: 1,
+                    endLineNumber: position.lineNumber,
+                    endColumn: position.column
+                });
+                const word = model.getWordUntilPosition(position);
+                const typed = (word.word || '').toLowerCase();
+                const range = {
+                    startLineNumber: position.lineNumber,
+                    endLineNumber: position.lineNumber,
+                    startColumn: word.startColumn,
+                    endColumn: word.endColumn
+                };
+
+                const fullTextUntilCursor = model.getValueInRange({
+                    startLineNumber: 1,
+                    startColumn: 1,
+                    endLineNumber: position.lineNumber,
+                    endColumn: position.column
+                });
+
+                const aliasMap = {};
+                const aliasRegex = /\b(?:from|join)\s+([a-zA-Z_][\w]*)\s+(?:as\s+)?([a-zA-Z_][\w]*)/gi;
+                let aliasMatch;
+                while ((aliasMatch = aliasRegex.exec(fullTextUntilCursor)) !== null) {
+                    aliasMap[aliasMatch[2]] = aliasMatch[1];
+                }
+
+                const dotMatch = linePrefix.match(/([a-zA-Z_][\w]*)\.([a-zA-Z_0-9]*)$/i);
+                let tableScopedColumns = null;
+                if (dotMatch) {
+                    const token = dotMatch[1];
+                    const resolvedTable = aliasMap[token] || token;
+                    tableScopedColumns = catalog.columnsByTable[resolvedTable] || [];
+                }
+
+                const keywordSuggestions = SQL_KEYWORDS.map((keyword) => ({
+                    label: keyword,
+                    kind: monacoRef.current.languages.CompletionItemKind.Keyword,
+                    insertText: keyword,
+                    range,
+                    sortText: `k_${String(rankSuggestion(typed, keyword)).padStart(2, '0')}_${keyword.toLowerCase()}`
+                }));
+
+                const tableSuggestions = catalog.tables.map((table) => ({
+                    label: table,
+                    kind: monacoRef.current.languages.CompletionItemKind.Class,
+                    insertText: table,
+                    detail: 'Table',
+                    range,
+                    sortText: `t_${String(rankSuggestion(typed, table)).padStart(2, '0')}_${table}`
+                }));
+
+                const columnSource = tableScopedColumns || catalog.allColumns;
+                const columnSuggestions = columnSource.map((column) => ({
+                    label: column,
+                    kind: monacoRef.current.languages.CompletionItemKind.Field,
+                    insertText: column,
+                    detail: tableScopedColumns ? 'Column (table scope)' : 'Column',
+                    range,
+                    sortText: `c_${String(rankSuggestion(typed, column)).padStart(2, '0')}_${column}`
+                }));
+
+                const tableColumnSuggestions = tableScopedColumns
+                    ? []
+                    : catalog.tables.flatMap((table) => (catalog.columnsByTable[table] || []).map((column) => ({
+                        label: `${table}.${column}`,
+                        kind: monacoRef.current.languages.CompletionItemKind.Property,
+                        insertText: `${table}.${column}`,
+                        detail: 'Table.Column',
+                        range,
+                        sortText: `p_${String(rankSuggestion(typed, `${table}.${column}`)).padStart(2, '0')}_${table}_${column}`
+                    })));
+
+                const suggestions = dotMatch
+                    ? columnSuggestions
+                    : [...tableSuggestions, ...columnSuggestions, ...tableColumnSuggestions, ...keywordSuggestions];
+
+                return { suggestions };
+            }
+        });
+    }, [catalog, rankSuggestion]);
+
+    useEffect(() => {
+        registerCompletionProvider();
+        return () => {
+            if (completionProviderRef.current) {
+                completionProviderRef.current.dispose();
+                completionProviderRef.current = null;
+            }
+        };
+    }, [registerCompletionProvider]);
 
     const runQuery = async (customQuery = null) => {
         // Handle cases where an event object might be passed if called directly in onClick
@@ -642,7 +814,10 @@ const SqlTerminal = () => {
                                 });
                             }}
                             onMount={(editor, monaco) => {
+                                editorRef.current = editor;
+                                monacoRef.current = monaco;
                                 monaco.editor.setTheme('ozy-dark');
+                                registerCompletionProvider();
                             }}
                         />
                     </Suspense>
