@@ -1,85 +1,124 @@
 # Enterprise Hardening Validation Report (2026-02-21)
 
-This report validates the requested enterprise roadmap blocks and points to the implementation files.
+This report validates the enterprise roadmap items and maps them to concrete implementation files.
 
 ## 1) CI/CD Enterprise Gates
 
 Status: implemented
 
-- CI hard gates in `.github/workflows/ci.yml`:
+- CI gates (`.github/workflows/ci.yml`):
   - `go test ./...`
-  - frontend `npm run lint`
-  - frontend `npm run build`
+  - `npm run lint`
+  - `npm run build`
   - API smoke (`scripts/smoke_api.sh`)
-  - E2E smoke (`frontend/tests/smoke-critical.spec.js`)
+  - critical E2E smoke (`frontend/tests/smoke-critical.spec.js`)
   - bundle budget (`frontend/scripts/check-bundle-budget.mjs`)
-- Release blocks if quality gate fails in `.github/workflows/release.yml` (`needs: [quality-gate]`).
-- Release dry-run on PR via GoReleaser snapshot.
-- Rollback checklist added at `docs/RELEASE_ROLLBACK_CHECKLIST.md`.
+- Release blocked by quality gate in `.github/workflows/release.yml` (`needs: [quality-gate]`).
+- PR release dry-run with GoReleaser snapshot.
+- Rollback runbook: `docs/RELEASE_ROLLBACK_CHECKLIST.md`.
 
-## 2) RLS Maturity (Auditor + Enforcement + History + KPI)
-
-Status: implemented
-
-- Coverage endpoint (already present) enhanced in `internal/api/rls_coverage.go`.
-- Historical coverage snapshots persisted in `_v_rls_coverage_history` (migration in `internal/data/migrations.go`).
-- New history endpoint: `GET /api/project/security/rls/coverage/history`.
-- KPI included: `kpi_full_action_coverage_ratio` = % tables with full action coverage (`select/insert/update/delete`).
-- Enforcement upgraded to per-action policy autofix in `internal/api/collections.go` (`EnforceRLSAll`):
-  - supports `dry_run`
-  - creates per-action policies
-  - reports `actions_applied`
-
-## 3) Runtime Resilience
+## 2) RLS Maturity (Auditor + Enforcement + KPI + History)
 
 Status: implemented
 
-- Storage fallback: S3 init failure can fall back to local storage when `OZY_STORAGE_FALLBACK_LOCAL=true`.
-  - config: `internal/config/config.go`
-  - runtime init: `cmd/ozybase/main.go`
-- Integrations/SIEM fail-open behavior with explicit degraded-mode logging:
-  - `internal/realtime/integrations.go`
-  - failures in integrations do not block critical API routes.
+- RLS coverage endpoint and KPI (`kpi_full_action_coverage_ratio`):
+  - `internal/api/rls_coverage.go`
+- RLS coverage history persistence:
+  - `_v_rls_coverage_history` in `internal/data/migrations.go`
+- Per-action enforcement/autofix with dry-run:
+  - `internal/api/collections.go` (`EnforceRLSAll`)
 
-## 4) Error Envelope / error_code Standardization
+## 3) Error Envelope Standardization
 
 Status: implemented and validated
 
-- Global envelope middleware and handler active:
-  - `error`, `error_code`, `request_id`
-  - files: `internal/api/error_envelope.go`, `cmd/ozybase/main.go`
-- Added legacy payload mapping test (`message` -> `error`) in:
+- Global envelope (`error`, `error_code`, `request_id`):
+  - `internal/api/error_envelope.go`
+  - `cmd/OzyBase/main.go`
+- Legacy payload normalization test:
   - `internal/api/error_envelope_test.go`
 
-## 5) E2E + Bundle Control
+## 4) Runtime Resilience (Fail-Open + Degraded Mode)
 
 Status: implemented
 
-- Critical smoke E2E flow test:
-  - setup/login/workspace/sql/table/security navigation
-  - file: `frontend/tests/smoke-critical.spec.js`
-- CI bundle budget check:
-  - script: `frontend/scripts/check-bundle-budget.mjs`
-  - workflow integration: `.github/workflows/ci.yml`, `.github/workflows/release.yml`
+- Storage fallback local when S3 init fails:
+  - `internal/config/config.go`
+  - `cmd/OzyBase/main.go`
+- Integrations now non-blocking for critical routes:
+  - `internal/realtime/integrations.go`
+- SIEM export loop now enqueues batches instead of blocking request path:
+  - `internal/api/handlers.go`
 
-## 6) Performance Pass
+## 5) Formal Key Rotation (Active/Previous + Grace Window)
 
 Status: implemented
 
-- `GET /api/project/info` caching (short TTL, safe secret handling): `internal/api/collections.go`
-- `GET /api/project/health` caching (short TTL): `internal/api/collections.go`
+- Key lifecycle schema extended:
+  - `key_group_id`, `key_version`, `rotated_to_key_id`, `grace_until`, `valid_after`, `revoked_at`
+  - `internal/data/migrations.go`
+- API key rotation now versioned with configurable grace:
+  - `internal/api/keys.go`
+- Middleware accepts previous key only inside grace window:
+  - DB keys via `rotated_to_key_id + grace_until`
+  - static keys via `ANON_KEY_PREVIOUS`, `SERVICE_ROLE_KEY_PREVIOUS`, `STATIC_KEY_GRACE_UNTIL`
+  - `internal/api/middleware.go`
+  - `internal/config/config.go`
+- Docker/Coolify env support added:
+  - `docker-compose.yml`
+  - `docker-compose.install.yml`
+  - `docker-compose.coolify.yml`
+
+## 6) Integration Delivery Queue + Retry + DLQ + Metrics
+
+Status: implemented
+
+- Persistent queue table:
+  - `_v_integration_deliveries` in `internal/data/migrations.go`
+- Worker with retry backoff + DLQ:
+  - `internal/realtime/integrations.go`
+- Delivery metrics + DLQ APIs:
+  - `GET /api/project/integrations/metrics`
+  - `GET /api/project/integrations/dlq`
+  - `POST /api/project/integrations/dlq/:id/retry`
+  - `internal/api/integrations.go`
+  - route wiring: `cmd/OzyBase/main.go`
+
+## 7) EXPLAIN Sampling + Auto Index Recommendations (Hot Paths)
+
+Status: implemented
+
+- Hot-path detection from audit logs, EXPLAIN sampling, index recommendations:
+  - `internal/api/performance_advisor.go`
+- History persistence:
+  - `_v_query_explain_samples` in `internal/data/migrations.go`
+- APIs:
+  - `GET /api/project/performance/advisor`
+  - `GET /api/project/performance/advisor/history`
+  - route wiring: `cmd/OzyBase/main.go`
+
+## 8) Performance Pass (Existing + Extended)
+
+Status: implemented
+
+- Cached project info and health:
+  - `internal/api/collections.go`
 - Table browsing tuning:
-  - column metadata cache (`GetTableColumns`): `internal/data/db.go`
-  - cache invalidation after schema changes: `internal/data/schema.go`
-  - max list limit clamp (`limit <= 1000`): `internal/api/records.go`
-- Added supporting indexes for workspace-heavy paths and governance:
+  - `internal/data/db.go`
+  - `internal/data/schema.go`
+  - `internal/api/records.go`
+- Index and schema governance migrations:
   - `internal/data/migrations.go`
 
-## 7) Safe Migrations Checklist
+## 9) Deployment Docs / Operations
 
-Status: implemented
+Status: updated
 
-- `docs/MIGRATIONS_SAFE_CHECKLIST.md`
+- Production/Coolify docs expanded with:
+  - key rotation grace envs
+  - integration queue/DLQ operations
+  - performance advisor usage
+  - `docs/DEPLOYMENT.md`
 
 ## Validation Commands
 
@@ -92,9 +131,13 @@ cd frontend && npm run build
 cd frontend && npm run bundle:check
 ```
 
+Additionally updated API smoke suite:
+
+```bash
+scripts/smoke_api.sh
+```
+
 Notes:
-- Frontend lint shows a non-blocking warning from existing `eslint-env` comment in `frontend/playwright.config.js` (warning only; lint exits 0).
+- Frontend lint currently emits a non-blocking flat-config warning for `frontend/playwright.config.js`.
+- Full local smoke with Docker requires an active Docker daemon on host.
 
-## Remaining Recommended Next Step
-
-- Add strict key lifecycle versioning and dual-key grace window (active/previous) for zero-downtime rotation.

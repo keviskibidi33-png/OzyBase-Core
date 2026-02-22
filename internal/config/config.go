@@ -10,16 +10,21 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	DatabaseURL    string
-	Port           string
-	JWTSecret      string
-	AnonKey        string
-	ServiceRoleKey string
+	DatabaseURL            string
+	Port                   string
+	JWTSecret              string
+	AnonKey                string
+	ServiceRoleKey         string
+	PreviousAnonKey        string
+	PreviousServiceRoleKey string
+	StaticKeyGraceUntil    time.Time
+	APIKeyGraceMinutes     int
 
 	// Security & Domains
 	AppDomain      string
@@ -109,6 +114,16 @@ func Load() (*Config, error) {
 		serviceRoleKey, generatedServiceRoleKey = getOrGenerateNamedSecret(".ozy_service_role_key", 48, "ozy_service_role_")
 	}
 	_ = os.Setenv("SERVICE_ROLE_KEY", serviceRoleKey)
+	previousAnonKey := readEnv("ANON_KEY_PREVIOUS")
+	previousServiceRoleKey := firstNonEmpty(readEnv("SERVICE_ROLE_KEY_PREVIOUS"), readEnv("OZY_SERVICE_ROLE_KEY_PREVIOUS"))
+	staticKeyGraceUntil := parseOptionalRFC3339(readEnv("STATIC_KEY_GRACE_UNTIL"))
+	apiKeyGraceMinutes := getEnvAsInt("API_KEY_ROTATION_GRACE_MINUTES", 15)
+	if apiKeyGraceMinutes < 0 {
+		apiKeyGraceMinutes = 0
+	}
+	if apiKeyGraceMinutes > 10080 {
+		apiKeyGraceMinutes = 10080
+	}
 
 	siteURL := getEnv("SITE_URL", "https://api.example.com")
 	appDomain := getEnv("APP_DOMAIN", "example.com")
@@ -126,6 +141,10 @@ func Load() (*Config, error) {
 		JWTSecret:               jwtSecret,
 		AnonKey:                 anonKey,
 		ServiceRoleKey:          serviceRoleKey,
+		PreviousAnonKey:         previousAnonKey,
+		PreviousServiceRoleKey:  previousServiceRoleKey,
+		StaticKeyGraceUntil:     staticKeyGraceUntil,
+		APIKeyGraceMinutes:      apiKeyGraceMinutes,
 		AppDomain:               appDomain,
 		SiteURL:                 siteURL,
 		AllowedOrigins:          origins,
@@ -202,6 +221,18 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
+func getEnvAsInt(key string, defaultValue int) int {
+	raw := strings.TrimSpace(readEnv(key))
+	if raw == "" {
+		return defaultValue
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return defaultValue
+	}
+	return v
+}
+
 func readEnv(key string) string {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
@@ -229,6 +260,18 @@ func isCoolifySetPlaceholder(value, key string) bool {
 		}
 	}
 	return false
+}
+
+func parseOptionalRFC3339(raw string) time.Time {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
 }
 
 func resolveAllowedOrigins(originsStr, siteURL, appDomain string, debug bool) ([]string, bool) {

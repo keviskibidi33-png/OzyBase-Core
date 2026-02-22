@@ -216,8 +216,11 @@ func WorkspaceMiddleware(db *data.DB, jwtSecret string) echo.MiddlewareFunc {
 
 // APIKeyMiddleware validates OzyBase API keys (Enterprise Phase 1)
 type StaticAPIKeys struct {
-	AnonKey        string
-	ServiceRoleKey string
+	AnonKey                string
+	ServiceRoleKey         string
+	PreviousAnonKey        string
+	PreviousServiceRoleKey string
+	StaticGraceUntil       time.Time
 }
 
 func APIKeyMiddleware(db *data.DB, staticKeys StaticAPIKeys) echo.MiddlewareFunc {
@@ -253,6 +256,27 @@ func APIKeyMiddleware(db *data.DB, staticKeys StaticAPIKeys) echo.MiddlewareFunc
 				c.Set("is_api_key", true)
 				return next(c)
 			}
+			// Previous static keys are accepted only during explicit grace window.
+			if !staticKeys.StaticGraceUntil.IsZero() && time.Now().UTC().Before(staticKeys.StaticGraceUntil) {
+				if staticKeys.PreviousServiceRoleKey != "" && ConstantTimeCompare(key, staticKeys.PreviousServiceRoleKey) {
+					c.Set("user_id", "service_role_static_previous")
+					c.Set("role", "admin")
+					c.Set("api_key_role", "service_role")
+					c.Set("is_service_role", true)
+					c.Set("is_api_key", true)
+					c.Set("is_previous_key", true)
+					c.Set("grace_until", staticKeys.StaticGraceUntil.Format(time.RFC3339))
+					return next(c)
+				}
+				if staticKeys.PreviousAnonKey != "" && ConstantTimeCompare(key, staticKeys.PreviousAnonKey) {
+					c.Set("role", "anon")
+					c.Set("api_key_role", "anon")
+					c.Set("is_api_key", true)
+					c.Set("is_previous_key", true)
+					c.Set("grace_until", staticKeys.StaticGraceUntil.Format(time.RFC3339))
+					return next(c)
+				}
+			}
 
 			// Validate Key
 			hash := sha256.Sum256([]byte(key))
@@ -260,13 +284,18 @@ func APIKeyMiddleware(db *data.DB, staticKeys StaticAPIKeys) echo.MiddlewareFunc
 
 			var role string
 			var id string
+			var isPrevious bool
+			var graceUntil *time.Time
 			err := db.Pool.QueryRow(c.Request().Context(), `
 				UPDATE _v_api_keys 
 				SET last_used_at = NOW() 
 				WHERE key_hash = $1 AND is_active = true 
+				  AND revoked_at IS NULL
+				  AND valid_after <= NOW()
 				  AND (expires_at IS NULL OR expires_at > NOW())
-				RETURNING id, role
-			`, keyHash).Scan(&id, &role)
+				  AND (rotated_to_key_id IS NULL OR (grace_until IS NOT NULL AND grace_until > NOW()))
+				RETURNING id, role, (rotated_to_key_id IS NOT NULL) AS is_previous, grace_until
+			`, keyHash).Scan(&id, &role, &isPrevious, &graceUntil)
 
 			if err != nil {
 				// We don't block here, just don't set user context.
@@ -290,6 +319,12 @@ func APIKeyMiddleware(db *data.DB, staticKeys StaticAPIKeys) echo.MiddlewareFunc
 				c.Set("user_id", "api_key_"+id)
 				c.Set("role", role)
 				c.Set("api_key_role", role)
+			}
+			if isPrevious {
+				c.Set("is_previous_key", true)
+				if graceUntil != nil {
+					c.Set("grace_until", graceUntil.Format(time.RFC3339))
+				}
 			}
 			c.Set("is_api_key", true)
 

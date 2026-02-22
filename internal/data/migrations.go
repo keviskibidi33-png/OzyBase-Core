@@ -179,6 +179,25 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 			created_at TIMESTAMPTZ DEFAULT NOW(),
 			last_triggered_at TIMESTAMPTZ
 		)`,
+		`CREATE TABLE IF NOT EXISTS _v_integration_deliveries (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			integration_id UUID NOT NULL REFERENCES _v_integrations(id) ON DELETE CASCADE,
+			delivery_type VARCHAR(40) NOT NULL,
+			payload JSONB NOT NULL DEFAULT '{}',
+			headers JSONB NOT NULL DEFAULT '{}',
+			status VARCHAR(20) NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'processing', 'retry', 'delivered', 'dlq')),
+			attempts INTEGER NOT NULL DEFAULT 0,
+			max_attempts INTEGER NOT NULL DEFAULT 5,
+			next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			last_error TEXT,
+			last_status_code INTEGER,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW(),
+			delivered_at TIMESTAMPTZ
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_integration_deliveries_status_next ON _v_integration_deliveries(status, next_attempt_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_integration_deliveries_integration_status ON _v_integration_deliveries(integration_id, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_integration_deliveries_created_at ON _v_integration_deliveries(created_at DESC)`,
 
 		// IP Firewall Rules (Whitelist/Blacklist)
 		`CREATE TABLE IF NOT EXISTS _v_ip_rules (
@@ -272,6 +291,15 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_api_keys_active ON _v_api_keys(is_active)`,
 		`ALTER TABLE _v_api_keys ADD COLUMN IF NOT EXISTS created_by_user_id UUID REFERENCES _v_users(id) ON DELETE SET NULL`,
+		`ALTER TABLE _v_api_keys ADD COLUMN IF NOT EXISTS key_group_id UUID`,
+		`UPDATE _v_api_keys SET key_group_id = id WHERE key_group_id IS NULL`,
+		`ALTER TABLE _v_api_keys ADD COLUMN IF NOT EXISTS key_version INTEGER NOT NULL DEFAULT 1`,
+		`ALTER TABLE _v_api_keys ADD COLUMN IF NOT EXISTS rotated_to_key_id UUID REFERENCES _v_api_keys(id) ON DELETE SET NULL`,
+		`ALTER TABLE _v_api_keys ADD COLUMN IF NOT EXISTS grace_until TIMESTAMPTZ`,
+		`ALTER TABLE _v_api_keys ADD COLUMN IF NOT EXISTS valid_after TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+		`ALTER TABLE _v_api_keys ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ`,
+		`CREATE INDEX IF NOT EXISTS idx_api_keys_group_version ON _v_api_keys(key_group_id, key_version DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_keys_auth_lookup ON _v_api_keys(key_hash, is_active, valid_after, expires_at, grace_until, revoked_at)`,
 
 		// API Key Lifecycle Events (Enterprise Security Program v2)
 		`CREATE TABLE IF NOT EXISTS _v_api_key_events (
@@ -345,6 +373,19 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 			details JSONB NOT NULL DEFAULT '[]'
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_rls_coverage_history_recorded_at ON _v_rls_coverage_history(recorded_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS _v_query_explain_samples (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			endpoint TEXT NOT NULL,
+			table_name TEXT,
+			sample_query TEXT NOT NULL,
+			plan_summary TEXT,
+			has_seq_scan BOOLEAN NOT NULL DEFAULT FALSE,
+			estimated_rows BIGINT NOT NULL DEFAULT 0,
+			recommendation JSONB NOT NULL DEFAULT '{}',
+			recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_query_explain_samples_endpoint_time ON _v_query_explain_samples(endpoint, recorded_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_query_explain_samples_table_time ON _v_query_explain_samples(table_name, recorded_at DESC)`,
 	}
 
 	for i, migration := range migrations {

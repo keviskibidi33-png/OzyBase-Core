@@ -28,6 +28,12 @@ DEBUG=false
 
 # Auth
 JWT_SECRET=<64-byte-random-secret>
+ANON_KEY=<optional-static-anon-key>
+SERVICE_ROLE_KEY=<optional-static-service-key>
+ANON_KEY_PREVIOUS=<optional-previous-anon-key>
+SERVICE_ROLE_KEY_PREVIOUS=<optional-previous-service-key>
+STATIC_KEY_GRACE_UNTIL=2026-12-31T23:59:59Z
+API_KEY_ROTATION_GRACE_MINUTES=15
 
 # Database
 DB_USER=ozyuser
@@ -156,6 +162,9 @@ Use `docker-compose.coolify.yml` with a managed PostgreSQL service.
 - `DEBUG=false`
 - `OZY_STRICT_SECURITY=true` (recommended in production)
 - `OZY_STORAGE_FALLBACK_LOCAL=true` (recommended, fail-open to local storage if S3 init fails)
+- `API_KEY_ROTATION_GRACE_MINUTES=15` (default grace for DB API key rotation)
+- `ANON_KEY_PREVIOUS` / `SERVICE_ROLE_KEY_PREVIOUS` (optional for static key cutover)
+- `STATIC_KEY_GRACE_UNTIL` (RFC3339 timestamp for previous static keys)
 - `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`
 - SMTP vars if email flows are needed
 
@@ -171,6 +180,7 @@ Auto defaults in Coolify compose:
 - Keep PostgreSQL private and use TLS in `DATABASE_URL` (`sslmode=require` or stronger).
 - With `OZY_STRICT_SECURITY=true`, startup fails on insecure public DB URLs or wildcard origins.
 - With `OZY_STORAGE_FALLBACK_LOCAL=true`, startup falls back to local storage if S3 is unavailable.
+- During static key rotation, previous keys are accepted only until `STATIC_KEY_GRACE_UNTIL`.
 - `OZY_SKIP_MIGRATIONS_SEED=true` skips copying `/app/migrations` from the image into the mounted volume.
 - Persist volumes:
   - `/app/data`
@@ -194,6 +204,9 @@ Visible DB variables in Coolify (install stack):
 - `DB_PASSWORD` (required)
 - `DB_NAME` (default: `ozybase`)
 - `DB_SSLMODE` (default: `disable`)
+- `API_KEY_ROTATION_GRACE_MINUTES` (default: `15`)
+- `ANON_KEY_PREVIOUS` / `SERVICE_ROLE_KEY_PREVIOUS` (optional)
+- `STATIC_KEY_GRACE_UNTIL` (optional RFC3339)
 - `INITIAL_ADMIN_EMAIL` (optional)
 - `INITIAL_ADMIN_PASSWORD` (optional)
 
@@ -213,6 +226,20 @@ This command creates:
 - `JWT_SECRET` (strong random)
 - `DB_PASSWORD` (strong random)
 - sensible default domains (`SITE_URL=https://api.example.com`, `APP_DOMAIN=example.com`)
+
+## 13. Integration Delivery Queue (Retry + DLQ)
+- Webhook/SIEM deliveries are queued in `_v_integration_deliveries`.
+- Automatic retries use exponential backoff.
+- Failed deliveries that exhaust retries move to DLQ.
+- Admin endpoints:
+  - `GET /api/project/integrations/metrics`
+  - `GET /api/project/integrations/dlq`
+  - `POST /api/project/integrations/dlq/:id/retry`
+
+## 14. Performance Advisor (EXPLAIN Sampling)
+- Endpoint: `GET /api/project/performance/advisor`
+- Uses hot-paths from `_v_audit_logs`, runs EXPLAIN samples, returns index recommendations.
+- History endpoint: `GET /api/project/performance/advisor/history`
 
 ## 10. Rollback Strategy
 - Keep image tags immutable per release.

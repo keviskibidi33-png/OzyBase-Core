@@ -78,6 +78,9 @@ type Handler struct {
 	healthIssuesCacheMu    sync.RWMutex
 	healthIssuesCache      []HealthIssue
 	healthIssuesCacheUntil time.Time
+
+	siemFlushMu     sync.Mutex
+	lastSIEMFlushAt time.Time
 }
 
 // NewHandler creates a new Handler with the given dependencies
@@ -93,19 +96,20 @@ func NewHandler(db *data.DB, broker *realtime.Broker, webhooks *realtime.Webhook
 	// Start background workers
 	go m.rotateHistory(db)
 	h := &Handler{
-		DB:           db,
-		Metrics:      m,
-		Broker:       broker,
-		Webhooks:     webhooks,
-		Geo:          core.NewGeoService(db),
-		Mailer:       mailSvc,
-		Integrations: realtime.NewWebhookIntegration(db.Pool),
-		Audit:        audit,
-		Storage:      storageSvc,
-		PubSub:       ps,
-		Migrations:   migrator,
-		Applier:      applier,
-		StartTime:    time.Now(),
+		DB:              db,
+		Metrics:         m,
+		Broker:          broker,
+		Webhooks:        webhooks,
+		Geo:             core.NewGeoService(db),
+		Mailer:          mailSvc,
+		Integrations:    realtime.NewWebhookIntegration(db.Pool),
+		Audit:           audit,
+		Storage:         storageSvc,
+		PubSub:          ps,
+		Migrations:      migrator,
+		Applier:         applier,
+		StartTime:       time.Now(),
+		lastSIEMFlushAt: time.Now().UTC().Add(-30 * time.Second),
 	}
 	go h.StartLogCleaner(context.Background())
 
@@ -197,7 +201,54 @@ func (h *Handler) StartLogExporter(ctx context.Context) {
 }
 
 func (h *Handler) flushLogsToSIEM(ctx context.Context) {
-	// TODO: Implement DB-based SIEM export
+	if h == nil || h.Integrations == nil {
+		return
+	}
+
+	h.siemFlushMu.Lock()
+	from := h.lastSIEMFlushAt
+	to := time.Now().UTC()
+	h.lastSIEMFlushAt = to
+	h.siemFlushMu.Unlock()
+
+	rows, err := h.DB.Pool.Query(ctx, `
+		SELECT id, method, path, status, latency_ms, ip_address, created_at
+		FROM _v_audit_logs
+		WHERE created_at > $1 AND created_at <= $2
+		ORDER BY created_at ASC
+		LIMIT 500
+	`, from, to)
+	if err != nil {
+		fmt.Printf("⚠️ [SIEM Export] failed to query logs: %v\n", err)
+		return
+	}
+	defer rows.Close()
+
+	logs := make([]map[string]any, 0, 128)
+	for rows.Next() {
+		var id, method, path, ip string
+		var status int
+		var latency int64
+		var createdAt time.Time
+		if scanErr := rows.Scan(&id, &method, &path, &status, &latency, &ip, &createdAt); scanErr != nil {
+			continue
+		}
+		logs = append(logs, map[string]any{
+			"id":         id,
+			"method":     method,
+			"path":       path,
+			"status":     status,
+			"latency_ms": latency,
+			"ip_address": ip,
+			"created_at": createdAt.UTC().Format(time.RFC3339),
+		})
+	}
+	if len(logs) == 0 {
+		return
+	}
+	if err := h.Integrations.SendLogBatch(ctx, logs); err != nil {
+		fmt.Printf("⚠️ [SIEM Export] failed to enqueue SIEM batch: %v\n", err)
+	}
 }
 
 // HealthResponse represents the health check response

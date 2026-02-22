@@ -150,6 +150,18 @@ require_status "$status_code" "200"
 status_code="$(call_api GET /api/project/security/rls/coverage/history "" "$TOKEN")"
 require_status "$status_code" "200"
 
+status_code="$(call_api GET /api/project/integrations/metrics "" "$TOKEN")"
+require_status "$status_code" "200"
+
+status_code="$(call_api GET /api/project/integrations/dlq "" "$TOKEN")"
+require_status "$status_code" "200"
+
+status_code="$(call_api GET /api/project/performance/advisor "" "$TOKEN")"
+require_status "$status_code" "200"
+
+status_code="$(call_api GET /api/project/performance/advisor/history "" "$TOKEN")"
+require_status "$status_code" "200"
+
 echo "[smoke] cleanup"
 status_code="$(call_api DELETE "/api/collections/${table_name}" "" "$TOKEN")"
 if [[ "$status_code" != "204" && "$status_code" != "200" ]]; then
