@@ -151,6 +151,10 @@ func run() error {
 
 	// Start Log Export Worker
 	go h.StartLogExporter(context.Background())
+	// Start Integration Delivery Worker (queue + retry + DLQ)
+	if h.Integrations != nil {
+		go h.Integrations.StartDeliveryWorker(context.Background())
+	}
 
 	e := setupEcho(h, cfg, cronMgr)
 
@@ -346,8 +350,11 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 	e.Use(middleware.BodyLimit(cfg.BodyLimit))
 	e.Use(api.PrometheusMiddleware()) // 📊 Stats
 	e.Use(api.APIKeyMiddleware(h.DB, api.StaticAPIKeys{
-		AnonKey:        cfg.AnonKey,
-		ServiceRoleKey: cfg.ServiceRoleKey,
+		AnonKey:                cfg.AnonKey,
+		ServiceRoleKey:         cfg.ServiceRoleKey,
+		PreviousAnonKey:        cfg.PreviousAnonKey,
+		PreviousServiceRoleKey: cfg.PreviousServiceRoleKey,
+		StaticGraceUntil:       cfg.StaticKeyGraceUntil,
 	})) // 🔐 API Key Auth (Enterprise Phase 1)
 	e.Use(api.RLSMiddleware(h.DB)) // 🛡️ RLS Context Injection
 	// #nosec G101 -- CSRF token lookup/cookie fields are static identifiers, not credentials.
@@ -500,6 +507,8 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		// Project Info
 		apiGroup.GET("/project/info", h.GetProjectInfo, authRequired)
 		apiGroup.GET("/project/health", h.GetHealthIssues, authRequired)
+		apiGroup.GET("/project/performance/advisor", h.GetPerformanceAdvisor, authRequired, adminOnly)
+		apiGroup.GET("/project/performance/advisor/history", h.GetPerformanceAdvisorHistory, authRequired, adminOnly)
 		apiGroup.GET("/project/security/policies", h.GetSecurityPolicies, authRequired)
 		apiGroup.POST("/project/security/policies", h.UpdateSecurityPolicy, authRequired)
 		apiGroup.GET("/project/security/stats", h.GetSecurityStats, authRequired)
@@ -516,6 +525,9 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.POST("/project/integrations", h.CreateIntegration, authRequired)
 		apiGroup.DELETE("/project/integrations/:id", h.DeleteIntegration, authRequired)
 		apiGroup.POST("/project/integrations/:id/test", h.TestIntegration, authRequired)
+		apiGroup.GET("/project/integrations/metrics", h.GetIntegrationDeliveryMetrics, authRequired, adminOnly)
+		apiGroup.GET("/project/integrations/dlq", h.ListIntegrationDLQ, authRequired, adminOnly)
+		apiGroup.POST("/project/integrations/dlq/:id/retry", h.RetryIntegrationDLQ, authRequired, adminOnly)
 
 		// Analytics (High Performance Go Aggregations)
 		apiGroup.GET("/analytics/traffic", h.GetTrafficStats, authRequired)
