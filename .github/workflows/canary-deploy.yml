@@ -1,0 +1,52 @@
+name: Canary Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_image:
+        description: "Candidate image tag (example: ghcr.io/xangel0s/ozybase:v1.2.4)"
+        required: true
+        type: string
+      compose_file:
+        description: "Compose file path on deployment host"
+        required: false
+        default: "docker-compose.yml"
+        type: string
+      env_file:
+        description: "Environment file path on deployment host"
+        required: false
+        default: ".env"
+        type: string
+      production_port:
+        description: "Production health check port"
+        required: false
+        default: "8090"
+        type: string
+      canary_port:
+        description: "Canary health check port"
+        required: false
+        default: "18090"
+        type: string
+
+jobs:
+  deploy:
+    name: Run Canary Deploy
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Execute canary deployment with rollback automation
+        env:
+          CANDIDATE_IMAGE: ${{ inputs.candidate_image }}
+          COMPOSE_FILE: ${{ inputs.compose_file }}
+          ENV_FILE: ${{ inputs.env_file }}
+          PRODUCTION_PORT: ${{ inputs.production_port }}
+          CANARY_PORT: ${{ inputs.canary_port }}
+          CANARY_SERVICE_ROLE_KEY: ${{ secrets.CANARY_SERVICE_ROLE_KEY }}
+          CANARY_ADMIN_EMAIL: ${{ secrets.CANARY_ADMIN_EMAIL }}
+          CANARY_ADMIN_PASSWORD: ${{ secrets.CANARY_ADMIN_PASSWORD }}
+          SMOKE_ADMIN_EMAIL: ${{ secrets.CANARY_ADMIN_EMAIL }}
+          SMOKE_ADMIN_PASSWORD: ${{ secrets.CANARY_ADMIN_PASSWORD }}
+        run: |
+          bash scripts/deploy_canary.sh

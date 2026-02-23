@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -74,12 +75,10 @@ func normalizeRLSPolicies(singleRule string, perAction map[string]string) map[st
 		"delete": "",
 	}
 
-	if perAction != nil {
-		for action, raw := range perAction {
-			key := strings.ToLower(strings.TrimSpace(action))
-			if _, ok := policies[key]; ok {
-				policies[key] = strings.TrimSpace(raw)
-			}
+	for action, raw := range perAction {
+		key := strings.ToLower(strings.TrimSpace(action))
+		if _, ok := policies[key]; ok {
+			policies[key] = strings.TrimSpace(raw)
 		}
 	}
 
@@ -511,28 +510,31 @@ func (h *Handler) ListCollections(c echo.Context) error {
 			rows, err = h.DB.Pool.Query(ctx, "SELECT name, schema_def, list_rule, create_rule, created_at, updated_at, realtime_enabled, workspace_id FROM _v_collections")
 		}
 	}
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to fetch collection metadata: " + err.Error(),
+		})
+	}
 
 	metaMap := make(map[string]Collection)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var col Collection
-			var schemaJSON []byte
-			var wsID *string
-			var scanErr error
-			if usesDisplayName {
-				scanErr = rows.Scan(&col.Name, &col.DisplayName, &schemaJSON, &col.ListRule, &col.CreateRule, &col.CreatedAt, &col.UpdatedAt, &col.RealtimeEnabled, &wsID)
-			} else {
-				scanErr = rows.Scan(&col.Name, &schemaJSON, &col.ListRule, &col.CreateRule, &col.CreatedAt, &col.UpdatedAt, &col.RealtimeEnabled, &wsID)
-				col.DisplayName = col.Name
+	defer rows.Close()
+	for rows.Next() {
+		var col Collection
+		var schemaJSON []byte
+		var wsID *string
+		var scanErr error
+		if usesDisplayName {
+			scanErr = rows.Scan(&col.Name, &col.DisplayName, &schemaJSON, &col.ListRule, &col.CreateRule, &col.CreatedAt, &col.UpdatedAt, &col.RealtimeEnabled, &wsID)
+		} else {
+			scanErr = rows.Scan(&col.Name, &schemaJSON, &col.ListRule, &col.CreateRule, &col.CreatedAt, &col.UpdatedAt, &col.RealtimeEnabled, &wsID)
+			col.DisplayName = col.Name
+		}
+		if scanErr == nil {
+			if wsID != nil {
+				col.WorkspaceID = *wsID
 			}
-			if scanErr == nil {
-				if wsID != nil {
-					col.WorkspaceID = *wsID
-				}
-				if err := json.Unmarshal(schemaJSON, &col.Schema); err == nil {
-					metaMap[col.Name] = col
-				}
+			if err := json.Unmarshal(schemaJSON, &col.Schema); err == nil {
+				metaMap[col.Name] = col
 			}
 		}
 	}
@@ -1323,8 +1325,7 @@ func (h *Handler) FixHealthIssues(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
 	}
 
-	// Logging to debug what the frontend is sending
-	fmt.Printf("🛠️ Applying fix: Type=%s, Issue=%s\n", req.Type, req.Issue)
+	log.Printf("applying health fix type=%s issue=%s", req.Type, req.Issue)
 
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
 	defer cancel()
@@ -1484,63 +1485,48 @@ type EnforceRLSResult struct {
 	Description    string   `json:"description,omitempty"`
 }
 
-// EnforceRLSAll enables RLS on all user collections with an owner column and tightens ACL defaults.
-func (h *Handler) EnforceRLSAll(c echo.Context) error {
-	ctx, cancel := context.WithTimeout(c.Request().Context(), 20*time.Second)
-	defer cancel()
-
-	var req struct {
-		DryRun      bool   `json:"dry_run"`
-		RulePattern string `json:"rule_pattern"`
-	}
-	_ = c.Bind(&req)
-	dryRun := req.DryRun || strings.EqualFold(strings.TrimSpace(c.QueryParam("dry_run")), "true")
-
+func (h *Handler) enforceRLSAllInternal(ctx context.Context, dryRun bool, rulePattern string) ([]EnforceRLSResult, int, error) {
 	rows, err := h.DB.Pool.Query(ctx, `
-		SELECT name, rls_enabled
+		SELECT name
 		FROM _v_collections
 		WHERE name NOT LIKE '_v_%' AND name NOT LIKE '_ozy_%'
 		ORDER BY name
 	`)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to list collections"})
+		return nil, 0, err
 	}
 	defer rows.Close()
 
-	type entry struct {
-		Name       string
-		RLSEnabled bool
-	}
-	var collections []entry
+	collections := make([]string, 0, 16)
 	for rows.Next() {
-		var e entry
-		if scanErr := rows.Scan(&e.Name, &e.RLSEnabled); scanErr == nil {
-			collections = append(collections, e)
+		var name string
+		if scanErr := rows.Scan(&name); scanErr == nil {
+			collections = append(collections, name)
 		}
 	}
 
 	tx, err := h.DB.Pool.Begin(ctx)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to start transaction"})
+		return nil, 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	results := make([]EnforceRLSResult, 0, len(collections))
 	enforcedCount := 0
-	for _, col := range collections {
-		if !data.IsValidIdentifier(col.Name) {
+	for _, tableName := range collections {
+		if !data.IsValidIdentifier(tableName) {
 			results = append(results, EnforceRLSResult{
-				Table:       col.Name,
+				Table:       tableName,
 				Status:      "skipped",
 				Description: "invalid identifier",
 			})
 			continue
 		}
 
-		ownerColumn, ownerErr := resolveRLSOwnerColumn(ctx, tx, col.Name)
+		ownerColumn, ownerErr := resolveRLSOwnerColumn(ctx, tx, tableName)
 		if ownerErr != nil || ownerColumn == "" {
 			results = append(results, EnforceRLSResult{
-				Table:       col.Name,
+				Table:       tableName,
 				Status:      "skipped",
 				Description: "owner column missing (owner_id/user_id/created_by)",
 			})
@@ -1548,12 +1534,12 @@ func (h *Handler) EnforceRLSAll(c echo.Context) error {
 		}
 
 		rule := fmt.Sprintf("%s = auth.uid()", ownerColumn)
-		if custom := strings.TrimSpace(req.RulePattern); custom != "" {
+		if custom := strings.TrimSpace(rulePattern); custom != "" {
 			rule = custom
 		}
-		if exprErr := validateRLSExpression(ctx, tx, col.Name, rule); exprErr != nil {
+		if exprErr := validateRLSExpression(ctx, tx, tableName, rule); exprErr != nil {
 			results = append(results, EnforceRLSResult{
-				Table:       col.Name,
+				Table:       tableName,
 				Status:      "error",
 				Description: "invalid policy expression",
 			})
@@ -1562,7 +1548,7 @@ func (h *Handler) EnforceRLSAll(c echo.Context) error {
 
 		if dryRun {
 			results = append(results, EnforceRLSResult{
-				Table:          col.Name,
+				Table:          tableName,
 				Status:         "preview",
 				Rule:           rule,
 				ActionsApplied: append([]string{}, rlsActions...),
@@ -1571,26 +1557,26 @@ func (h *Handler) EnforceRLSAll(c echo.Context) error {
 			continue
 		}
 
-		enableSQL := fmt.Sprintf("ALTER TABLE %s ENABLE ROW LEVEL SECURITY", col.Name)
+		enableSQL := fmt.Sprintf("ALTER TABLE %s ENABLE ROW LEVEL SECURITY", tableName)
 		if _, execErr := tx.Exec(ctx, enableSQL); execErr != nil {
 			results = append(results, EnforceRLSResult{
-				Table:       col.Name,
+				Table:       tableName,
 				Status:      "error",
 				Description: "failed to enable native RLS",
 			})
 			continue
 		}
 
-		legacyPolicy := fmt.Sprintf("policy_ozy_%s", col.Name)
-		_, _ = tx.Exec(ctx, fmt.Sprintf("DROP POLICY IF EXISTS %s ON %s", legacyPolicy, col.Name))
+		legacyPolicy := fmt.Sprintf("policy_ozy_%s", tableName)
+		_, _ = tx.Exec(ctx, fmt.Sprintf("DROP POLICY IF EXISTS %s ON %s", legacyPolicy, tableName))
 		applied := make([]string, 0, len(rlsActions))
 		policyErr := false
 		for _, action := range rlsActions {
-			policyName := makePolicyName(col.Name, action)
-			_, _ = tx.Exec(ctx, fmt.Sprintf("DROP POLICY IF EXISTS %s ON %s", policyName, col.Name))
-			if err := h.DB.CreatePolicyForAction(ctx, tx, col.Name, policyName, action, rule); err != nil {
+			policyName := makePolicyName(tableName, action)
+			_, _ = tx.Exec(ctx, fmt.Sprintf("DROP POLICY IF EXISTS %s ON %s", policyName, tableName))
+			if err := h.DB.CreatePolicyForAction(ctx, tx, tableName, policyName, action, rule); err != nil {
 				results = append(results, EnforceRLSResult{
-					Table:       col.Name,
+					Table:       tableName,
 					Status:      "error",
 					Description: fmt.Sprintf("failed to create RLS %s policy", action),
 				})
@@ -1607,9 +1593,9 @@ func (h *Handler) EnforceRLSAll(c echo.Context) error {
 			UPDATE _v_collections
 			SET rls_enabled = true, rls_rule = $2, list_rule = 'auth', create_rule = 'admin', update_rule = 'auth', delete_rule = 'auth'
 			WHERE name = $1
-		`, col.Name, rule); metaErr != nil {
+		`, tableName, rule); metaErr != nil {
 			results = append(results, EnforceRLSResult{
-				Table:       col.Name,
+				Table:       tableName,
 				Status:      "error",
 				Description: "failed to update metadata",
 			})
@@ -1617,13 +1603,43 @@ func (h *Handler) EnforceRLSAll(c echo.Context) error {
 		}
 
 		results = append(results, EnforceRLSResult{
-			Table:          col.Name,
+			Table:          tableName,
 			Status:         "enforced",
 			Rule:           rule,
 			ActionsApplied: append([]string{}, applied...),
 			Description:    "native and metadata RLS enabled with per-action policies",
 		})
 		enforcedCount++
+	}
+
+	if dryRun {
+		return results, 0, nil
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, 0, err
+	}
+	h.invalidateHealthIssuesCache()
+	return results, enforcedCount, nil
+}
+
+// EnforceRLSAll enables RLS on all user collections with an owner column and tightens ACL defaults.
+func (h *Handler) EnforceRLSAll(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 20*time.Second)
+	defer cancel()
+
+	var req struct {
+		DryRun      bool   `json:"dry_run"`
+		RulePattern string `json:"rule_pattern"`
+	}
+	if err := c.Bind(&req); err != nil && !errors.Is(err, io.EOF) {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+	}
+	dryRun := req.DryRun || strings.EqualFold(strings.TrimSpace(c.QueryParam("dry_run")), "true")
+
+	results, enforcedCount, err := h.enforceRLSAllInternal(ctx, dryRun, req.RulePattern)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to enforce RLS policies"})
 	}
 
 	if dryRun {
@@ -1634,11 +1650,6 @@ func (h *Handler) EnforceRLSAll(c echo.Context) error {
 			"enforced": 0,
 		})
 	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to commit RLS enforcement"})
-	}
-	h.invalidateHealthIssuesCache()
 
 	return c.JSON(http.StatusOK, map[string]any{
 		"status":   "ok",

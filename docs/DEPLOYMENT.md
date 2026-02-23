@@ -25,6 +25,7 @@ SITE_URL=https://api.example.com
 APP_DOMAIN=example.com
 ALLOWED_ORIGINS=https://app.example.com,https://api.example.com
 DEBUG=false
+OZYBASE_IMAGE=ghcr.io/xangel0s/ozybase:v1.2.3
 
 # Auth
 JWT_SECRET=<64-byte-random-secret>
@@ -77,6 +78,70 @@ Expected:
 - Both containers healthy.
 - `/api/health` returns `200`.
 - Security headers are present.
+
+Canary/rollback-capable mode (immutable image tag, no local build):
+```bash
+OZYBASE_IMAGE=ghcr.io/xangel0s/ozybase:v1.2.3 docker compose up -d --no-build
+```
+
+### 4.1 Canary Deploy With Automatic Rollback
+Use this for production rollouts to avoid direct cutover:
+
+```bash
+export CANDIDATE_IMAGE=ghcr.io/xangel0s/ozybase:v1.2.4
+export ENV_FILE=.env
+export COMPOSE_FILE=docker-compose.yml
+export PRODUCTION_PORT=8090
+export CANARY_PORT=18090
+bash scripts/deploy_canary.sh
+```
+
+What the script does:
+1. Launches candidate image in a temporary canary container on `CANARY_PORT`.
+2. Waits for `GET /api/health` and runs `scripts/canary_verify.sh` (non-destructive checks).
+3. Runs mandatory post-deploy smoke gate (`scripts/smoke_post_deploy.sh`) on canary:
+   `health + setup/login + CSP + API key rotation`.
+4. Promotes candidate with `docker compose up -d --no-build`.
+5. Runs verify + post-deploy smoke gate on production target.
+6. If post-promotion health/verify/smoke fails, rolls back automatically to previous image.
+
+Optional verification credentials:
+- `CANARY_SERVICE_ROLE_KEY` (recommended)
+- or `CANARY_ADMIN_EMAIL` + `CANARY_ADMIN_PASSWORD`
+
+Required for post-deploy smoke gate:
+- `SMOKE_ADMIN_EMAIL`
+- `SMOKE_ADMIN_PASSWORD`
+
+### 4.2 Disaster Recovery Drill (Backup + Restore)
+Run this drill regularly (for example weekly/monthly) and before risky migrations:
+
+```bash
+export COMPOSE_FILE=docker-compose.yml
+export ENV_FILE=.env
+export DB_SERVICE=db
+bash scripts/disaster_drill.sh
+```
+
+What the script does:
+1. Ensures DB service is running and healthy.
+2. Inserts a recovery marker into `_v_disaster_drill_markers`.
+3. Creates a PostgreSQL backup (`pg_dump -Fc`) with checksum evidence.
+4. Restores into an isolated temporary database.
+5. Verifies the marker exists after restore and writes evidence JSON.
+
+Evidence output:
+- Folder: `artifacts/disaster-drill/<run_id>/`
+- Report: `artifacts/disaster-drill/<run_id>/report.json`
+
+Useful flags:
+- `KEEP_BACKUP=false` to avoid storing large dump files after verification.
+- `VERIFY_API_HEALTH=true` and `APP_HEALTH_URL=http://127.0.0.1:8090/api/health` to add app health check.
+- `RESTORE_DB_NAME=<custom_name>` for controlled restore DB naming.
+
+GitHub Actions manual drill:
+- Workflow: `.github/workflows/disaster-drill.yml`
+- Trigger with `workflow_dispatch` on your deployment runner (`self-hosted`).
 
 ## 5. Domain and TLS
 1. Point `api.example.com` to your server IP.
@@ -144,7 +209,7 @@ Confirm:
 ## 8. Observability and Operations
 - Liveness endpoint: `/api/health`
 - Keep structured logs shipped to a central sink.
-- Keep DB backups automated and test restore.
+- Keep DB backups automated and run `bash scripts/disaster_drill.sh` regularly.
 - Monitor 4xx/5xx trends and auth failures.
 
 ## 9. Common Production Mistakes
@@ -245,3 +310,4 @@ This command creates:
 - Keep image tags immutable per release.
 - Roll back by redeploying previous image + validated `.env`.
 - If DB schema changed, ensure backward-compatible migrations or restore snapshot.
+- Preferred automated path: `bash scripts/deploy_canary.sh` (handles rollback automatically on failed health/verify).

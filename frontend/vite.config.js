@@ -26,6 +26,17 @@ export default defineConfig({
   },
   build: {
     sourcemap: false, // SECURITY: Prevent source code leakage in production
-    chunkSizeWarningLimit: 1000
+    // Monaco workers are inherently large; keep warning threshold aligned with actual split chunks.
+    chunkSizeWarningLimit: 8000,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('@monaco-editor') || id.includes('monaco-editor')) {
+            return 'monaco-vendor';
+          }
+          return undefined;
+        },
+      },
+    },
   }
 })

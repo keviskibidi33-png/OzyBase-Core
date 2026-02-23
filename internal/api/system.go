@@ -2,8 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/mail"
+	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/labstack/echo/v4"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -32,14 +36,27 @@ func (h *Handler) SetupSystem(c echo.Context) error {
 	}
 
 	if err := c.Bind(&req); err != nil {
-		return err
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
 	}
 
-	// 1. Validate no admin exists (Double check for security)
-	var count int
-	_ = h.DB.Pool.QueryRow(c.Request().Context(), "SELECT COUNT(*) FROM _v_users WHERE role = 'admin'").Scan(&count)
-	if count > 0 {
-		return c.JSON(http.StatusForbidden, map[string]string{"error": "System already initialized"})
+	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	req.Mode = strings.TrimSpace(strings.ToLower(req.Mode))
+	req.AllowCountry = strings.TrimSpace(strings.ToUpper(req.AllowCountry))
+
+	if req.Email == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Email is required"})
+	}
+	if _, err := mail.ParseAddress(req.Email); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid email format"})
+	}
+	if len(req.Password) < 12 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Password must be at least 12 characters"})
+	}
+	if req.Mode == "" {
+		req.Mode = "clean"
+	}
+	if req.Mode != "clean" && req.Mode != "secure" && req.Mode != "migrate" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid mode. Allowed: clean, secure, migrate"})
 	}
 
 	// Start transaction for atomic setup
@@ -48,6 +65,20 @@ func (h *Handler) SetupSystem(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to start transaction"})
 	}
 	defer func() { _ = tx.Rollback(c.Request().Context()) }()
+
+	// Serialize bootstrap to avoid concurrent double initialization.
+	if _, err := tx.Exec(c.Request().Context(), "LOCK TABLE _v_users IN ACCESS EXCLUSIVE MODE"); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to acquire setup lock"})
+	}
+
+	// Validate no admin exists (inside locked transaction)
+	var count int
+	if err := tx.QueryRow(c.Request().Context(), "SELECT COUNT(*) FROM _v_users WHERE role = 'admin'").Scan(&count); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to verify initialization state"})
+	}
+	if count > 0 {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "System already initialized"})
+	}
 
 	// 2. Create Admin User
 	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(req.Password), 12)
@@ -64,6 +95,10 @@ func (h *Handler) SetupSystem(c echo.Context) error {
 	`, req.Email, hashedPassword).Scan(&userID)
 
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return c.JSON(http.StatusConflict, map[string]string{"error": "Admin user already exists"})
+		}
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create admin: " + err.Error()})
 	}
 
@@ -75,7 +110,10 @@ func (h *Handler) SetupSystem(c echo.Context) error {
 				"enabled":           true,
 				"allowed_countries": []string{req.AllowCountry},
 			}
-			configJSON, _ := json.Marshal(config)
+			configJSON, err := json.Marshal(config)
+			if err != nil {
+				return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to encode security policy"})
+			}
 
 			_, err = tx.Exec(c.Request().Context(), `
 				INSERT INTO _v_security_policies (type, config)
