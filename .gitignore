@@ -22,12 +22,14 @@ go.work
 
 # Environment variables
 .env
- .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+.env.install_*
 .ozy_secret
+.ozy_anon_key
+.ozy_service_role_key
 frontend/token.txt
 
 # Frontend dependencies
@@ -48,6 +50,7 @@ Thumbs.db
 
 # Embedded PostgreSQL Data
 ozy_data/
+artifacts/disaster-drill/
 
 # Server Logs
 *.log

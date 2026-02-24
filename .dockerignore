@@ -1,0 +1,43 @@
+# VCS
+.git
+.gitignore
+
+# Local env/secrets
+.env
+.env.*
+.ozy_secret
+.ozy_anon_key
+.ozy_service_role_key
+
+# Local agent/editor metadata
+.agent/
+.agents/
+.claude/
+.cline/
+.kiro/
+.trae/
+.windsurf/
+
+# Build artifacts/logs
+**/*.log
+artifacts/
+frontend/playwright-report/
+frontend/test-results/
+frontend/report.json
+frontend/*_output.txt
+
+# Dependencies/build caches
+node_modules/
+frontend/node_modules/
+frontend/dist/
+dist/
+build/
+
+# Runtime data volumes
+ozy_data/
+ozy_data_smoke/
+ozy_data_validation*/
+
+# OS/editor junk
+.DS_Store
+Thumbs.db
