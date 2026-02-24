@@ -25,7 +25,7 @@ COPY --from=frontend-builder /app/frontend/dist/ internal/api/frontend_dist/
 
 # Build the OzyBase binary
 # CGO_ENABLED=0 ensures a static binary for portability
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o ozybase ./cmd/ozybase
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o ozybase ./cmd/OzyBase
 
 # --- Stage 3: Final Production Image ---
 FROM alpine:latest

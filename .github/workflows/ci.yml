@@ -73,7 +73,7 @@ jobs:
         run: go test -v ./...
 
       - name: Build binary
-        run: go build -v ./cmd/ozybase
+        run: go build -v ./cmd/OzyBase
 
       - name: Lint (golangci)
         uses: golangci/golangci-lint-action@v6
@@ -164,7 +164,7 @@ jobs:
 
       - name: Start API
         run: |
-          nohup go run ./cmd/ozybase > /tmp/ozybase.log 2>&1 &
+          nohup go run ./cmd/OzyBase > /tmp/ozybase.log 2>&1 &
           for i in {1..40}; do
             if curl -fsS http://127.0.0.1:8090/api/health > /dev/null; then
               exit 0
@@ -241,7 +241,7 @@ jobs:
 
       - name: Start API
         run: |
-          nohup go run ./cmd/ozybase > /tmp/ozybase.log 2>&1 &
+          nohup go run ./cmd/OzyBase > /tmp/ozybase.log 2>&1 &
           for i in {1..40}; do
             if curl -fsS http://127.0.0.1:8090/api/health > /dev/null; then
               exit 0

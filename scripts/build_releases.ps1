@@ -31,7 +31,7 @@ function Build-Ozy($os, $arch, $suffix) {
     Write-Host "🚀 Building for $os/$arch..." -ForegroundColor Green
     $env:GOOS = $os
     $env:GOARCH = $arch
-    go build -ldflags="-s -w" -o $output ./cmd/ozybase
+    go build -ldflags="-s -w" -o $output ./cmd/OzyBase
 }
 
 # Windows x64

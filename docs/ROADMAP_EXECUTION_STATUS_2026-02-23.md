@@ -7,7 +7,7 @@ Last validation run:
 Additional production validation (2026-02-24):
 - Manual enterprise smoke on `https://base.geofal.com.pe`: `PASS` (`health + system status/setup + CSP + login + api key rotate`).
 - Install-to-play bootstrap validated:
-  - `go run ./cmd/ozybase init --output .env.install_test --site-url https://base.geofal.com.pe --app-domain geofal.com.pe --force` (`PASS`)
+  - `go run ./cmd/OzyBase init --output .env.install_test --site-url https://base.geofal.com.pe --app-domain geofal.com.pe --force` (`PASS`)
   - `docker compose -f docker-compose.install.yml config --quiet` with required vars (`PASS`)
 - Strict TypeScript closure validated:
   - `npm run typecheck` in `frontend/` (`PASS`)

@@ -8,7 +8,7 @@ Ensure OzyBase is running. If you don't have a DB, just run it!
 
 ```bash
 # Start OzyBase (Embedded Postgres will start automatically)
-go run ./cmd/ozybase
+go run ./cmd/OzyBase
 
 # In another terminal, Create the collection
 curl -X POST http://localhost:8090/api/collections \
@@ -28,7 +28,7 @@ curl -X POST http://localhost:8090/api/collections \
 Generate the TypeScript interfaces for your new collection:
 
 ```bash
-go run ./cmd/ozybase gen-types --out ./src/types/OzyBase.ts
+go run ./cmd/OzyBase gen-types --out ./src/types/OzyBase.ts
 ```
 
 ## 3. Install the SDK
