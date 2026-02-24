@@ -1,11 +1,14 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/mail"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/labstack/echo/v4"
@@ -14,11 +17,15 @@ import (
 
 // GetSystemStatus checks if the system is initialized (has an admin user)
 func (h *Handler) GetSystemStatus(c echo.Context) error {
+	if h == nil || h.DB == nil || h.DB.Pool == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "System service unavailable"})
+	}
+
 	var count int
 	// Check if any user with admin role exists
 	err := h.DB.Pool.QueryRow(c.Request().Context(), "SELECT COUNT(*) FROM _v_users WHERE role = 'admin'").Scan(&count)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to check initialization status"})
 	}
 
 	return c.JSON(http.StatusOK, map[string]bool{
@@ -57,6 +64,12 @@ func (h *Handler) SetupSystem(c echo.Context) error {
 	}
 	if req.Mode != "clean" && req.Mode != "secure" && req.Mode != "migrate" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid mode. Allowed: clean, secure, migrate"})
+	}
+	if h == nil || h.DB == nil || h.DB.Pool == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "System service unavailable"})
+	}
+	if h.Auth == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Auth service unavailable"})
 	}
 
 	// Start transaction for atomic setup
@@ -99,7 +112,7 @@ func (h *Handler) SetupSystem(c echo.Context) error {
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return c.JSON(http.StatusConflict, map[string]string{"error": "Admin user already exists"})
 		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create admin: " + err.Error()})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create admin"})
 	}
 
 	// 3. Apply configuration based on mode
@@ -121,7 +134,7 @@ func (h *Handler) SetupSystem(c echo.Context) error {
 				ON CONFLICT (type) DO UPDATE SET config = $1
 			`, configJSON)
 			if err != nil {
-				return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to apply security policy: " + err.Error()})
+				return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to apply security policy"})
 			}
 		}
 
@@ -143,15 +156,25 @@ func (h *Handler) SetupSystem(c echo.Context) error {
 		}
 	}
 
+	// 4. Generate token and create session inside the setup transaction so bootstrap is atomic.
+	token, err := h.Auth.GenerateTokenOnly(userID, "admin")
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to generate session token"})
+	}
+
+	tokenHashRaw := sha256.Sum256([]byte(token))
+	tokenHash := hex.EncodeToString(tokenHashRaw[:])
+	_, err = tx.Exec(c.Request().Context(), `
+		INSERT INTO _v_sessions (user_id, token_hash, ip_address, user_agent, is_mfa_verified, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, userID, tokenHash, c.RealIP(), c.Request().UserAgent(), false, time.Now().Add(72*time.Hour))
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to initialize admin session"})
+	}
+
 	// Commit transaction
 	if err := tx.Commit(c.Request().Context()); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to commit setup"})
-	}
-
-	// 4. Generate Token for immediate login
-	token, err := h.Auth.GenerateTokenForUser(c.Request().Context(), userID, "admin", c.RealIP(), c.Request().UserAgent(), false)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to generate session token"})
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{

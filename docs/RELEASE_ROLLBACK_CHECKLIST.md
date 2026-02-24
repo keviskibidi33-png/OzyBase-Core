@@ -18,6 +18,8 @@ Use this checklist whenever a production release shows regressions.
 - Re-deploy previous stable tag from releases.
 - Confirm runtime env vars still match previous release expectations.
 - If schema migration is backward-incompatible, apply pre-created rollback migration.
+- If rollout used canary script, use the same mechanism:
+  - `CANDIDATE_IMAGE=<failed_tag> bash scripts/deploy_canary.sh` automatically restores previous image when checks fail.
 
 ## 4. Verify Recovery
 - Run smoke checks:
@@ -33,4 +35,7 @@ Use this checklist whenever a production release shows regressions.
   - add/adjust tests
   - improve migration safety
   - improve feature flag/guardrail
+- Run a recovery drill and archive evidence:
+  - `bash scripts/disaster_drill.sh`
+  - keep `artifacts/disaster-drill/<run_id>/report.json` linked in the incident.
 - Publish user-facing status update.

@@ -263,7 +263,8 @@ type HealthResponse struct {
 		Storage    HealthCheck `json:"storage"`
 		KeyEvents  HealthCheck `json:"key_events"`
 	} `json:"slo"`
-	Memory struct {
+	ServiceSLO *SLOEvaluation `json:"service_slo,omitempty"`
+	Memory     struct {
 		Alloc      uint64 `json:"alloc_mb"`
 		TotalAlloc uint64 `json:"total_alloc_mb"`
 		Sys        uint64 `json:"sys_mb"`
@@ -305,6 +306,20 @@ func (h *Handler) Health(c echo.Context) error {
 		status = "degraded"
 	}
 
+	serviceSLO, sloErr := h.evaluateServiceSLO(ctx, false)
+	serviceSLOResp := &serviceSLO
+	if sloErr != nil {
+		serviceSLOResp = &SLOEvaluation{
+			Status:      "unknown",
+			Severity:    "warning",
+			EvaluatedAt: time.Now().UTC(),
+			Thresholds:  loadSLOThresholdsFromEnv(),
+			Error:       sloErr.Error(),
+		}
+	} else if serviceSLO.Breached {
+		status = "degraded"
+	}
+
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
@@ -318,6 +333,7 @@ func (h *Handler) Health(c echo.Context) error {
 	resp.SLO.Migrations = migrationsCheck
 	resp.SLO.Storage = storageCheck
 	resp.SLO.KeyEvents = keyEventsCheck
+	resp.ServiceSLO = serviceSLOResp
 	resp.Memory.Alloc = m.Alloc / 1024 / 1024
 	resp.Memory.TotalAlloc = m.TotalAlloc / 1024 / 1024
 	resp.Memory.Sys = m.Sys / 1024 / 1024

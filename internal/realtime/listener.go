@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func ListenForEvents(ctx context.Context, pool *pgxpool.Pool, broker *Broker, dispatcher *WebhookDispatcher) {
+func ListenForEvents(ctx context.Context, pool *pgxpool.Pool, broker *Broker, dispatcher *WebhookDispatcher, pubsub PubSub, nodeID string, channel string) {
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
 		log.Fatalf("Unable to acquire connection for listening: %v", err)
@@ -35,9 +36,15 @@ func ListenForEvents(ctx context.Context, pool *pgxpool.Pool, broker *Broker, di
 			log.Printf("Error unmarshaling event: %v", err)
 			continue
 		}
+		event.NodeID = strings.TrimSpace(nodeID)
+		event.Source = "postgres"
 
-		// Broadcast to connected clients (Realtime)
 		broker.Broadcast(event)
+		if pubsub != nil {
+			if err := pubsub.Publish(ctx, channel, event); err != nil {
+				log.Printf("Failed to publish distributed realtime event: %v", err)
+			}
+		}
 
 		// Dispatch to Webhooks
 		if dispatcher != nil {

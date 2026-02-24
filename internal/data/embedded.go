@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/Xangel0s/OzyBase/internal/logger"
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
@@ -20,11 +22,26 @@ type EmbeddedDB struct {
 
 // NewEmbeddedDB creates a new embedded PostgreSQL instance configuration
 func NewEmbeddedDB() *EmbeddedDB {
-	// Create data directory in project root
+	// Create data directory in project root (or env override for isolated test runs)
 	cwd, _ := os.Getwd()
-	dataPath := filepath.Join(cwd, "ozy_data", "pg_data")
-	binPath := filepath.Join(cwd, "ozy_data", "bin")
+	rootPath := strings.TrimSpace(os.Getenv("OZY_EMBEDDED_ROOT"))
+	if rootPath == "" {
+		rootPath = filepath.Join(cwd, "ozy_data")
+	}
+	dataPath := strings.TrimSpace(os.Getenv("OZY_EMBEDDED_DATA_PATH"))
+	if dataPath == "" {
+		dataPath = filepath.Join(rootPath, "pg_data")
+	}
+	binPath := strings.TrimSpace(os.Getenv("OZY_EMBEDDED_BIN_PATH"))
+	if binPath == "" {
+		binPath = filepath.Join(rootPath, "bin")
+	}
 	port := uint32(5433)
+	if rawPort := strings.TrimSpace(os.Getenv("OZY_EMBEDDED_PORT")); rawPort != "" {
+		if parsed, err := strconv.Atoi(rawPort); err == nil && parsed > 0 && parsed <= 65535 {
+			port = uint32(parsed)
+		}
+	}
 
 	// Ensure directories exist
 	_ = os.MkdirAll(dataPath, 0755)

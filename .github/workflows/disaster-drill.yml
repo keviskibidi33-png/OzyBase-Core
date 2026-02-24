@@ -1,0 +1,77 @@
+name: Disaster Drill
+
+on:
+  workflow_dispatch:
+    inputs:
+      compose_file:
+        description: "Compose file path on deployment host"
+        required: false
+        default: "docker-compose.yml"
+        type: string
+      env_file:
+        description: "Environment file path on deployment host"
+        required: false
+        default: ".env"
+        type: string
+      db_service:
+        description: "Compose service name for PostgreSQL"
+        required: false
+        default: "db"
+        type: string
+      keep_backup:
+        description: "Keep backup file in evidence artifact"
+        required: false
+        default: true
+        type: boolean
+      verify_api_health:
+        description: "Check API /api/health after restore verification"
+        required: false
+        default: false
+        type: boolean
+      app_health_url:
+        description: "API health URL (used only if verify_api_health=true)"
+        required: false
+        default: "http://127.0.0.1:8090/api/health"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  drill:
+    name: Run Backup+Restore Drill
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Execute disaster recovery drill
+        id: drill
+        shell: bash
+        env:
+          COMPOSE_FILE: ${{ inputs.compose_file }}
+          ENV_FILE: ${{ inputs.env_file }}
+          DB_SERVICE: ${{ inputs.db_service }}
+          KEEP_BACKUP: ${{ inputs.keep_backup }}
+          VERIFY_API_HEALTH: ${{ inputs.verify_api_health }}
+          APP_HEALTH_URL: ${{ inputs.app_health_url }}
+          DRILL_RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          pointer_file="${RUNNER_TEMP}/drill_paths.env"
+          DRILL_POINTER_FILE="$pointer_file" bash scripts/disaster_drill.sh
+          source "$pointer_file"
+          echo "run_dir=$DRILL_RUN_DIR" >> "$GITHUB_OUTPUT"
+          echo "report_file=$DRILL_REPORT_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Print drill report
+        shell: bash
+        run: cat "${{ steps.drill.outputs.report_file }}"
+
+      - name: Upload drill evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: disaster-drill-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.drill.outputs.run_dir }}
+          if-no-files-found: error
+          retention-days: 30

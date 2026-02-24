@@ -118,6 +118,30 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON _v_audit_logs(created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_logs_status ON _v_audit_logs(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_logs_path ON _v_audit_logs(path)`,
+		`CREATE TABLE IF NOT EXISTS _v_admin_audit_events (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			request_id TEXT NOT NULL,
+			action VARCHAR(120) NOT NULL,
+			target TEXT,
+			actor_user_id UUID REFERENCES _v_users(id) ON DELETE SET NULL,
+			actor_role VARCHAR(30) NOT NULL DEFAULT 'unknown',
+			workspace_id UUID,
+			method VARCHAR(10) NOT NULL,
+			path TEXT NOT NULL,
+			route TEXT NOT NULL,
+			status INTEGER NOT NULL,
+			success BOOLEAN NOT NULL DEFAULT FALSE,
+			duration_ms BIGINT NOT NULL DEFAULT 0,
+			source_ip VARCHAR(45),
+			user_agent TEXT,
+			metadata JSONB NOT NULL DEFAULT '{}',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_admin_audit_events_created_at ON _v_admin_audit_events(created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_admin_audit_events_actor ON _v_admin_audit_events(actor_user_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_admin_audit_events_action ON _v_admin_audit_events(action, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_admin_audit_events_status ON _v_admin_audit_events(status, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_admin_audit_events_workspace ON _v_admin_audit_events(workspace_id, created_at DESC)`,
 
 		// IP Geolocation Cache
 		`CREATE TABLE IF NOT EXISTS _v_ip_geo (
@@ -265,7 +289,74 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 			description TEXT
 		)`,
 
+		// Vector Search Config (pgvector runtime setup is applied via API endpoint)
+		`CREATE TABLE IF NOT EXISTS _v_vector_config (
+			id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+			dimension INTEGER NOT NULL DEFAULT 1536 CHECK (dimension >= 2 AND dimension <= 8192),
+			metric VARCHAR(16) NOT NULL DEFAULT 'cosine' CHECK (metric IN ('cosine', 'l2', 'ip')),
+			index_lists INTEGER NOT NULL DEFAULT 100 CHECK (index_lists >= 1 AND index_lists <= 32768),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`INSERT INTO _v_vector_config (id) VALUES (TRUE) ON CONFLICT (id) DO NOTHING`,
+
+		// Extension Marketplace Catalog + Install State
+		`CREATE TABLE IF NOT EXISTS _v_extension_marketplace (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			slug VARCHAR(120) UNIQUE NOT NULL,
+			name VARCHAR(255) NOT NULL,
+			extension_name VARCHAR(255) NOT NULL,
+			kind VARCHAR(20) NOT NULL CHECK (kind IN ('postgres', 'wasm')),
+			version VARCHAR(64) NOT NULL DEFAULT 'latest',
+			description TEXT,
+			homepage TEXT,
+			repository TEXT,
+			verified BOOLEAN NOT NULL DEFAULT TRUE,
+			metadata JSONB NOT NULL DEFAULT '{}',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_extension_marketplace_kind ON _v_extension_marketplace(kind, slug)`,
+		`CREATE TABLE IF NOT EXISTS _v_extension_installations (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			marketplace_id UUID REFERENCES _v_extension_marketplace(id) ON DELETE CASCADE,
+			slug VARCHAR(120) NOT NULL,
+			extension_name VARCHAR(255) NOT NULL,
+			kind VARCHAR(20) NOT NULL CHECK (kind IN ('postgres', 'wasm')),
+			status VARCHAR(20) NOT NULL DEFAULT 'installed' CHECK (status IN ('installed', 'disabled', 'error')),
+			installed_version VARCHAR(64),
+			metadata JSONB NOT NULL DEFAULT '{}',
+			installed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE(slug, kind)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_extension_installations_kind_status ON _v_extension_installations(kind, status, updated_at DESC)`,
+		`INSERT INTO _v_extension_marketplace (slug, name, extension_name, kind, version, description, homepage, repository, verified, metadata)
+		 VALUES
+		  ('pgvector', 'pgvector', 'vector', 'postgres', 'latest', 'Vector similarity search for PostgreSQL', 'https://github.com/pgvector/pgvector', 'https://github.com/pgvector/pgvector', TRUE, '{"category":"ai"}'),
+		  ('pg_trgm', 'pg_trgm', 'pg_trgm', 'postgres', 'latest', 'Text similarity and trigram indexing', 'https://www.postgresql.org/docs/current/pgtrgm.html', 'https://www.postgresql.org/docs/current/pgtrgm.html', TRUE, '{"category":"search"}'),
+		  ('pg_stat_statements', 'pg_stat_statements', 'pg_stat_statements', 'postgres', 'latest', 'Track execution statistics of SQL statements', 'https://www.postgresql.org/docs/current/pgstatstatements.html', 'https://www.postgresql.org/docs/current/pgstatstatements.html', TRUE, '{"category":"observability"}'),
+		  ('postgis', 'PostGIS', 'postgis', 'postgres', 'latest', 'Spatial and geographic objects support', 'https://postgis.net/', 'https://github.com/postgis/postgis', TRUE, '{"category":"geo"}'),
+		  ('wasm-core-runtime', 'WASM Core Runtime', 'wasm_core_runtime', 'wasm', 'v1', 'Native WASM runtime support for Edge Functions', 'https://webassembly.org/', 'https://webassembly.org/', TRUE, '{"category":"edge"}')
+		 ON CONFLICT (slug) DO UPDATE SET
+		  name = EXCLUDED.name,
+		  extension_name = EXCLUDED.extension_name,
+		  kind = EXCLUDED.kind,
+		  version = EXCLUDED.version,
+		  description = EXCLUDED.description,
+		  homepage = EXCLUDED.homepage,
+		  repository = EXCLUDED.repository,
+		  verified = EXCLUDED.verified,
+		  metadata = EXCLUDED.metadata,
+		  updated_at = NOW()`,
+
 		// Safety Schema Evolution (Repair missing columns in existing deployments)
+		`ALTER TABLE _v_functions ADD COLUMN IF NOT EXISTS runtime VARCHAR(20) NOT NULL DEFAULT 'js'`,
+		`ALTER TABLE _v_functions ADD COLUMN IF NOT EXISTS wasm_module BYTEA`,
+		`ALTER TABLE _v_functions ADD COLUMN IF NOT EXISTS timeout_ms INTEGER NOT NULL DEFAULT 2000`,
+		`ALTER TABLE _v_functions ADD COLUMN IF NOT EXISTS entrypoint VARCHAR(64) NOT NULL DEFAULT '_start'`,
+		`ALTER TABLE _v_functions DROP CONSTRAINT IF EXISTS _v_functions_runtime_check`,
+		`ALTER TABLE _v_functions ADD CONSTRAINT _v_functions_runtime_check CHECK (runtime IN ('js', 'wasm'))`,
 		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS rls_enabled BOOLEAN DEFAULT FALSE`,
 		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS rls_rule TEXT DEFAULT 'auth.uid() = owner_id'`,
 		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS update_rule VARCHAR(50) DEFAULT 'admin'`,
@@ -301,6 +392,25 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_api_keys_group_version ON _v_api_keys(key_group_id, key_version DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_api_keys_auth_lookup ON _v_api_keys(key_hash, is_active, valid_after, expires_at, grace_until, revoked_at)`,
 
+		// Workspaces (Enterprise Phase 2)
+		`CREATE TABLE IF NOT EXISTS _v_workspaces (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			name VARCHAR(255) NOT NULL,
+			slug VARCHAR(255) UNIQUE NOT NULL,
+			config JSONB DEFAULT '{}',
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+
+		// Workspace Membership
+		`CREATE TABLE IF NOT EXISTS _v_workspace_members (
+			workspace_id UUID REFERENCES _v_workspaces(id) ON DELETE CASCADE,
+			user_id UUID REFERENCES _v_users(id) ON DELETE CASCADE,
+			role VARCHAR(20) DEFAULT 'member', -- 'owner', 'admin', 'member', 'viewer'
+			joined_at TIMESTAMPTZ DEFAULT NOW(),
+			PRIMARY KEY (workspace_id, user_id)
+		)`,
+
 		// API Key Lifecycle Events (Enterprise Security Program v2)
 		`CREATE TABLE IF NOT EXISTS _v_api_key_events (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -320,25 +430,6 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 			value DOUBLE PRECISION NOT NULL,
 			labels JSONB DEFAULT '{}',
 			updated_at TIMESTAMPTZ DEFAULT NOW()
-		)`,
-
-		// Workspaces (Enterprise Phase 2)
-		`CREATE TABLE IF NOT EXISTS _v_workspaces (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			name VARCHAR(255) NOT NULL,
-			slug VARCHAR(255) UNIQUE NOT NULL,
-			config JSONB DEFAULT '{}',
-			created_at TIMESTAMPTZ DEFAULT NOW(),
-			updated_at TIMESTAMPTZ DEFAULT NOW()
-		)`,
-
-		// Workspace Membership
-		`CREATE TABLE IF NOT EXISTS _v_workspace_members (
-			workspace_id UUID REFERENCES _v_workspaces(id) ON DELETE CASCADE,
-			user_id UUID REFERENCES _v_users(id) ON DELETE CASCADE,
-			role VARCHAR(20) DEFAULT 'member', -- 'owner', 'admin', 'member', 'viewer'
-			joined_at TIMESTAMPTZ DEFAULT NOW(),
-			PRIMARY KEY (workspace_id, user_id)
 		)`,
 
 		// Session Tracking (Security Depth)
@@ -362,6 +453,23 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_collections_updated_at ON _v_collections(updated_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_api_keys_workspace_id ON _v_api_keys(workspace_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_workspace_members_user_id ON _v_workspace_members(user_id)`,
+
+		// SLO History (Observability + Alerting)
+		`CREATE TABLE IF NOT EXISTS _v_slo_history (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			window_minutes INTEGER NOT NULL,
+			total_requests BIGINT NOT NULL DEFAULT 0,
+			successful_requests BIGINT NOT NULL DEFAULT 0,
+			server_errors BIGINT NOT NULL DEFAULT 0,
+			availability_pct DOUBLE PRECISION NOT NULL DEFAULT 100,
+			error_rate_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+			latency_p95_ms DOUBLE PRECISION NOT NULL DEFAULT 0,
+			thresholds JSONB NOT NULL DEFAULT '{}',
+			breaches JSONB NOT NULL DEFAULT '{}'
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_slo_history_recorded_at ON _v_slo_history(recorded_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_slo_history_breach ON _v_slo_history(((breaches->>'breached')::boolean), recorded_at DESC)`,
 
 		// RLS Coverage History (Enterprise Governance)
 		`CREATE TABLE IF NOT EXISTS _v_rls_coverage_history (

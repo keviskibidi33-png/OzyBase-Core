@@ -1,6 +1,9 @@
 package realtime
 
 import (
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -10,6 +13,8 @@ type Event struct {
 	Action string `json:"action"`
 	Record any    `json:"record"`
 	Old    any    `json:"old,omitempty"`
+	NodeID string `json:"node_id,omitempty"`
+	Source string `json:"source,omitempty"`
 }
 
 // Broker manages connected clients and broadcasts events
@@ -20,6 +25,7 @@ type Broker struct {
 	clients        map[chan Event]bool
 	mu             sync.Mutex
 	Dispatcher     *WebhookDispatcher
+	NodeID         string
 }
 
 // NewBroker creates a new event broker
@@ -29,6 +35,7 @@ func NewBroker() *Broker {
 		newClients:     make(chan chan Event),
 		closingClients: make(chan chan Event),
 		clients:        make(map[chan Event]bool),
+		NodeID:         DefaultNodeID(),
 	}
 
 	go broker.listen()
@@ -49,7 +56,11 @@ func (b *Broker) listen() {
 		case event := <-b.notifier:
 			b.mu.Lock()
 			for clientChan := range b.clients {
-				clientChan <- event
+				select {
+				case clientChan <- event:
+				default:
+					// Slow clients are skipped to avoid stalling all realtime consumers.
+				}
 			}
 			b.mu.Unlock()
 		}
@@ -58,7 +69,7 @@ func (b *Broker) listen() {
 
 // Subscribe adds a new client and returns their event channel
 func (b *Broker) Subscribe() chan Event {
-	clientChan := make(chan Event)
+	clientChan := make(chan Event, 64)
 	b.newClients <- clientChan
 	return clientChan
 }
@@ -74,4 +85,30 @@ func (b *Broker) Broadcast(event Event) {
 	if b.Dispatcher != nil {
 		b.Dispatcher.Dispatch(event)
 	}
+}
+
+// ClientCount returns the number of active realtime subscribers.
+func (b *Broker) ClientCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.clients)
+}
+
+// SetNodeID overrides the broker node identifier for distributed fan-out.
+func (b *Broker) SetNodeID(nodeID string) {
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		return
+	}
+	b.NodeID = nodeID
+}
+
+// DefaultNodeID builds a deterministic node identifier for cluster fan-out.
+func DefaultNodeID() string {
+	host, _ := os.Hostname()
+	host = strings.TrimSpace(host)
+	if host == "" {
+		host = "ozy-node"
+	}
+	return host + "-" + strconv.Itoa(os.Getpid())
 }

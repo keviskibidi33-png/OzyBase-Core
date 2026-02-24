@@ -143,6 +143,12 @@ func (s *AuthService) generateToken(userID, role string) (string, error) {
 	return token.SignedString([]byte(s.jwtSecret))
 }
 
+// GenerateTokenOnly generates a signed JWT without persisting a session row.
+// Use this only when session persistence is handled separately in the same transaction.
+func (s *AuthService) GenerateTokenOnly(userID, role string) (string, error) {
+	return s.generateToken(userID, role)
+}
+
 // GenerateTokenForUser exposes internal token generation logic and creates a session
 func (s *AuthService) GenerateTokenForUser(ctx context.Context, userID, role, ip, ua string, isMFA bool) (string, error) {
 	tokenString, err := s.generateToken(userID, role)

@@ -45,6 +45,7 @@ Current runtime is ready to integrate with AI editors/agents through native MCP 
 
 - MCP tools catalog: `GET /api/project/mcp/tools`
 - MCP tool invoke: `POST /api/project/mcp/invoke`
+- MCP collection creation tool: `collections.create` (via `/api/project/mcp/invoke`)
 - Direct NLQ translate: `POST /api/project/nlq/translate`
 - Direct NLQ query: `POST /api/project/nlq/query`
 - Vector runtime status: `GET /api/project/vector/status`

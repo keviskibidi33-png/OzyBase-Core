@@ -44,10 +44,12 @@ type Config struct {
 	S3UseSSL             bool
 
 	// Realtime
-	RealtimeBroker string
-	RedisAddr      string
-	RedisPassword  string
-	RedisDB        int
+	RealtimeBroker  string
+	RedisAddr       string
+	RedisPassword   string
+	RedisDB         int
+	RealtimeNodeID  string
+	RealtimeChannel string
 
 	// SMTP
 	SMTPHost string
@@ -167,10 +169,12 @@ func Load() (*Config, error) {
 		S3UseSSL:             getEnv("S3_USE_SSL", "false") == "true",
 
 		// Realtime
-		RealtimeBroker: getEnv("OZY_REALTIME_BROKER", "local"),
-		RedisAddr:      readEnv("REDIS_ADDR"),
-		RedisPassword:  readEnv("REDIS_PASSWORD"),
-		RedisDB:        redisDB,
+		RealtimeBroker:  getEnv("OZY_REALTIME_BROKER", "local"),
+		RedisAddr:       readEnv("REDIS_ADDR"),
+		RedisPassword:   readEnv("REDIS_PASSWORD"),
+		RedisDB:         redisDB,
+		RealtimeNodeID:  strings.TrimSpace(readEnv("OZY_REALTIME_NODE_ID")),
+		RealtimeChannel: getEnv("OZY_REALTIME_CHANNEL", "ozy_events_cluster"),
 
 		// SMTP
 		SMTPHost: readEnv("SMTP_HOST"),

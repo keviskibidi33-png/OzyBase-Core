@@ -1,5 +1,6 @@
 services:
   ozybase:
+    image: ${OZYBASE_IMAGE:-ozybase:local}
     build:
       context: .
       dockerfile: Dockerfile

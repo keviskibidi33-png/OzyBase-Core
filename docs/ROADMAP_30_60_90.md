@@ -7,6 +7,9 @@ This roadmap focuses on enterprise readiness for self-hosted and Coolify deploym
 - Runtime resilience
 - Frontend and API quality gates
 
+Execution snapshot:
+- `docs/ROADMAP_EXECUTION_STATUS_2026-02-23.md`
+
 ## Day 0 Baseline (Current)
 - Single-binary backend with PostgreSQL
 - Setup wizard-first initialization flow
@@ -21,6 +24,9 @@ This roadmap focuses on enterprise readiness for self-hosted and Coolify deploym
 - Added automated RLS coverage auditor endpoint: `GET /api/project/security/rls/coverage`.
 - Added global API error envelope (`error`, `error_code`, `request_id`) via middleware + global handler.
 - Extended `/api/health` with SLO checks for DB, migrations, storage provider, and API key event pipeline.
+- Added canary deploy automation with automatic rollback (`scripts/deploy_canary.sh`).
+- Added repeatable disaster recovery drill with backup+restore evidence (`scripts/disaster_drill.sh`).
+- Frontend source tree moved to TypeScript extensions (`.ts/.tsx`) with CI `typecheck` gate; strict hardening continues by removing legacy `@ts-nocheck` blocks.
 
 ---
 
@@ -78,12 +84,14 @@ Done when:
 
 ### 3. Frontend Quality and E2E
 - Stabilize E2E for setup/login/workspaces/SQL editor/security panels.
+- Complete frontend migration to TypeScript with strict type checks.
 - Add smoke suite for deploy validation.
 - Add bundle checks to prevent uncontrolled growth.
 
 Done when:
 - Smoke suite passes after each production deploy.
 - No critical dashboard workflow lacks an E2E test.
+- Frontend builds with TypeScript checks enabled and no type errors.
 
 ---
 

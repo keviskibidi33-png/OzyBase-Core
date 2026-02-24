@@ -133,6 +133,7 @@ func run() error {
 
 	// 🔄 Initialize PubSub (for horizontal scaling)
 	ps := initPubSub(cfg, broker)
+	startRealtimePipelines(ctx, db, broker, dispatcher, ps, cfg)
 
 	// Setup Mailer
 	mailSvc := mailer.NewLogMailer()
@@ -299,10 +300,23 @@ func initRealtime(db *data.DB) (*realtime.Broker, *realtime.WebhookDispatcher, *
 	cronMgr := realtime.NewCronManager(db.Pool)
 	cronMgr.Start()
 
-	// Start database event listener
-	go realtime.ListenForEvents(context.Background(), db.Pool, broker, dispatcher)
-
 	return broker, dispatcher, cronMgr
+}
+
+func startRealtimePipelines(ctx context.Context, db *data.DB, broker *realtime.Broker, dispatcher *realtime.WebhookDispatcher, ps realtime.PubSub, cfg *config.Config) {
+	nodeID := strings.TrimSpace(cfg.RealtimeNodeID)
+	if nodeID == "" {
+		nodeID = realtime.DefaultNodeID()
+	}
+	channel := strings.TrimSpace(cfg.RealtimeChannel)
+	if channel == "" {
+		channel = realtime.DefaultClusterChannel
+	}
+	broker.SetNodeID(nodeID)
+	if err := realtime.StartPubSubBridge(ctx, ps, broker, nodeID, channel); err != nil {
+		logger.Log.Warn().Err(err).Str("mode", ps.Mode()).Msg("realtime pubsub bridge failed to start")
+	}
+	go realtime.ListenForEvents(ctx, db.Pool, broker, dispatcher, ps, nodeID, channel)
 }
 
 func initPubSub(cfg *config.Config, broker *realtime.Broker) realtime.PubSub {
@@ -357,6 +371,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		StaticGraceUntil:       cfg.StaticKeyGraceUntil,
 	})) // 🔐 API Key Auth (Enterprise Phase 1)
 	e.Use(api.RLSMiddleware(h.DB)) // 🛡️ RLS Context Injection
+	e.Use(api.AdminAuditMiddleware(h))
 	// #nosec G101 -- CSRF token lookup/cookie fields are static identifiers, not credentials.
 	e.Use(middleware.CSRFWithConfig(middleware.CSRFConfig{
 		TokenLookup:    "header:X-CSRF-Token",
@@ -422,6 +437,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.GET("/project/metrics", h.GetPrometheusMetrics) // 📊 Enterprise Phase 1
 		apiGroup.GET("/project/stats", h.GetStats, authRequired)
 		apiGroup.GET("/realtime", realtimeHandler.Stream)
+		apiGroup.GET("/project/realtime/status", h.GetRealtimeStatus, authRequired, adminOnly)
 
 		// Workspaces
 		workspacesGroup := apiGroup.Group("/workspaces", authRequired)
@@ -478,6 +494,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		// Functions
 		apiGroup.GET("/functions", functionsHandler.List, authRequired)
 		apiGroup.POST("/functions", functionsHandler.Create, authRequired)
+		apiGroup.DELETE("/functions/:name", functionsHandler.Delete, authRequired, adminOnly)
 		apiGroup.POST("/functions/:name/invoke", functionsHandler.Invoke)
 
 		// Files
@@ -509,22 +526,35 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.GET("/project/health", h.GetHealthIssues, authRequired)
 		apiGroup.GET("/project/performance/advisor", h.GetPerformanceAdvisor, authRequired, adminOnly)
 		apiGroup.GET("/project/performance/advisor/history", h.GetPerformanceAdvisorHistory, authRequired, adminOnly)
+		apiGroup.GET("/project/vector/status", h.GetVectorStatus, authRequired, adminOnly)
+		apiGroup.POST("/project/vector/setup", h.SetupVectorStore, authRequired, adminOnly)
+		apiGroup.POST("/project/vector/upsert", h.UpsertVectorItems, authRequired, adminOnly)
+		apiGroup.POST("/project/vector/search", h.SearchVectorItems, authRequired, adminOnly)
+		apiGroup.POST("/project/nlq/translate", h.TranslateNLQ, authRequired, adminOnly)
+		apiGroup.POST("/project/nlq/query", h.ExecuteNLQ, authRequired, adminOnly)
+		apiGroup.GET("/project/mcp/tools", h.GetMCPTools, authRequired, adminOnly)
+		apiGroup.POST("/project/mcp/invoke", h.InvokeMCPTool, authRequired, adminOnly)
 		apiGroup.GET("/project/security/policies", h.GetSecurityPolicies, authRequired)
-		apiGroup.POST("/project/security/policies", h.UpdateSecurityPolicy, authRequired)
+		apiGroup.POST("/project/security/policies", h.UpdateSecurityPolicy, authRequired, adminOnly)
 		apiGroup.GET("/project/security/stats", h.GetSecurityStats, authRequired)
 		apiGroup.GET("/project/security/alerts", h.GetSecurityAlerts, authRequired)
 		apiGroup.GET("/project/security/notifications", h.GetNotificationRecipients, authRequired)
-		apiGroup.POST("/project/security/notifications", h.AddNotificationRecipient, authRequired)
-		apiGroup.DELETE("/project/security/notifications/:id", h.DeleteNotificationRecipient, authRequired)
+		apiGroup.POST("/project/security/notifications", h.AddNotificationRecipient, authRequired, adminOnly)
+		apiGroup.DELETE("/project/security/notifications/:id", h.DeleteNotificationRecipient, authRequired, adminOnly)
+		apiGroup.GET("/project/observability/slo", h.GetSLOStatus, authRequired, adminOnly)
+		apiGroup.GET("/project/security/alert-routing", h.GetAlertRouting, authRequired, adminOnly)
+		apiGroup.POST("/project/security/alert-routing", h.UpdateAlertRouting, authRequired, adminOnly)
 		apiGroup.GET("/project/security/rls/coverage", h.GetRLSPolicyCoverage, authRequired, adminOnly)
 		apiGroup.GET("/project/security/rls/coverage/history", h.GetRLSPolicyCoverageHistory, authRequired, adminOnly)
 		apiGroup.POST("/project/security/rls/enforce", h.EnforceRLSAll, authRequired, adminOnly)
+		apiGroup.POST("/project/security/rls/closeout", h.RunRLSCloseout, authRequired, adminOnly)
+		apiGroup.GET("/project/security/admin-audit", h.ListAdminAuditEvents, authRequired, adminOnly)
 
 		// Integrations (Slack, Discord, SIEM)
 		apiGroup.GET("/project/integrations", h.ListIntegrations, authRequired)
-		apiGroup.POST("/project/integrations", h.CreateIntegration, authRequired)
-		apiGroup.DELETE("/project/integrations/:id", h.DeleteIntegration, authRequired)
-		apiGroup.POST("/project/integrations/:id/test", h.TestIntegration, authRequired)
+		apiGroup.POST("/project/integrations", h.CreateIntegration, authRequired, adminOnly)
+		apiGroup.DELETE("/project/integrations/:id", h.DeleteIntegration, authRequired, adminOnly)
+		apiGroup.POST("/project/integrations/:id/test", h.TestIntegration, authRequired, adminOnly)
 		apiGroup.GET("/project/integrations/metrics", h.GetIntegrationDeliveryMetrics, authRequired, adminOnly)
 		apiGroup.GET("/project/integrations/dlq", h.ListIntegrationDLQ, authRequired, adminOnly)
 		apiGroup.POST("/project/integrations/dlq/:id/retry", h.RetryIntegrationDLQ, authRequired, adminOnly)
@@ -534,16 +564,20 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.GET("/analytics/geo", h.GetGeoStats, authRequired)
 
 		// Security Dashboard Routes
-		apiGroup.POST("/project/health/fix", h.FixHealthIssues, authRequired)
+		apiGroup.POST("/project/health/fix", h.FixHealthIssues, authRequired, adminOnly)
 		apiGroup.GET("/project/logs", h.GetLogs, authRequired)
 		apiGroup.GET("/project/logs/export", h.ExportLogs, authRequired)
 		apiGroup.GET("/security/firewall", h.ListIPRules, authRequired)
-		apiGroup.POST("/security/firewall", h.CreateIPRule, authRequired)
-		apiGroup.DELETE("/security/firewall/:id", h.DeleteIPRule, authRequired)
+		apiGroup.POST("/security/firewall", h.CreateIPRule, authRequired, adminOnly)
+		apiGroup.DELETE("/security/firewall/:id", h.DeleteIPRule, authRequired, adminOnly)
 
 		// Extensions
 		apiGroup.GET("/extensions", h.ListExtensions, authRequired)
-		apiGroup.POST("/extensions/:name", h.ToggleExtension, authRequired)
+		apiGroup.POST("/extensions/:name", h.ToggleExtension, authRequired, adminOnly)
+		apiGroup.GET("/extensions/marketplace", h.ListExtensionMarketplace, authRequired, adminOnly)
+		apiGroup.POST("/extensions/marketplace/sync", h.SyncExtensionMarketplace, authRequired, adminOnly)
+		apiGroup.POST("/extensions/marketplace/:slug/install", h.InstallMarketplaceExtension, authRequired, adminOnly)
+		apiGroup.DELETE("/extensions/marketplace/:slug/install", h.UninstallMarketplaceExtension, authRequired, adminOnly)
 
 		// Integrations (Modern Handlers)
 		apiGroup.GET("/webhooks", webhookHandler.List, authRequired)
@@ -555,8 +589,8 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.DELETE("/cron/:id", cronHandler.Delete, authRequired)
 
 		apiGroup.GET("/vault", h.ListSecrets, authRequired)
-		apiGroup.POST("/vault", h.CreateSecret, authRequired)
-		apiGroup.DELETE("/vault/:id", h.DeleteSecret, authRequired)
+		apiGroup.POST("/vault", h.CreateSecret, authRequired, adminOnly)
+		apiGroup.DELETE("/vault/:id", h.DeleteSecret, authRequired, adminOnly)
 
 		apiGroup.GET("/wrappers", h.ListWrappers, authRequired)
 		apiGroup.POST("/graphql/v1", h.HandleGraphQL, authRequired)
