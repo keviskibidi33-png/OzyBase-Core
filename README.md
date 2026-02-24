@@ -42,6 +42,7 @@ OzyBase is a high-performance, single-binary BaaS for authentication, dynamic co
 ## AI Editor Ready (MCP + NLQ)
 
 Current runtime is ready to integrate with AI editors/agents through native MCP endpoints.
+MCP in OzyBase is implemented as a native HTTP runtime inside the API service (shared auth, audit, and DB pool), not as a separate stdio daemon process.
 
 - MCP tools catalog: `GET /api/project/mcp/tools`
 - MCP tool invoke: `POST /api/project/mcp/invoke`
@@ -53,6 +54,14 @@ Current runtime is ready to integrate with AI editors/agents through native MCP 
 Requirements:
 - Admin auth token (Bearer) for project endpoints.
 - Production smoke gate in green (`scripts/validate_enterprise.ps1`).
+
+Enterprise release gate:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate_enterprise.ps1
+```
+
+If your editor requires standard MCP transport (`tools/list`, `tools/call` over stdio/websocket), use a thin adapter that maps to `/api/project/mcp/tools` and `/api/project/mcp/invoke`.
 
 Quick verification:
 

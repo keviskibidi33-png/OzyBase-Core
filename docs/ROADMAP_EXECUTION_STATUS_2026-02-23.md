@@ -34,6 +34,8 @@ Additional NLQ + MCP native validation (2026-02-24):
 - Native MCP runtime added:
   - tools catalog endpoint (`GET /api/project/mcp/tools`)
   - tool invoke endpoint (`POST /api/project/mcp/invoke`)
+- MCP runtime model validated as in-process HTTP runtime (shared auth/audit/DB pool), not a separate stdio daemon.
+- MCP collection creation flow validated (`collections.create`) with schema checks and smoke coverage.
 - Smoke API extended to validate NLQ and MCP flows.
 - Enterprise validation suite re-run (`scripts/validate_enterprise.ps1 -SkipE2E`) after changes -> `PASS`.
 - Full validation suite re-run (`scripts/validate_enterprise.ps1`) after changes -> `PASS`.
@@ -87,3 +89,4 @@ Roadmap snapshot (2026-02-24):
 - Strict hardening is now complete (`frontend/tsconfig.json` with `strict=true`, `noImplicitAny` active via strict mode, `npm run typecheck` + `npm run build` both green).
 - XL native scope now includes `pgvector + NLQ + MCP + WASM + extensions marketplace + global SSE scaling` in product runtime and smoke coverage.
 - `scripts/validate_enterprise.ps1` remains green after XL closure changes.
+- MCP collection lifecycle validation is included in smoke gates (`collections.create` path under `/api/project/mcp/invoke`).
