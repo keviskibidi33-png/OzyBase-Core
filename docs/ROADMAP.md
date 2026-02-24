@@ -29,18 +29,19 @@ Focus: **Security, Scaling & Observability**
 Focus: **Schema Management & AI**
 
 - [x] **Ozy-Migrations**: Visual schema editor that generates versioned SQL migrations automatically with CLI applier.
-- [ ] **Natural Language Querying (NLQ)**: Use AI to query your database with plain text.
-- [ ] **Vector Support**: Native integration with `pgvector` for RAG applications.
-- [ ] **MCP Implementation**: Context server for AI IDEs like Cursor/Windsurf.
+- [x] **Frontend TypeScript Migration**: Frontend migrated to strict TypeScript (`@ts-nocheck=0`, `typecheck/build/lint` green).
+- [x] **Natural Language Querying (NLQ)**: Native deterministic NLQ implemented (`/api/project/nlq/translate` + `/api/project/nlq/query`) with safe table/column validation and smoke coverage.
+- [x] **Vector Support**: Native integration with `pgvector` for RAG applications (status/setup/upsert/search endpoints + smoke validation).
+- [x] **MCP Implementation**: Native MCP tool catalog + invoke endpoint (`/api/project/mcp/tools` + `/api/project/mcp/invoke`) wired to health/collections/vector/NLQ tools.
 
 ---
 
 ## 🔴 PHASE 3: Future Scale & Extensions ⚡
 Focus: **Global Infrastructure**
 
-- [ ] **WASM Edge Functions**: High-performance polyglot serverless logic.
-- [ ] **Extensions Marketplace**: Community-driven plugin system.
-- [ ] **Global SSE Scaling**: Distributing realtime events across global points of presence.
+- [x] **WASM Edge Functions**: Native `wasm` runtime for functions with WASI execution (`wazero`), timeout controls, and smoke validation.
+- [x] **Extensions Marketplace**: Native catalog + sync + install/uninstall lifecycle with installation state and audit trail.
+- [x] **Global SSE Scaling**: Distributed realtime fan-out through Redis PubSub bridge with node-aware deduplication and realtime status endpoint.
 
 ---
 **Vision**: "PocketBase simplicity, Supabase power, Go performance." 🛡️🚀

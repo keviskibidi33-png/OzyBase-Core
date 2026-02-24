@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0-XL] - 2026-02-24
+
+### Added
+
+- Native WASM Edge Functions runtime (`runtime=wasm`) with WASI execution (`wazero`), timeout controls, and invoke support.
+- Extensions Marketplace API with catalog sync and install/uninstall lifecycle:
+  - `GET /api/extensions/marketplace`
+  - `POST /api/extensions/marketplace/sync`
+  - `POST/DELETE /api/extensions/marketplace/:slug/install`
+- Global SSE scaling via distributed Redis PubSub bridge with node-aware deduplication and realtime status endpoint:
+  - `GET /api/project/realtime/status`
+
+### Changed
+
+- Enterprise smoke suite now validates realtime status, marketplace flows, and wasm edge-function invoke path.
+- Roadmap tracking updated to mark XL closure (`pgvector + NLQ + MCP + WASM + marketplace + global SSE`) as completed.
+- README updated with AI-editor readiness summary and final roadmap snapshot (`0` pending items).
+
 ## [1.2.1] - 2026-02-20
 
 ### Added

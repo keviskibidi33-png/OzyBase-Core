@@ -20,16 +20,69 @@
 
 OzyBase is a high-performance, single-binary BaaS for authentication, dynamic collections, realtime subscriptions, and file storage with zero-friction deployment.
 
-## ✅ Production Hardening Status (2026-02-20)
+## ✅ Production Hardening Status (2026-02-24)
 
 - JWT subject validated against `_v_users` on authenticated requests.
 - Role/email sourced from DB (not only JWT claims).
 - Tokens signed with non-existent user are rejected (`401`).
-- API keys remain valid for protected routes.
 - URL query token sanitization active in frontend flows.
 - Security headers and CSRF secure cookie enabled.
 - Docker compose requires critical env vars and includes health checks.
 - Rate limiter tuning exposed via env (`RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`).
+- Enterprise smoke gate validated in production (`health + system status/setup + CSP + login + API key rotate`).
+- Native-only local validation suite validated (`scripts/validate_enterprise.ps1`: backend tests + frontend lint/typecheck/build/bundle + embedded Postgres smoke API + smoke E2E).
+- Frontend fully migrated to TypeScript strict (`@ts-nocheck=0`, `npm run typecheck=PASS`, `npm run build=PASS`, `npm run lint=PASS`).
+- Native pgvector foundation validated for production flow (`/api/project/vector/status|setup|upsert|search`, smoke with graceful skip when extension is unavailable).
+- Native NLQ + MCP layer validated (`/api/project/nlq/translate|query`, `/api/project/mcp/tools|invoke`) with deterministic SQL planning and smoke coverage.
+- WASM edge functions validated (`runtime=wasm`, WASI execution, timeout controls, smoke invoke path).
+- Extensions marketplace validated (`/api/extensions/marketplace`, sync/install/uninstall lifecycle).
+- Global SSE scaling validated (Redis PubSub bridge, node-aware deduplication, `/api/project/realtime/status`).
+- Enterprise gates implemented for SLO thresholds, alert routing/on-call, and RLS closeout evidence.
+
+## AI Editor Ready (MCP + NLQ)
+
+Current runtime is ready to integrate with AI editors/agents through native MCP endpoints.
+
+- MCP tools catalog: `GET /api/project/mcp/tools`
+- MCP tool invoke: `POST /api/project/mcp/invoke`
+- Direct NLQ translate: `POST /api/project/nlq/translate`
+- Direct NLQ query: `POST /api/project/nlq/query`
+- Vector runtime status: `GET /api/project/vector/status`
+
+Requirements:
+- Admin auth token (Bearer) for project endpoints.
+- Production smoke gate in green (`scripts/validate_enterprise.ps1`).
+
+Quick verification:
+
+```bash
+# 1) Login (replace values)
+curl -sS -X POST "https://YOUR_DOMAIN/api/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@YOUR_DOMAIN","password":"YOUR_PASSWORD"}'
+
+# 2) MCP tools
+curl -sS "https://YOUR_DOMAIN/api/project/mcp/tools" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+
+# 3) Invoke NLQ via MCP
+curl -sS -X POST "https://YOUR_DOMAIN/api/project/mcp/invoke" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"tool":"nlq.translate","arguments":{"query":"count rows in users","table":"users"}}'
+```
+
+## Roadmap Snapshot (2026-02-24)
+
+- Enterprise core (through `L`): completed.
+- XL native progress: `pgvector + NLQ + MCP + WASM edge/functions + extensions marketplace + global SSE scaling` completed.
+- Roadmap closure status: `100% complete` for the tracked phases in `docs/ROADMAP.md`.
+- Source of truth: `docs/ROADMAP.md` and `docs/ROADMAP_EXECUTION_STATUS_2026-02-23.md`.
+
+## Pending Work (Current)
+
+- Roadmap phases tracked in `docs/ROADMAP.md`: `0` pending items.
+- Operational recommendation (optional, non-blocking): keep running `scripts/validate_enterprise.ps1` as release gate.
 
 ## 🚀 Quick Start
 
@@ -109,6 +162,12 @@ DB_NAME=Ozydb
 DB_SSLMODE=verify-full
 RATE_LIMIT_RPS=20
 RATE_LIMIT_BURST=20
+OZY_REALTIME_BROKER=redis
+REDIS_ADDR=127.0.0.1:6379
+REDIS_PASSWORD=
+REDIS_DB=0
+OZY_REALTIME_CHANNEL=ozy_events_cluster
+OZY_REALTIME_NODE_ID=node-a
 DEBUG=false
 ```
 
