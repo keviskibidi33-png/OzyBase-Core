@@ -6,6 +6,8 @@ ADMIN_EMAIL="${SMOKE_ADMIN_EMAIL:-admin@ozybase.local}"
 ADMIN_PASSWORD="${SMOKE_ADMIN_PASSWORD:-OzyBase123!}"
 SMOKE_CURL_CONNECT_TIMEOUT="${SMOKE_CURL_CONNECT_TIMEOUT:-3}"
 SMOKE_CURL_TIMEOUT="${SMOKE_CURL_TIMEOUT:-15}"
+SMOKE_RATE_LIMIT_MAX_RETRIES="${SMOKE_RATE_LIMIT_MAX_RETRIES:-6}"
+SMOKE_RATE_LIMIT_RETRY_BASE_SECONDS="${SMOKE_RATE_LIMIT_RETRY_BASE_SECONDS:-1}"
 
 PYTHON_BIN=""
 for candidate in python3 python; do
@@ -33,23 +35,51 @@ call_api() {
   local body="${3:-}"
   local token="${4:-}"
 
-  local args=(
-    -sS
-    -o "$TMP_BODY"
-    -w "%{http_code}"
-    --connect-timeout "$SMOKE_CURL_CONNECT_TIMEOUT"
-    --max-time "$SMOKE_CURL_TIMEOUT"
-    -X "$method"
-    "${BASE_URL}${path}"
-  )
-  if [[ -n "$body" ]]; then
-    args+=(-H "Content-Type: application/json" -d "$body")
-  fi
-  if [[ -n "$token" ]]; then
-    args+=(-H "Authorization: Bearer ${token}")
+  local attempt=1
+  local max_retries="$SMOKE_RATE_LIMIT_MAX_RETRIES"
+  if ! [[ "$max_retries" =~ ^[0-9]+$ ]] || [[ "$max_retries" -lt 1 ]]; then
+    max_retries=1
   fi
 
-  curl "${args[@]}"
+  while true; do
+    local args=(
+      -sS
+      -D "$TMP_HEADERS"
+      -o "$TMP_BODY"
+      -w "%{http_code}"
+      --connect-timeout "$SMOKE_CURL_CONNECT_TIMEOUT"
+      --max-time "$SMOKE_CURL_TIMEOUT"
+      -X "$method"
+      "${BASE_URL}${path}"
+    )
+    if [[ -n "$body" ]]; then
+      args+=(-H "Content-Type: application/json" -d "$body")
+    fi
+    if [[ -n "$token" ]]; then
+      args+=(-H "Authorization: Bearer ${token}")
+    fi
+
+    local status_code
+    status_code="$(curl "${args[@]}")"
+    if [[ "$status_code" != "429" || "$attempt" -ge "$max_retries" ]]; then
+      echo "$status_code"
+      return 0
+    fi
+
+    local retry_after
+    retry_after="$(awk 'BEGIN{IGNORECASE=1} /^Retry-After:/ {gsub("\r","",$2); print $2; exit}' "$TMP_HEADERS" || true)"
+
+    local sleep_seconds
+    if [[ -n "$retry_after" && "$retry_after" =~ ^[0-9]+$ ]]; then
+      sleep_seconds="$retry_after"
+    else
+      sleep_seconds=$(( SMOKE_RATE_LIMIT_RETRY_BASE_SECONDS * attempt ))
+    fi
+
+    echo "[smoke] rate limited (429) for ${method} ${path}; retry ${attempt}/${max_retries} in ${sleep_seconds}s" >&2
+    sleep "$sleep_seconds"
+    attempt=$(( attempt + 1 ))
+  done
 }
 
 fetch_headers() {
