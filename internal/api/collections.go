@@ -1318,6 +1318,52 @@ type FixHealthRequest struct {
 	Issue string `json:"issue"`
 }
 
+func isRLSHealthFixIssue(issueType, issue string) bool {
+	typeLower := strings.ToLower(strings.TrimSpace(issueType))
+	if typeLower != "security" {
+		return false
+	}
+	issueLower := strings.ToLower(issue)
+	return strings.Contains(issueLower, "row level security") ||
+		strings.Contains(issueLower, "missing rls policies") ||
+		strings.Contains(issueLower, " rls ")
+}
+
+func resolveRLSAutoFixRule(ctx context.Context, tx pgx.Tx, tableName string) (string, error) {
+	ownerColumn, ownerErr := resolveRLSOwnerColumn(ctx, tx, tableName)
+	if ownerErr != nil {
+		return "", ownerErr
+	}
+	if ownerColumn != "" {
+		return fmt.Sprintf("%s = auth.uid()", ownerColumn), nil
+	}
+
+	var rule string
+	err := tx.QueryRow(ctx, `
+		SELECT COALESCE(NULLIF(qual, ''), NULLIF(with_check, ''))
+		FROM pg_policies
+		WHERE schemaname = 'public' AND tablename = $1
+		ORDER BY
+			CASE cmd
+				WHEN 'SELECT' THEN 0
+				WHEN 'UPDATE' THEN 1
+				WHEN 'DELETE' THEN 2
+				WHEN 'INSERT' THEN 3
+				ELSE 4
+			END,
+			policyname
+		LIMIT 1
+	`, tableName).Scan(&rule)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+
+	return strings.TrimSpace(rule), nil
+}
+
 // FixHealthIssues handles POST /api/project/health/fix
 func (h *Handler) FixHealthIssues(c echo.Context) error {
 	var req FixHealthRequest
@@ -1333,7 +1379,7 @@ func (h *Handler) FixHealthIssues(c echo.Context) error {
 	issueLower := strings.ToLower(req.Issue)
 	typeLower := strings.ToLower(req.Type)
 
-	if typeLower == "security" && strings.Contains(issueLower, "row level security") {
+	if isRLSHealthFixIssue(req.Type, req.Issue) {
 		// Extract table name from issue title: "Table `tablename` does not have..."
 		parts := strings.Split(req.Issue, "`")
 		if len(parts) < 3 {
@@ -1352,18 +1398,24 @@ func (h *Handler) FixHealthIssues(c echo.Context) error {
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
 
-		ownerColumn, ownerErr := resolveRLSOwnerColumn(ctx, tx, tableName)
-		if ownerErr != nil || ownerColumn == "" {
-			return c.JSON(http.StatusBadRequest, map[string]string{
-				"error": "RLS auto-fix requires owner column (owner_id, user_id, created_by)",
+		rule, ruleErr := resolveRLSAutoFixRule(ctx, tx, tableName)
+		if ruleErr != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{
+				"error": "Failed to resolve RLS auto-fix rule: " + ruleErr.Error(),
 			})
 		}
-		rule := fmt.Sprintf("%s = auth.uid()", ownerColumn)
+		if rule == "" {
+			return c.JSON(http.StatusBadRequest, map[string]string{
+				"error": "RLS auto-fix requires owner column (owner_id, user_id, created_by) or an existing policy",
+			})
+		}
 
 		// 1. Primary PG RLS (Native)
 		sql := fmt.Sprintf("ALTER TABLE %s ENABLE ROW LEVEL SECURITY", tableName)
 		if _, err := tx.Exec(ctx, sql); err != nil {
-			log.Printf("Warning: Failed to enable native RLS (might not have permission): %v", err)
+			return c.JSON(http.StatusInternalServerError, map[string]string{
+				"error": "Failed to enable native RLS: " + err.Error(),
+			})
 		}
 		legacyPolicy := fmt.Sprintf("policy_ozy_%s", tableName)
 		_, _ = tx.Exec(ctx, fmt.Sprintf("DROP POLICY IF EXISTS %s ON %s", legacyPolicy, tableName))
@@ -1474,7 +1526,11 @@ func (h *Handler) FixHealthIssues(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"message": "Index created successfully"})
 	}
 
-	return c.JSON(http.StatusNotFound, map[string]string{"error": "Fix strategy not found for this issue: " + req.Issue})
+	log.Printf("health fix strategy not found type=%q issue=%q", req.Type, req.Issue)
+	return c.JSON(http.StatusBadRequest, map[string]string{
+		"error":      "Fix strategy not found for this issue: " + req.Issue,
+		"error_code": "FIX_STRATEGY_NOT_FOUND",
+	})
 }
 
 type EnforceRLSResult struct {

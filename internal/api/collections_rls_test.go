@@ -104,3 +104,40 @@ func TestMakePolicyName(t *testing.T) {
 		t.Fatalf("expected policy name suffix with action")
 	}
 }
+
+func TestIsRLSHealthFixIssue(t *testing.T) {
+	tests := []struct {
+		name      string
+		issueType string
+		issue     string
+		want      bool
+	}{
+		{
+			name:      "matches row level security issue",
+			issueType: " Security ",
+			issue:     "Table `users` does not have Row Level Security enabled",
+			want:      true,
+		},
+		{
+			name:      "matches missing rls policies issue exact",
+			issueType: "security",
+			issue:     "Table `users` is missing RLS policies for: delete, insert, select, update",
+			want:      true,
+		},
+		{
+			name:      "ignores non-security issue",
+			issueType: "performance",
+			issue:     "Table `users` is missing RLS policies for: delete, insert, select, update",
+			want:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isRLSHealthFixIssue(tt.issueType, tt.issue)
+			if got != tt.want {
+				t.Fatalf("expected %v, got %v", tt.want, got)
+			}
+		})
+	}
+}
