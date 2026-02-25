@@ -109,7 +109,7 @@ irm https://raw.githubusercontent.com/Xangel0s/OzyBase/main/scripts/install.ps1 
 ```bash
 git clone https://github.com/Xangel0s/OzyBase.git
 cd OzyBase-Core
-go run ./cmd/OzyBase
+go run ./cmd/ozybase
 ```
 
 ### Docker

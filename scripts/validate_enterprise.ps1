@@ -215,7 +215,7 @@ try {
 
   Write-Step "Backend tests"
   Invoke-CommandWithTimeout -Name "backend_go_test" -FilePath "go" -Arguments @("test", "-timeout=12m", "./...") -WorkingDirectory $repoRoot -TimeoutSeconds $GoTestTimeoutSeconds
-  Invoke-CommandWithTimeout -Name "backend_go_build" -FilePath "go" -Arguments @("build", "-o", $apiBinary, "./cmd/OzyBase") -WorkingDirectory $repoRoot -TimeoutSeconds $GoBuildTimeoutSeconds
+  Invoke-CommandWithTimeout -Name "backend_go_build" -FilePath "go" -Arguments @("build", "-o", $apiBinary, "./cmd/ozybase") -WorkingDirectory $repoRoot -TimeoutSeconds $GoBuildTimeoutSeconds
 
   Write-Step "Frontend lint/typecheck/build/bundle"
   Invoke-CommandWithTimeout -Name "frontend_lint" -FilePath $npmCmd -Arguments @("run", "lint") -WorkingDirectory $frontendDir -TimeoutSeconds $FrontendLintTimeoutSeconds

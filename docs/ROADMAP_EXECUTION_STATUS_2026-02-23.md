@@ -7,7 +7,7 @@ Last validation run:
 Additional production validation (2026-02-24):
 - Manual enterprise smoke on `https://base.geofal.com.pe`: `PASS` (`health + system status/setup + CSP + login + api key rotate`).
 - Install-to-play bootstrap validated:
-  - `go run ./cmd/OzyBase init --output .env.install_test --site-url https://base.geofal.com.pe --app-domain geofal.com.pe --force` (`PASS`)
+  - `go run ./cmd/ozybase init --output .env.install_test --site-url https://base.geofal.com.pe --app-domain geofal.com.pe --force` (`PASS`)
   - `docker compose -f docker-compose.install.yml config --quiet` with required vars (`PASS`)
 - Strict TypeScript closure validated:
   - `npm run typecheck` in `frontend/` (`PASS`)
@@ -68,13 +68,13 @@ Roadmap snapshot (2026-02-24):
 | XS-S | Short post-deploy operational checklist in one script (rotate/revoke/health) | Completed | `scripts/validate_enterprise.ps1:248`, `scripts/smoke_api.sh:109`, `scripts/smoke_api.sh:233`, `scripts/smoke_api.sh:282` |
 | S | Automated post-deploy smoke (health + login/setup + CSP + key rotation) | Completed | `scripts/smoke_api.sh:115`, `scripts/smoke_api.sh:137`, `scripts/smoke_api.sh:150`, `scripts/smoke_api.sh:221` |
 | S | Define base SLOs with concrete thresholds | Completed | `internal/api/observability.go:24`, `internal/api/observability.go:102`, `internal/api/handlers.go:266`, `internal/data/migrations.go:367` |
-| M | Initial dashboards (auth/db/storage/rate-limit) + alert routing/on-call | Completed | `cmd/OzyBase/main.go:519`, `internal/api/observability.go:659`, `frontend/src/components/Observability.tsx:35`, `frontend/src/components/Observability.tsx:196`, `scripts/smoke_api.sh:212` |
-| M | Final RLS coverage 100% on productive app tables + compliance evidence | Completed | `cmd/OzyBase/main.go:525`, `internal/api/rls_coverage.go:154`, `internal/api/rls_coverage.go:262`, `internal/api/collections.go:1487`, `scripts/smoke_api.sh:219` |
-| M | Harden all admin operations with uniform traceability/audit | Completed | `internal/data/migrations.go:121`, `internal/api/admin_audit.go:19`, `internal/api/admin_audit.go:213`, `cmd/OzyBase/main.go:359`, `cmd/OzyBase/main.go:527`, `scripts/smoke_api.sh:236` |
+| M | Initial dashboards (auth/db/storage/rate-limit) + alert routing/on-call | Completed | `cmd/ozybase/main.go:519`, `internal/api/observability.go:659`, `frontend/src/components/Observability.tsx:35`, `frontend/src/components/Observability.tsx:196`, `scripts/smoke_api.sh:212` |
+| M | Final RLS coverage 100% on productive app tables + compliance evidence | Completed | `cmd/ozybase/main.go:525`, `internal/api/rls_coverage.go:154`, `internal/api/rls_coverage.go:262`, `internal/api/collections.go:1487`, `scripts/smoke_api.sh:219` |
+| M | Harden all admin operations with uniform traceability/audit | Completed | `internal/data/migrations.go:121`, `internal/api/admin_audit.go:19`, `internal/api/admin_audit.go:213`, `cmd/ozybase/main.go:359`, `cmd/ozybase/main.go:527`, `scripts/smoke_api.sh:236` |
 | L | Full frontend migration to strict TypeScript (0 type errors) | Completed | `frontend/tsconfig.json:1`, `frontend/src/main.tsx:1`, `frontend/src/utils/api.ts:1`, `frontend/src/components/Login.tsx:1`, `.github/workflows/ci.yml:102`, `scripts/validate_enterprise.ps1:211`, strict validation (`frontend/`: `npm run typecheck=PASS`, `npm run build=PASS`, `@ts-nocheck=0`), source mix (`frontend/src`: `js/jsx=0`, `ts/tsx=43`) |
 | L | Blue/green or canary deployment with automatic rollback | Completed | `scripts/deploy_canary.sh:1`, `scripts/canary_verify.sh:1`, `docker-compose.yml:3`, `docker-compose.install.yml:3`, `docker-compose.coolify.yml:3`, `.github/workflows/canary-deploy.yml:1`, `docs/DEPLOYMENT.md:86` |
 | L | Real disaster drill (backup + restore), documented and repeatable | Completed | `scripts/disaster_drill.sh:1`, `.github/workflows/disaster-drill.yml:1`, `docs/DISASTER_DRILL.md:1`, `docs/DEPLOYMENT.md:110` |
-| XL | Expansion phase: NLQ, pgvector, MCP, then WASM edge/extensions | Completed | `docs/ROADMAP.md:33`, `docs/ROADMAP.md:34`, `docs/ROADMAP.md:35`, `docs/ROADMAP.md:42`, `internal/api/vector.go:260`, `internal/api/nlq.go:1`, `internal/api/mcp.go:1`, `internal/api/functions.go:1`, `internal/api/extensions_marketplace.go:1`, `internal/realtime/bridge.go:1`, `internal/api/realtime_status.go:1`, `cmd/OzyBase/main.go:425`, `internal/api/admin_audit.go:41`, `scripts/smoke_api.sh:159` |
+| XL | Expansion phase: NLQ, pgvector, MCP, then WASM edge/extensions | Completed | `docs/ROADMAP.md:33`, `docs/ROADMAP.md:34`, `docs/ROADMAP.md:35`, `docs/ROADMAP.md:42`, `internal/api/vector.go:260`, `internal/api/nlq.go:1`, `internal/api/mcp.go:1`, `internal/api/functions.go:1`, `internal/api/extensions_marketplace.go:1`, `internal/realtime/bridge.go:1`, `internal/api/realtime_status.go:1`, `cmd/ozybase/main.go:425`, `internal/api/admin_audit.go:41`, `scripts/smoke_api.sh:159` |
 
 ## Notes
 
