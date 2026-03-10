@@ -6,6 +6,8 @@ const AutoFixModal = ({ isOpen, onClose, issue, onConfirm }) => {
 
     if (!isOpen || !issue) return null;
 
+    const isRLSIssue = issue.type === 'security' && (issue.title.includes('Row Level Security') || issue.title.includes('RLS policies'));
+
     const handleConfirm = async () => {
         setLoading(true);
         try {
@@ -57,14 +59,15 @@ const AutoFixModal = ({ isOpen, onClose, issue, onConfirm }) => {
                             </p>
 
                             <div className="space-y-3 pt-2">
-                                {issue.type === 'security' && issue.title.includes('Row Level Security') && (
+                                {isRLSIssue && (
                                     <>
                                         <div className="flex gap-3 text-xs">
                                             <div className="mt-1 shrink-0"><Check size={14} className="text-green-500" /></div>
-                                            <p className="text-zinc-400">Enables <span className="text-green-500 font-bold">Row Level Security (RLS)</span> on this table.</p>
+                                            <p className="text-zinc-400">Enables <span className="text-green-500 font-bold">Row Level Security (RLS)</span> and creates the missing operation policies on this table.</p>
                                         </div>
                                         <div className="p-3 bg-black/40 rounded-lg border border-white/5 font-mono text-[9px] text-zinc-500 leading-tight">
-                                            <span className="text-primary">ALTER TABLE</span> {issue.title.split('`')[1] || 'table'} <span className="text-primary">ENABLE ROW LEVEL SECURITY</span>;
+                                            <span className="text-primary">ALTER TABLE</span> {issue.title.split('`')[1] || issue.title.split(' ')[1] || 'table'} <span className="text-primary">ENABLE ROW LEVEL SECURITY</span>;<br />
+                                            <span className="text-primary">CREATE POLICY</span> ... <span className="text-primary">FOR</span> SELECT | INSERT | UPDATE | DELETE ...
                                         </div>
                                     </>
                                 )}
