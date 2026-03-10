@@ -141,3 +141,55 @@ func TestIsRLSHealthFixIssue(t *testing.T) {
 		})
 	}
 }
+
+func TestInferRLSAutoFixRuleFromColumns(t *testing.T) {
+	tests := []struct {
+		name      string
+		tableName string
+		columns   map[string]struct{}
+		want      string
+	}{
+		{
+			name:      "prefers owner id columns",
+			tableName: "orders",
+			columns: map[string]struct{}{
+				"owner_id": {},
+				"id":       {},
+			},
+			want: "owner_id = auth.uid()",
+		},
+		{
+			name:      "falls back to users id",
+			tableName: "users",
+			columns: map[string]struct{}{
+				"id": {},
+			},
+			want: "id = auth.uid()",
+		},
+		{
+			name:      "falls back to internal users id",
+			tableName: "_v_users",
+			columns: map[string]struct{}{
+				"id": {},
+			},
+			want: "id = auth.uid()",
+		},
+		{
+			name:      "returns empty when no safe rule exists",
+			tableName: "products",
+			columns: map[string]struct{}{
+				"id": {},
+			},
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := inferRLSAutoFixRuleFromColumns(tt.tableName, tt.columns)
+			if got != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, got)
+			}
+		})
+	}
+}

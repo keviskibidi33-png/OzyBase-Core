@@ -1329,17 +1329,34 @@ func isRLSHealthFixIssue(issueType, issue string) bool {
 		strings.Contains(issueLower, " rls ")
 }
 
-func resolveRLSAutoFixRule(ctx context.Context, tx pgx.Tx, tableName string) (string, error) {
-	ownerColumn, ownerErr := resolveRLSOwnerColumn(ctx, tx, tableName)
-	if ownerErr != nil {
-		return "", ownerErr
+func inferRLSAutoFixRuleFromColumns(tableName string, available map[string]struct{}) string {
+	for _, candidate := range []string{"owner_id", "user_id", "created_by"} {
+		if _, ok := available[candidate]; ok {
+			return fmt.Sprintf("%s = auth.uid()", candidate)
+		}
 	}
-	if ownerColumn != "" {
-		return fmt.Sprintf("%s = auth.uid()", ownerColumn), nil
+
+	if (tableName == "users" || tableName == "_v_users") {
+		if _, ok := available["id"]; ok {
+			return "id = auth.uid()"
+		}
+	}
+
+	return ""
+}
+
+func resolveRLSAutoFixRule(ctx context.Context, tx pgx.Tx, tableName string) (string, error) {
+	available, err := getTableColumnSet(ctx, tx, tableName)
+	if err != nil {
+		return "", err
+	}
+
+	if rule := inferRLSAutoFixRuleFromColumns(tableName, available); rule != "" {
+		return rule, nil
 	}
 
 	var rule string
-	err := tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT COALESCE(NULLIF(qual, ''), NULLIF(with_check, ''))
 		FROM pg_policies
 		WHERE schemaname = 'public' AND tablename = $1
@@ -1714,14 +1731,14 @@ func (h *Handler) EnforceRLSAll(c echo.Context) error {
 	})
 }
 
-func resolveRLSOwnerColumn(ctx context.Context, tx pgx.Tx, tableName string) (string, error) {
+func getTableColumnSet(ctx context.Context, tx pgx.Tx, tableName string) (map[string]struct{}, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT column_name
 		FROM information_schema.columns
 		WHERE table_schema = 'public' AND table_name = $1
 	`, tableName)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -1733,9 +1750,23 @@ func resolveRLSOwnerColumn(ctx context.Context, tx pgx.Tx, tableName string) (st
 		}
 	}
 
+	return available, rows.Err()
+}
+
+func resolveRLSOwnerColumn(ctx context.Context, tx pgx.Tx, tableName string) (string, error) {
+	available, err := getTableColumnSet(ctx, tx, tableName)
+	if err != nil {
+		return "", err
+	}
+
 	for _, candidate := range []string{"owner_id", "user_id", "created_by"} {
 		if _, ok := available[candidate]; ok {
 			return candidate, nil
+		}
+	}
+	if (tableName == "users" || tableName == "_v_users") {
+		if _, ok := available["id"]; ok {
+			return "id", nil
 		}
 	}
 	return "", nil
