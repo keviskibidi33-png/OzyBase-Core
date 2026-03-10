@@ -43,9 +43,7 @@ import {
     Server,
     Check,
     Trash2,
-    ShieldBan,
-    AlertTriangle,
-    Briefcase
+    ShieldBan
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
 
@@ -54,7 +52,6 @@ import ConnectionModal from './ConnectionModal';
 import NotificationCenter from './NotificationCenter';
 import AutoFixModal from './AutoFixModal';
 import ConfirmModal from './ConfirmModal';
-import WorkspaceSwitcher from './WorkspaceSwitcher';
 const PRIMARY_NAV = [
     { id: 'overview', icon: Home, label: 'Home' },
     { id: 'tables', icon: Table2, label: 'Table Editor' },
@@ -132,20 +129,10 @@ const SUBMENUS = {
         { id: 'extensions', name: 'PG Extensions', icon: Cpu },
         { id: 'vault', name: 'Vault', icon: Shield },
         { id: 'graphql', name: 'GraphQL', icon: Code }
-    ],
-    workspace_settings: [
-        { id: 'ws_general', name: 'General', icon: Settings },
-        { id: 'ws_members', name: 'Team Members', icon: Users },
-        { id: 'ws_danger', name: 'Danger Zone', icon: AlertTriangle }
-    ],
-    workspaces: [
-        { id: 'wm_overview', name: 'My Projects', icon: Briefcase },
-        { id: 'wm_shared', name: 'Shared with me', icon: Users },
-        { id: 'wm_templates', name: 'Templates', icon: LayoutGrid }
     ]
 };
 
-const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuViewSelect, tables = [], refreshTables, onWorkspaceChange }) => {
+const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuViewSelect, tables = [], refreshTables }) => {
     const [dbStatus, setDbStatus] = useState('Checking...');
     const [user] = useState(() => {
         const storedUser = localStorage.getItem('ozy_user');
@@ -321,6 +308,7 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
     const handleLogout = React.useCallback(() => {
         localStorage.removeItem('ozy_token');
         localStorage.removeItem('ozy_user');
+        localStorage.removeItem('ozy_workspace_id');
         window.location.reload();
     }, []);
 
@@ -343,8 +331,6 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
         if (['intro', 'auth_api', 'db_api', 'storage_api', 'realtime_api', 'edge_api', 'sdk'].includes(selectedView)) currentModule = 'docs';
         if (['wrappers', 'webhooks', 'cron', 'extensions', 'vault', 'graphql'].includes(selectedView)) currentModule = 'integrations';
         if (['general', 'infrastructure', 'billing', 'api_keys'].includes(selectedView)) currentModule = 'settings';
-        if (['ws_general', 'ws_members', 'ws_danger'].includes(selectedView)) currentModule = 'workspace_settings';
-        if (['wm_overview', 'wm_shared', 'wm_templates'].includes(selectedView)) currentModule = 'workspaces';
 
         const activeSubmenu = SUBMENUS[currentModule] || [
             { id: 'general', name: 'Dashboard', icon: LayoutGrid },
@@ -682,12 +668,6 @@ const Layout = ({ children, selectedView, selectedTable, onTableSelect, onMenuVi
                         <span className="ml-3 font-black text-white italic tracking-tighter text-xl uppercase animate-in fade-in duration-300 truncate">OzyBase</span>
                     )}
                 </div>
-
-                <WorkspaceSwitcher 
-                    isExpanded={isExpanded}
-                    onWorkspaceChange={onWorkspaceChange} 
-                    onViewSelect={onMenuViewSelect} 
-                />
 
                 <div className="flex-1 flex flex-col gap-1 w-full overflow-y-auto scrollbar-hide px-2">
                     {PRIMARY_NAV.map((item, i) => {

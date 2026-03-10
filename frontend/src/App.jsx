@@ -26,19 +26,20 @@ const TwoFactorAuth = lazy(() => import('./components/TwoFactorAuth'));
 const IntegrationsManager = lazy(() => import('./components/IntegrationsManager'));
 const SetupWizard = lazy(() => import('./components/SetupWizard'));
 const FirewallManager = lazy(() => import('./components/FirewallManager'));
-const WorkspaceManager = lazy(() => import('./components/WorkspaceManager'));
-const WorkspaceSettings = lazy(() => import('./components/WorkspaceSettings'));
 
 const isLikelyJWT = (value) => /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value);
 
 function App() {
+    useEffect(() => {
+        localStorage.removeItem('ozy_workspace_id');
+    }, []);
+
     const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('ozy_token'));
     const [isSystemInitialized, setIsSystemInitialized] = useState(true);
     const [checkingSystem, setCheckingSystem] = useState(true);
     const [selectedView, setSelectedView] = useState('overview');
     const [selectedTable, setSelectedTable] = useState(null);
     const [tables, setTables] = useState([]);
-    const [workspaceId, setWorkspaceId] = useState(localStorage.getItem('ozy_workspace_id'));
 
     const loadTables = useCallback(() => {
         fetchWithAuth('/api/collections')
@@ -66,7 +67,7 @@ function App() {
         if (isAuthenticated) {
             loadTables();
         }
-    }, [isAuthenticated, workspaceId, loadTables, checkSystemStatus]);
+    }, [isAuthenticated, loadTables, checkSystemStatus]);
 
     useEffect(() => {
         const url = new URL(window.location.href);
@@ -213,16 +214,6 @@ function App() {
             case 'vault':
             case 'graphql':
                 return <Integrations page={selectedView === 'integrations' ? 'wrappers' : selectedView} />;
-            case 'workspaces':
-            case 'wm_overview':
-            case 'wm_shared':
-            case 'wm_templates':
-                return <WorkspaceManager onWorkspaceChange={(id) => setWorkspaceId(id)} onViewSelect={setSelectedView} view={selectedView.startsWith('wm_') ? selectedView : 'wm_overview'} />;
-            case 'workspace_settings':
-            case 'ws_general':
-            case 'ws_members':
-            case 'ws_danger':
-                return <WorkspaceSettings workspaceId={workspaceId} view={selectedView.startsWith('ws_') ? selectedView : 'ws_general'} />;
             default: return <Overview onTableSelect={handleTableSelect} />;
         }
     };
@@ -234,7 +225,6 @@ function App() {
             onTableSelect={handleTableSelect}
             tables={tables}
             refreshTables={loadTables}
-            onWorkspaceChange={(id) => setWorkspaceId(id)}
             onMenuViewSelect={(view) => {
                 setSelectedView(view);
                 setSelectedTable(null);

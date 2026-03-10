@@ -1,11 +1,9 @@
 export const fetchWithAuth = async (url, options = {}) => {
     const token = localStorage.getItem('ozy_token');
-    const workspaceId = localStorage.getItem('ozy_workspace_id');
 
     const headers = {
         'Content-Type': 'application/json',
         ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        ...(workspaceId ? { 'X-Workspace-Id': workspaceId } : {}),
         ...options.headers,
     };
 
@@ -15,6 +13,7 @@ export const fetchWithAuth = async (url, options = {}) => {
         // Clear auth on 401 and reload
         localStorage.removeItem('ozy_token');
         localStorage.removeItem('ozy_user');
+        localStorage.removeItem('ozy_workspace_id');
         window.location.reload();
         throw new Error('Unauthorized');
     }

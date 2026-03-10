@@ -417,8 +417,6 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 	functionsHandler := api.NewFunctionsHandler(h.DB, "./functions")
 	webhookHandler := api.NewWebhookHandler(h.DB)
 	cronHandler := api.NewCronHandler(h.DB, cronMgr)
-	workspaceService := core.NewWorkspaceService(h.DB)
-	workspaceHandler := api.NewWorkspaceHandler(workspaceService, mailSvc)
 
 	// API Groups and Middlewares
 	authRequired := api.AuthMiddleware(h.DB, cfg.JWTSecret, false)
@@ -431,23 +429,12 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 
 	apiGroup := e.Group("/api")
 	apiGroup.Use(api.MetricsMiddleware(h))
-	apiGroup.Use(api.WorkspaceMiddleware(h.DB, cfg.JWTSecret)) // 🏢 Multi-Tenancy isolation
 	{
 		apiGroup.GET("/health", h.Health)
 		apiGroup.GET("/project/metrics", h.GetPrometheusMetrics) // 📊 Enterprise Phase 1
 		apiGroup.GET("/project/stats", h.GetStats, authRequired)
 		apiGroup.GET("/realtime", realtimeHandler.Stream)
 		apiGroup.GET("/project/realtime/status", h.GetRealtimeStatus, authRequired, adminOnly)
-
-		// Workspaces
-		workspacesGroup := apiGroup.Group("/workspaces", authRequired)
-		workspacesGroup.POST("", workspaceHandler.Create)
-		workspacesGroup.GET("", workspaceHandler.List)
-		workspacesGroup.PATCH("/:id", workspaceHandler.Update)
-		workspacesGroup.DELETE("/:id", workspaceHandler.Delete)
-		workspacesGroup.GET("/:id/members", workspaceHandler.ListMembers)
-		workspacesGroup.POST("/:id/members", workspaceHandler.AddMember)
-		workspacesGroup.DELETE("/:id/members/:userId", workspaceHandler.RemoveMember)
 
 		// ... (Auth/System/etc) ...
 
