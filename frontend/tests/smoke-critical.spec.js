@@ -4,7 +4,7 @@ import { test, expect } from '@playwright/test';
 const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL || 'admin@ozybase.local';
 const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD || 'OzyBase123!';
 
-test('critical UI smoke: login + modules + workspace endpoint', async ({ page }) => {
+test('critical UI smoke: login + modules + authenticated project endpoints', async ({ page }) => {
   await page.goto('/');
   await page.waitForLoadState('networkidle');
 
@@ -25,9 +25,9 @@ test('critical UI smoke: login + modules + workspace endpoint', async ({ page })
   await page.getByRole('button', { name: 'Security Hub' }).click();
   await expect(page.getByText('Global Security')).toBeVisible({ timeout: 15000 });
 
-  const workspaceStatus = await page.evaluate(async () => {
+  const projectKeysStatus = await page.evaluate(async () => {
     const token = localStorage.getItem('ozy_token');
-    const res = await fetch('/api/workspaces', {
+    const res = await fetch('/api/project/keys', {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -35,5 +35,5 @@ test('critical UI smoke: login + modules + workspace endpoint', async ({ page })
     return res.status;
   });
 
-  expect(workspaceStatus).toBe(200);
+  expect(projectKeysStatus).toBe(200);
 });

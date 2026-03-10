@@ -204,18 +204,12 @@ if not node_id:
     raise SystemExit("realtime status missing node_id")
 PY
 
-echo "[smoke] workspace flow"
-status_code="$(call_api GET /api/workspaces "" "$TOKEN")"
+echo "[smoke] single-project management endpoints"
+status_code="$(call_api GET /api/project/keys "" "$TOKEN")"
 require_status "$status_code" "200"
 
-workspace_name="ci_smoke_ws_$(date +%s)"
-workspace_payload="$(printf '{"name":"%s"}' "$workspace_name")"
-status_code="$(call_api POST /api/workspaces "$workspace_payload" "$TOKEN")"
-if [[ "$status_code" != "201" && "$status_code" != "409" ]]; then
-  echo "Workspace create failed with status ${status_code}" >&2
-  cat "$TMP_BODY" >&2
-  exit 1
-fi
+status_code="$(call_api GET /api/project/stats "" "$TOKEN")"
+require_status "$status_code" "200"
 
 echo "[smoke] table editor + SQL + security flow"
 table_name="ci_smoke_$(date +%s)"
