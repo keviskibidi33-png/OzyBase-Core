@@ -381,6 +381,27 @@ func (w *WebhookIntegration) listActiveIntegrations(ctx context.Context, onlySIE
 	return out, rows.Err()
 }
 
+func (w *WebhookIntegration) loadIntegrationByID(ctx context.Context, integrationID string) (Integration, error) {
+	var integration Integration
+	if w == nil || w.pool == nil {
+		return integration, fmt.Errorf("integration provider unavailable")
+	}
+
+	var configJSON []byte
+	err := w.pool.QueryRow(ctx, `
+		SELECT id, name, type, webhook_url, is_active, config
+		FROM _v_integrations
+		WHERE id = $1
+	`, integrationID).Scan(&integration.ID, &integration.Name, &integration.Type, &integration.WebhookURL, &integration.IsActive, &configJSON)
+	if err != nil {
+		return integration, err
+	}
+	if len(configJSON) > 0 {
+		_ = json.Unmarshal(configJSON, &integration.Config)
+	}
+	return integration, nil
+}
+
 // SendSecurityAlert enqueues alert deliveries to all active integrations.
 func (w *WebhookIntegration) SendSecurityAlert(ctx context.Context, alert SecurityAlertPayload) error {
 	if w == nil || w.pool == nil {
@@ -412,6 +433,29 @@ func (w *WebhookIntegration) SendSecurityAlert(ctx context.Context, alert Securi
 		}
 	}
 	return nil
+}
+
+// EnqueueSecurityAlertToIntegration queues a real test alert for a specific integration.
+func (w *WebhookIntegration) EnqueueSecurityAlertToIntegration(ctx context.Context, integrationID string, alert SecurityAlertPayload) error {
+	integration, err := w.loadIntegrationByID(ctx, integrationID)
+	if err != nil {
+		return err
+	}
+	if !integration.IsActive {
+		return fmt.Errorf("integration is disabled")
+	}
+
+	payload := any(alert)
+	switch integration.Type {
+	case IntegrationSlack:
+		payload = w.formatSlackMessage(alert)
+	case IntegrationDiscord:
+		payload = w.formatDiscordMessage(alert)
+	case IntegrationSIEM:
+		payload = w.formatSIEMMessage(alert)
+	}
+
+	return w.enqueueDelivery(ctx, integration, "security_alert_test", payload)
 }
 
 func (w *WebhookIntegration) formatSlackMessage(alert SecurityAlertPayload) map[string]any {

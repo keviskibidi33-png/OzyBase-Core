@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/mail"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/Xangel0s/OzyBase/internal/core"
@@ -18,6 +19,7 @@ type AuthService interface {
 	RequestPasswordReset(ctx context.Context, email string) (string, error)
 	ConfirmPasswordReset(ctx context.Context, token, newPassword string) error
 	VerifyEmail(ctx context.Context, token string) error
+	ListUsers(ctx context.Context, limit int) ([]core.User, error)
 	UpdateUserRole(ctx context.Context, userID, newRole string) error
 	HandleOAuthLogin(ctx context.Context, provider, providerID, email string, data map[string]any) (string, *core.User, error)
 	ListSessions(ctx context.Context, userID string) ([]core.Session, error)
@@ -156,6 +158,25 @@ func (h *AuthHandler) VerifyEmail(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{"message": "email verified successfully"})
+}
+
+func (h *AuthHandler) ListUsers(c echo.Context) error {
+	limit := 100
+	if raw := strings.TrimSpace(c.QueryParam("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 1000 {
+			limit = parsed
+		}
+	}
+
+	users, err := h.authService.ListUsers(c.Request().Context(), limit)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to list users"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"data":  users,
+		"total": len(users),
+	})
 }
 
 func (h *AuthHandler) UpdateRole(c echo.Context) error {

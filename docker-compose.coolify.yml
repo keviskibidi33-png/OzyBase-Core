@@ -9,8 +9,8 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
       PORT: "8090"
-      SITE_URL: ${SITE_URL:-https://api.example.com}
-      APP_DOMAIN: ${APP_DOMAIN:-example.com}
+      SITE_URL: ${SITE_URL:?set SITE_URL}
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN}
       DEBUG: ${DEBUG:-false}
       OZY_STRICT_SECURITY: ${OZY_STRICT_SECURITY:-true}
       ANON_KEY: ${ANON_KEY:-}

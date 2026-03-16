@@ -106,40 +106,22 @@ func (h *Handler) DeleteIntegration(c echo.Context) error {
 // TestIntegration handles POST /api/project/integrations/:id/test
 func (h *Handler) TestIntegration(c echo.Context) error {
 	id := c.Param("id")
-
-	// 1. Fetch integration
-	var i realtime.Integration
-	var configJSON []byte
-	err := h.DB.Pool.QueryRow(c.Request().Context(), `
-		SELECT id, name, type, webhook_url, config FROM _v_integrations WHERE id = $1
-	`, id).Scan(&i.ID, &i.Name, &i.Type, &i.WebhookURL, &configJSON)
-
-	if err != nil {
-		return c.JSON(http.StatusNotFound, map[string]string{"error": "Integration not found"})
+	if h.Integrations == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "integration service unavailable"})
 	}
 
-	if len(configJSON) > 0 {
-		_ = json.Unmarshal(configJSON, &i.Config)
-	}
-
-	// 2. Send test alert manually (using internal method logic simplified)
 	alert := realtime.SecurityAlertPayload{
 		Type:      "test_alert",
 		Severity:  "info",
 		Details:   map[string]any{"message": "This is a test alert from OzyBase"},
-		Timestamp: "now", // Should be time.Now() formatted but string is fine for json
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
 
-	// Silence lint error for now as we are stimulating a send
-	_ = alert
+	if err := h.Integrations.EnqueueSecurityAlertToIntegration(c.Request().Context(), id, alert); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
 
-	// Create a temporary integration service just for this test or use existing
-	// We can reuse the h.Integrations service but we need to expose a method to send to a specific integration
-	// For now, we will assume the test passes if we can find it, or implement a specific Test method in integrations.go
-	// But to keep it simple, we'll just return OK for now as we don't have a direct "SendToOne" method exported yet.
-	// TODO: Implement SendTestAlert in IntegrationService
-
-	return c.JSON(http.StatusOK, map[string]string{"status": "Test alert sent (simulation)", "integration": i.Name})
+	return c.JSON(http.StatusAccepted, map[string]string{"status": "queued", "message": "test alert queued for delivery"})
 }
 
 // GetIntegrationDeliveryMetrics returns queue/retry/DLQ delivery metrics per integration.

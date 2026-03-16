@@ -136,7 +136,7 @@ func run() error {
 	startRealtimePipelines(ctx, db, broker, dispatcher, ps, cfg)
 
 	// Setup Mailer
-	mailSvc := mailer.NewLogMailer()
+	mailSvc := buildMailer(cfg)
 
 	// 📝 Setup Audit Service (Go Best Practice: Async Logging)
 	auditService := core.NewAuditService(db)
@@ -184,6 +184,16 @@ func run() error {
 
 	logger.Log.Info().Msg("👋 Server exited")
 	return nil
+}
+
+func buildMailer(cfg *config.Config) mailer.Mailer {
+	if cfg != nil && cfg.SMTPHost != "" {
+		logger.Log.Info().Msg("SMTP mailer initialized")
+		return mailer.NewSMTPMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.SMTPFrom)
+	}
+
+	logger.Log.Warn().Msg("SMTP is not configured; email flows will use the console mailer")
+	return mailer.NewLogMailer()
 }
 
 func handleCLI(db *data.DB) bool {
@@ -398,13 +408,10 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 
 	// Services and Handlers
 	// Setup Mailer
-	var mailSvc mailer.Mailer
-	if cfg.SMTPHost != "" {
-		mailSvc = mailer.NewSMTPMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.SMTPFrom)
-		logger.Log.Info().Msg("📧 SMTP Mailer initialized")
-	} else {
-		mailSvc = mailer.NewLogMailer()
-		logger.Log.Info().Msg("📝 Log Mailer initialized (console only)")
+	mailSvc := h.Mailer
+	if mailSvc == nil {
+		mailSvc = buildMailer(cfg)
+		h.Mailer = mailSvc
 	}
 
 	authService := core.NewAuthService(h.DB, cfg.JWTSecret, mailSvc)
@@ -456,6 +463,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		authGroup.POST("/reset-password/confirm", authHandler.ConfirmReset)
 		authGroup.GET("/verify-email", authHandler.VerifyEmail)
 		authGroup.POST("/verify-email", authHandler.VerifyEmail)
+		authGroup.GET("/users", authHandler.ListUsers, authRequired, adminOnly)
 		authGroup.PATCH("/users/:id/role", authHandler.UpdateRole, authRequired, adminOnly)
 
 		// Social Login
@@ -607,70 +615,8 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.DELETE("/tables/:name/views/:id", h.DeleteTableView, authRequired)
 	}
 
-	// Create users table for demo if missing
-	ensureUsersTable(h.DB)
-
 	// Static Frontend (SPA)
 	api.RegisterStaticRoutes(e)
 
 	return e
-}
-
-func ensureUsersTable(db *data.DB) {
-	ctx := context.Background()
-	// Check if 'users' table exists in _v_collections
-	var exists bool
-	err := db.Pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM _v_collections WHERE name = 'users')").Scan(&exists)
-	if err != nil || exists {
-		return
-	}
-
-	log.Println("🛠️ Creating 'users' collection for the first time...")
-
-	// Simple mock schema registration
-	// We'll just create the table directly for this demo if it's missing from Postgres too
-	_, _ = db.Pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS users (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			email TEXT,
-			username TEXT,
-			is_verified BOOLEAN DEFAULT FALSE,
-			created_at TIMESTAMPTZ DEFAULT NOW(),
-			updated_at TIMESTAMPTZ DEFAULT NOW()
-		)
-	`)
-
-	// Register in metadata
-	_, _ = db.Pool.Exec(ctx, `
-		INSERT INTO _v_collections (name, schema_def, list_rule, create_rule)
-		VALUES ('users', '[]', 'public', 'public')
-		ON CONFLICT DO NOTHING
-	`)
-
-	// Insert some mock data
-	_, _ = db.Pool.Exec(ctx, `
-		INSERT INTO users (email, username, is_verified) VALUES
-		('alex.smith@example.com', 'asmith', true),
-		('jordan.doe@company.org', 'jdoe', false)
-		ON CONFLICT DO NOTHING
-	`)
-
-	// Create 'posts' table with Foreign Key to demonstrate visualizer connections
-	_, _ = db.Pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS posts (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-			title TEXT NOT NULL,
-			content TEXT,
-			published BOOLEAN DEFAULT FALSE,
-			created_at TIMESTAMPTZ DEFAULT NOW()
-		)
-	`)
-
-	// Register 'posts' in metadata
-	_, _ = db.Pool.Exec(ctx, `
-		INSERT INTO _v_collections (name, schema_def, list_rule, create_rule)
-		VALUES ('posts', '[]', 'public', 'public')
-		ON CONFLICT DO NOTHING
-	`)
 }

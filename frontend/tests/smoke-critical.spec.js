@@ -1,5 +1,4 @@
 import { test, expect } from '@playwright/test';
-/* global process */
 
 const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL || 'admin@ozybase.local';
 const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD || 'OzyBase123!';

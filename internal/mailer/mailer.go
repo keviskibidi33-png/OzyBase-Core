@@ -19,7 +19,7 @@ type Mailer interface {
 	SendWorkspaceInvite(to, workspaceName, inviterEmail string) error
 }
 
-// LogMailer is a mock mailer that logs emails to the console
+// LogMailer is a console fallback mailer used when SMTP is not configured.
 type LogMailer struct{}
 
 func NewLogMailer() *LogMailer {

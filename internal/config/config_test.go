@@ -59,6 +59,50 @@ func TestLoad_StrictSecurityRejectsInsecurePublicDatabaseURL(t *testing.T) {
 	}
 }
 
+func TestLoad_StrictSecurityRejectsPlaceholderDomains(t *testing.T) {
+	withTempDir(t)
+	resetEnv(t)
+
+	t.Setenv("OZY_STRICT_SECURITY", "true")
+	t.Setenv("DEBUG", "false")
+	t.Setenv("JWT_SECRET", "this_is_a_strong_secret_with_more_than_32_chars")
+	t.Setenv("SITE_URL", "https://api.example.com")
+	t.Setenv("APP_DOMAIN", "example.com")
+	t.Setenv("DATABASE_URL", "postgres://user:pass@db.internal:5432/db?sslmode=require")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatalf("expected Load() to reject placeholder domains in strict mode")
+	}
+}
+
+func TestLoad_WarnsWhenSMTPIsMissingInNonDebug(t *testing.T) {
+	withTempDir(t)
+	resetEnv(t)
+
+	t.Setenv("DEBUG", "false")
+	t.Setenv("JWT_SECRET", "this_is_a_strong_secret_with_more_than_32_chars")
+	t.Setenv("SITE_URL", "https://api.real-domain.test")
+	t.Setenv("APP_DOMAIN", "real-domain.test")
+	t.Setenv("DATABASE_URL", "postgres://user:pass@db.internal:5432/db?sslmode=require")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	found := false
+	for _, warning := range cfg.SecurityWarnings {
+		if warning == "SMTP_HOST is not configured; verification, reset, and invite emails will use the console mailer" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected SMTP warning when SMTP_HOST is missing")
+	}
+}
+
 func TestLoad_NonStrictWarnsOnInsecurePublicDatabaseURL(t *testing.T) {
 	withTempDir(t)
 	resetEnv(t)
@@ -122,7 +166,7 @@ func resetEnv(t *testing.T) {
 	keys := []string{
 		"DATABASE_URL", "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME", "DB_SSLMODE",
 		"JWT_SECRET", "ANON_KEY", "SERVICE_ROLE_KEY", "OZY_SERVICE_ROLE_KEY",
-		"SITE_URL", "APP_DOMAIN", "ALLOWED_ORIGINS", "DEBUG", "OZY_STRICT_SECURITY",
+		"SITE_URL", "APP_DOMAIN", "ALLOWED_ORIGINS", "DEBUG", "OZY_STRICT_SECURITY", "SMTP_HOST",
 	}
 	for _, k := range keys {
 		t.Setenv(k, "")

@@ -290,6 +290,35 @@ func (s *AuthService) VerifyEmail(ctx context.Context, token string) error {
 	return tx.Commit(ctx)
 }
 
+// ListUsers returns real users from the authentication store.
+func (s *AuthService) ListUsers(ctx context.Context, limit int) ([]User, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, email, role, is_verified, created_at, updated_at
+		FROM _v_users
+		ORDER BY created_at DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	users := make([]User, 0, limit)
+	for rows.Next() {
+		var user User
+		if scanErr := rows.Scan(&user.ID, &user.Email, &user.Role, &user.IsVerified, &user.CreatedAt, &user.UpdatedAt); scanErr != nil {
+			return nil, scanErr
+		}
+		users = append(users, user)
+	}
+
+	return users, rows.Err()
+}
+
 // UpdateUserRole updates a user's role
 func (s *AuthService) UpdateUserRole(ctx context.Context, userID, newRole string) error {
 	_, err := s.db.Pool.Exec(ctx, "UPDATE _v_users SET role = $1 WHERE id = $2", newRole, userID)

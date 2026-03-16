@@ -342,6 +342,32 @@ func validateSecurity(cfg *Config, debug, strict bool) ([]string, error) {
 		warnings = append(warnings, dbWarnings...)
 	}
 
+	if placeholderDomain(cfg.SiteURL) {
+		msg := "SITE_URL uses a placeholder example.* domain"
+		if strict && !debug {
+			return nil, errors.New(msg)
+		}
+		warnings = append(warnings, msg)
+	}
+	if placeholderDomain(cfg.AppDomain) {
+		msg := "APP_DOMAIN uses a placeholder example.* domain"
+		if strict && !debug {
+			return nil, errors.New(msg)
+		}
+		warnings = append(warnings, msg)
+	}
+	if siteURLUsesHTTP(cfg.SiteURL) && !debug {
+		msg := "SITE_URL should use https in non-debug mode"
+		if strict {
+			return nil, errors.New(msg)
+		}
+		warnings = append(warnings, msg)
+	}
+	if strings.TrimSpace(cfg.SMTPHost) == "" && !debug {
+		msg := "SMTP_HOST is not configured; verification, reset, and invite emails will use the console mailer"
+		warnings = append(warnings, msg)
+	}
+
 	if !debug {
 		for _, origin := range cfg.AllowedOrigins {
 			if origin == "*" {
@@ -429,6 +455,31 @@ func isHTTPURL(u string) bool {
 		return false
 	}
 	return parsed.Scheme == "http" || parsed.Scheme == "https"
+}
+
+func placeholderDomain(raw string) bool {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return false
+	}
+	if strings.Contains(value, "://") {
+		parsed, err := url.Parse(value)
+		if err == nil {
+			value = parsed.Hostname()
+		}
+	}
+	value = strings.ToLower(strings.TrimSpace(value))
+	return strings.HasSuffix(value, "example.com") ||
+		strings.HasSuffix(value, "example.org") ||
+		strings.HasSuffix(value, "example.net")
+}
+
+func siteURLUsesHTTP(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(parsed.Scheme, "http")
 }
 
 func dedupeStrings(items []string) []string {
