@@ -11,7 +11,7 @@ import (
 )
 
 // SaveFile saves a multipart file to the destination path with a unique name
-func SaveFile(fileHeader *multipart.FileHeader, storageDir string) (string, error) {
+func SaveFile(fileHeader *multipart.FileHeader, storageDir string) (savedName string, err error) {
 	// Create storage directory if it doesn't exist
 	if err := os.MkdirAll(filepath.Clean(storageDir), 0750); err != nil {
 		return "", fmt.Errorf("failed to create storage directory: %w", err)
@@ -22,7 +22,11 @@ func SaveFile(fileHeader *multipart.FileHeader, storageDir string) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("failed to open uploaded file: %w", err)
 	}
-	defer src.Close()
+	defer func() {
+		if closeErr := src.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("failed to close uploaded file: %w", closeErr)
+		}
+	}()
 
 	// Generate a unique filename: UUID_originalName
 	uniqueID := uuid.New().String()
@@ -34,14 +38,19 @@ func SaveFile(fileHeader *multipart.FileHeader, storageDir string) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("failed to create destination file: %w", err)
 	}
-	defer dst.Close()
+	defer func() {
+		if closeErr := dst.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("failed to close destination file: %w", closeErr)
+		}
+	}()
 
 	// Copy the contents
 	if _, err = io.Copy(dst, src); err != nil {
 		return "", fmt.Errorf("failed to copy file contents: %w", err)
 	}
 
-	return safeFilename, nil
+	savedName = safeFilename
+	return savedName, nil
 }
 
 // FileInfo represents basic file metadata

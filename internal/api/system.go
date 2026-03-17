@@ -116,7 +116,8 @@ func (h *Handler) SetupSystem(c echo.Context) error {
 	}
 
 	// 3. Apply configuration based on mode
-	if req.Mode == "secure" {
+	switch req.Mode {
+	case "secure":
 		// A. Enable Geo-Fencing for the provided country
 		if req.AllowCountry != "" {
 			config := map[string]any{
@@ -146,7 +147,7 @@ func (h *Handler) SetupSystem(c echo.Context) error {
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to initialize audit logs"})
 		}
-	} else if req.Mode == "migrate" {
+	case "migrate":
 		_, err = tx.Exec(c.Request().Context(), `
 			INSERT INTO _v_audit_logs (method, path, status, country)
 			VALUES ('SYSTEM', 'SETUP_MIGRATE', 200, 'SYSTEM')

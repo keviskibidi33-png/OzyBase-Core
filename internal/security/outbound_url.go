@@ -37,7 +37,7 @@ func ValidateOutboundURL(raw string, opts OutboundURLOptions) (*url.URL, error) 
 	}
 
 	scheme := strings.ToLower(parsed.Scheme)
-	if scheme != "https" && !(opts.AllowHTTP && scheme == "http") {
+	if scheme != "https" && (scheme != "http" || !opts.AllowHTTP) {
 		return nil, fmt.Errorf("only https is allowed")
 	}
 

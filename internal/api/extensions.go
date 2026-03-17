@@ -61,7 +61,7 @@ func (h *Handler) ToggleExtension(c echo.Context) error {
 
 	// Ensure name is alphanumeric + underscores/hyphens
 	for _, r := range name {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-') {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' && r != '-' {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid extension name"})
 		}
 	}

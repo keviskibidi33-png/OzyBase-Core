@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -121,7 +122,11 @@ func (s *GeoService) GetLocation(ctx context.Context, ip string) (GeoInfo, error
 	if err != nil {
 		return GeoInfo{}, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Printf("failed to close geo lookup response body for %s: %v", ip, closeErr)
+		}
+	}()
 
 	var apiResp struct {
 		Status  string  `json:"status"`

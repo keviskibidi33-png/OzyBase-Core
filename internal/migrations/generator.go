@@ -22,9 +22,9 @@ func NewGenerator(path string) *Generator {
 }
 
 // CreateMigration generates a new .sql file with the given name and content
-func (g *Generator) CreateMigration(name string, sql string) (string, error) {
+func (g *Generator) CreateMigration(name string, sql string) (fileName string, err error) {
 	timestamp := time.Now().Format("20060102150405")
-	fileName := fmt.Sprintf("%s_%s.sql", timestamp, name)
+	fileName = fmt.Sprintf("%s_%s.sql", timestamp, name)
 	filePath := filepath.Join(g.MigrationsPath, fileName)
 
 	// Create file
@@ -32,10 +32,14 @@ func (g *Generator) CreateMigration(name string, sql string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to create migration file: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("failed to close migration file: %w", closeErr)
+		}
+	}()
 
 	// Write SQL content
-	_, err = f.WriteString(fmt.Sprintf("-- OzyBase Auto-Generated Migration\n-- Description: %s\n\n%s", name, sql))
+	_, err = fmt.Fprintf(f, "-- OzyBase Auto-Generated Migration\n-- Description: %s\n\n%s", name, sql)
 	if err != nil {
 		return "", fmt.Errorf("failed to write migration content: %w", err)
 	}

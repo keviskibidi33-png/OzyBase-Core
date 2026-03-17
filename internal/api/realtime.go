@@ -31,7 +31,9 @@ func (h *RealtimeHandler) Stream(c echo.Context) error {
 	defer h.Broker.Unsubscribe(eventChan)
 
 	// Send initial comment to keep connection alive
-	fmt.Fprintf(w, ": welcome to OzyBase realtime\n\n")
+	if _, err := fmt.Fprintf(w, ": welcome to OzyBase realtime\n\n"); err != nil {
+		return nil
+	}
 	w.Flush()
 
 	ctx := c.Request().Context()
@@ -43,7 +45,9 @@ func (h *RealtimeHandler) Stream(c echo.Context) error {
 			if err != nil {
 				continue
 			}
-			fmt.Fprintf(w, "data: %s\n\n", msg)
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", msg); err != nil {
+				return nil
+			}
 			w.Flush()
 		case <-ctx.Done():
 			return nil

@@ -226,13 +226,14 @@ func (h *Handler) ListExtensionMarketplace(c echo.Context) error {
 		item.InstalledVersion = strings.TrimSpace(installedRaw)
 		item.UpdatedAt = updatedAt
 
-		if item.Kind == "postgres" {
+		switch item.Kind {
+		case "postgres":
 			if v, ok := pgInstalled[item.ExtensionName]; ok {
 				item.Installed = true
 				item.Status = "installed"
 				item.InstalledVersion = v
 			}
-		} else if item.Kind == "wasm" {
+		case "wasm":
 			item.Installed = strings.EqualFold(item.Status, "installed")
 			if item.InstalledVersion == "" && item.Installed {
 				item.InstalledVersion = item.Version

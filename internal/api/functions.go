@@ -135,7 +135,7 @@ func (h *FunctionsHandler) invokeJavaScript(c echo.Context, script string) (any,
 	return value.Export(), nil
 }
 
-func invokeWASMModule(ctx context.Context, moduleBytes []byte, entrypoint string, payload map[string]any, timeoutMS int) (map[string]any, error) {
+func invokeWASMModule(ctx context.Context, moduleBytes []byte, entrypoint string, payload map[string]any, timeoutMS int) (result map[string]any, err error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMS)*time.Millisecond)
 	defer cancel()
 
@@ -144,7 +144,11 @@ func invokeWASMModule(ctx context.Context, moduleBytes []byte, entrypoint string
 	var stderr bytes.Buffer
 
 	rt := wazero.NewRuntime(timeoutCtx)
-	defer rt.Close(timeoutCtx)
+	defer func() {
+		if closeErr := rt.Close(timeoutCtx); closeErr != nil && err == nil {
+			err = errors.New("failed to close wasm runtime: " + closeErr.Error())
+		}
+	}()
 	if _, err := wasi_snapshot_preview1.Instantiate(timeoutCtx, rt); err != nil {
 		return nil, errors.New("failed to instantiate WASI runtime: " + err.Error())
 	}
@@ -162,7 +166,11 @@ func invokeWASMModule(ctx context.Context, moduleBytes []byte, entrypoint string
 	if err != nil {
 		return nil, errors.New("failed to instantiate wasm module: " + err.Error())
 	}
-	defer module.Close(timeoutCtx)
+	defer func() {
+		if closeErr := module.Close(timeoutCtx); closeErr != nil && err == nil {
+			err = errors.New("failed to close wasm module: " + closeErr.Error())
+		}
+	}()
 
 	callName := strings.TrimSpace(entrypoint)
 	if callName == "" {
@@ -187,13 +195,14 @@ func invokeWASMModule(ctx context.Context, moduleBytes []byte, entrypoint string
 		}
 	}
 
-	return map[string]any{
+	result = map[string]any{
 		"runtime":    "wasm",
 		"entrypoint": callName,
 		"output":     parsedOutput,
 		"stdout":     outputRaw,
 		"stderr":     strings.TrimSpace(stderr.String()),
-	}, nil
+	}
+	return result, nil
 }
 
 func (h *FunctionsHandler) List(c echo.Context) error {

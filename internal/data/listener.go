@@ -16,7 +16,11 @@ func ListenDB(ctx context.Context, databaseURL string, broker *realtime.Broker) 
 	if err != nil {
 		log.Fatalf("Realtime listener failed to connect: %v", err)
 	}
-	defer conn.Close(ctx)
+	defer func() {
+		if closeErr := conn.Close(context.Background()); closeErr != nil {
+			log.Printf("Realtime listener failed to close connection: %v", closeErr)
+		}
+	}()
 
 	_, err = conn.Exec(ctx, "LISTEN OzyBase_events")
 	if err != nil {

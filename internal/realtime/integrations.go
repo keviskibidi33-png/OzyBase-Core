@@ -222,7 +222,11 @@ func (w *WebhookIntegration) deliverQueuedJob(ctx context.Context, job deliveryJ
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Printf("[integrations] failed to close webhook response body (integration=%s): %v", job.Integration.ID, closeErr)
+		}
+	}()
 
 	if _, err := w.pool.Exec(ctx, `
 		UPDATE _v_integrations

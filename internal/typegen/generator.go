@@ -25,7 +25,7 @@ type TableMetadata struct {
 	Fields []data.FieldSchema
 }
 
-func (g *Generator) Generate(outputPath string) error {
+func (g *Generator) Generate(outputPath string) (err error) {
 	ctx := context.Background()
 	rows, err := g.db.Pool.Query(ctx, "SELECT name, schema_def FROM _v_collections ORDER BY name ASC")
 	if err != nil {
@@ -56,7 +56,11 @@ func (g *Generator) Generate(outputPath string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("failed to close generated type file: %w", closeErr)
+		}
+	}()
 
 	tmpl, err := template.New("ts").Funcs(template.FuncMap{
 		"MapType": mapType,
@@ -65,9 +69,12 @@ func (g *Generator) Generate(outputPath string) error {
 		return err
 	}
 
-	return tmpl.Execute(f, map[string]any{
+	if err = tmpl.Execute(f, map[string]any{
 		"Tables": tables,
-	})
+	}); err != nil {
+		return fmt.Errorf("failed to render generated types: %w", err)
+	}
+	return nil
 }
 
 func mapType(field data.FieldSchema) string {

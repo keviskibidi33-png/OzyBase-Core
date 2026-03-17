@@ -25,7 +25,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
 		os.Exit(1)
 	}
-	defer conn.Close(context.Background())
+	defer func() {
+		if closeErr := conn.Close(context.Background()); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to close database connection: %v\n", closeErr)
+		}
+	}()
 
 	_, err = conn.Exec(context.Background(), "DELETE FROM _v_users WHERE role = 'admin'")
 	if err != nil {

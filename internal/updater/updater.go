@@ -40,7 +40,7 @@ type Options struct {
 }
 
 // Upgrade downloads and installs the latest release binary for the current OS/ARCH.
-func Upgrade(opts Options) (string, error) {
+func Upgrade(opts Options) (message string, err error) {
 	repo := opts.Repo
 	if repo == "" {
 		repo = defaultRepo
@@ -64,7 +64,7 @@ func Upgrade(opts Options) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer removeAllIntoErr(tmpDir, &err)
 
 	archivePath := filepath.Join(tmpDir, archiveName)
 	if err := downloadFile(assetURL, archivePath); err != nil {
@@ -90,10 +90,11 @@ func Upgrade(opts Options) (string, error) {
 		return "", err
 	}
 
-	return fmt.Sprintf("upgraded to %s (%s)", release.TagName, installedPath), nil
+	message = fmt.Sprintf("upgraded to %s (%s)", release.TagName, installedPath)
+	return message, nil
 }
 
-func fetchRelease(repo, version string) (*releaseResponse, error) {
+func fetchRelease(repo, version string) (release *releaseResponse, err error) {
 	endpoint := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
 	if version != "" {
 		tag := version
@@ -124,7 +125,7 @@ func fetchRelease(repo, version string) (*releaseResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fetch release metadata: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeIntoErr("release metadata response body", resp.Body, &err)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
@@ -132,13 +133,14 @@ func fetchRelease(repo, version string) (*releaseResponse, error) {
 	}
 
 	var out releaseResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err = json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, fmt.Errorf("decode release metadata: %w", err)
 	}
 	if out.TagName == "" {
 		return nil, errors.New("release metadata missing tag_name")
 	}
-	return &out, nil
+	release = &out
+	return release, nil
 }
 
 func expectedAssetNames(tag string) (string, string) {
@@ -163,7 +165,7 @@ func findAssetURL(assets []releaseAsset, name string) string {
 	return ""
 }
 
-func downloadFile(url, dest string) error {
+func downloadFile(url, dest string) (err error) {
 	if _, err := security.ValidateOutboundURL(url, security.OutboundURLOptions{
 		AllowHTTP: false,
 		AllowedHosts: map[string]struct{}{
@@ -191,7 +193,7 @@ func downloadFile(url, dest string) error {
 	if err != nil {
 		return fmt.Errorf("download archive: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeIntoErr("archive response body", resp.Body, &err)
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return fmt.Errorf("archive download failed: %s (%s)", resp.Status, strings.TrimSpace(string(body)))
@@ -201,7 +203,7 @@ func downloadFile(url, dest string) error {
 	if err != nil {
 		return fmt.Errorf("create archive file: %w", err)
 	}
-	defer out.Close()
+	defer closeIntoErr("archive file", out, &err)
 
 	if _, err := io.Copy(out, resp.Body); err != nil {
 		return fmt.Errorf("write archive file: %w", err)
@@ -216,12 +218,12 @@ func extractBinary(archivePath, outDir, binaryName string) (string, error) {
 	return extractTarGzBinary(archivePath, outDir, binaryName)
 }
 
-func extractZipBinary(archivePath, outDir, binaryName string) (string, error) {
+func extractZipBinary(archivePath, outDir, binaryName string) (destPath string, err error) {
 	r, err := zip.OpenReader(archivePath)
 	if err != nil {
 		return "", fmt.Errorf("open zip archive: %w", err)
 	}
-	defer r.Close()
+	defer closeIntoErr("zip archive", r, &err)
 
 	for _, f := range r.File {
 		if filepath.Base(f.Name) != binaryName {
@@ -231,19 +233,16 @@ func extractZipBinary(archivePath, outDir, binaryName string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("open zip binary: %w", err)
 		}
-		defer src.Close()
+		defer closeIntoErr("zip binary", src, &err)
 
-		destPath := filepath.Join(outDir, binaryName)
+		destPath = filepath.Join(outDir, binaryName)
 		dst, err := os.Create(destPath)
 		if err != nil {
 			return "", fmt.Errorf("create extracted binary: %w", err)
 		}
+		defer closeIntoErr("extracted binary", dst, &err)
 		if _, err := io.Copy(dst, src); err != nil {
-			_ = dst.Close()
 			return "", fmt.Errorf("extract zip binary: %w", err)
-		}
-		if err := dst.Close(); err != nil {
-			return "", fmt.Errorf("close extracted binary: %w", err)
 		}
 		return destPath, nil
 	}
@@ -251,18 +250,18 @@ func extractZipBinary(archivePath, outDir, binaryName string) (string, error) {
 	return "", fmt.Errorf("binary %q not found in zip archive", binaryName)
 }
 
-func extractTarGzBinary(archivePath, outDir, binaryName string) (string, error) {
+func extractTarGzBinary(archivePath, outDir, binaryName string) (destPath string, err error) {
 	f, err := os.Open(archivePath)
 	if err != nil {
 		return "", fmt.Errorf("open archive: %w", err)
 	}
-	defer f.Close()
+	defer closeIntoErr("archive file", f, &err)
 
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		return "", fmt.Errorf("open gzip stream: %w", err)
 	}
-	defer gz.Close()
+	defer closeIntoErr("gzip stream", gz, &err)
 
 	tr := tar.NewReader(gz)
 	for {
@@ -277,17 +276,14 @@ func extractTarGzBinary(archivePath, outDir, binaryName string) (string, error) 
 			continue
 		}
 
-		destPath := filepath.Join(outDir, binaryName)
+		destPath = filepath.Join(outDir, binaryName)
 		dst, err := os.Create(destPath)
 		if err != nil {
 			return "", fmt.Errorf("create extracted binary: %w", err)
 		}
+		defer closeIntoErr("extracted binary", dst, &err)
 		if _, err := io.Copy(dst, tr); err != nil {
-			_ = dst.Close()
 			return "", fmt.Errorf("extract tar binary: %w", err)
-		}
-		if err := dst.Close(); err != nil {
-			return "", fmt.Errorf("close extracted binary: %w", err)
 		}
 		return destPath, nil
 	}
@@ -318,4 +314,16 @@ func installBinary(newBinaryPath, currentExecutablePath string) (string, error) 
 	}
 
 	return currentExecutablePath, nil
+}
+
+func closeIntoErr(name string, closer io.Closer, errp *error) {
+	if closeErr := closer.Close(); closeErr != nil && *errp == nil {
+		*errp = fmt.Errorf("close %s: %w", name, closeErr)
+	}
+}
+
+func removeAllIntoErr(path string, errp *error) {
+	if removeErr := os.RemoveAll(path); removeErr != nil && *errp == nil {
+		*errp = fmt.Errorf("remove temp dir: %w", removeErr)
+	}
 }

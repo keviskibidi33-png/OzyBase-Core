@@ -91,7 +91,11 @@ func (d *WebhookDispatcher) Dispatch(event Event) {
 				log.Printf("Webhook failed to %s: %v", t.URL, err)
 				return
 			}
-			defer resp.Body.Close()
+			defer func() {
+				if closeErr := resp.Body.Close(); closeErr != nil {
+					log.Printf("Failed to close webhook response body for %s: %v", t.URL, closeErr)
+				}
+			}()
 			log.Printf("Webhook sent to %s with status %d", t.URL, resp.StatusCode)
 		}(target)
 	}

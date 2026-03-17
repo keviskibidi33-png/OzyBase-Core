@@ -19,7 +19,7 @@ func NewLocalProvider(basePath string) *LocalProvider {
 	return &LocalProvider{basePath: basePath}
 }
 
-func (l *LocalProvider) Upload(ctx context.Context, bucket, key string, reader io.Reader, size int64, contentType string, acl ACL) error {
+func (l *LocalProvider) Upload(ctx context.Context, bucket, key string, reader io.Reader, size int64, contentType string, acl ACL) (err error) {
 	path, err := l.resolvePath(bucket, key)
 	if err != nil {
 		return err
@@ -31,7 +31,11 @@ func (l *LocalProvider) Upload(ctx context.Context, bucket, key string, reader i
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close local upload file: %w", closeErr)
+		}
+	}()
 
 	_, err = io.Copy(f, reader)
 	return err
