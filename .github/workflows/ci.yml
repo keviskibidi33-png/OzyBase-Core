@@ -76,7 +76,7 @@ jobs:
         run: go build -v ./cmd/ozybase
 
       - name: Lint (golangci)
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.11.3
           args: --timeout=10m
