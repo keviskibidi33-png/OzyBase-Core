@@ -36,6 +36,8 @@ jobs:
       DB_PASSWORD: password
       DB_NAME: ozybase_test
       DB_SSLMODE: disable
+      RATE_LIMIT_RPS: "250"
+      RATE_LIMIT_BURST: "500"
       DATABASE_URL: postgres://postgres:password@localhost:5432/ozybase_test?sslmode=disable
       JWT_SECRET: release_quality_secret
       SITE_URL: http://127.0.0.1:8090
@@ -167,4 +169,3 @@ jobs:
       - name: Rollback checklist
         run: |
           echo "Release completed. If rollback is needed, follow docs/RELEASE_ROLLBACK_CHECKLIST.md"
-
