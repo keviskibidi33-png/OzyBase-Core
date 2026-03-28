@@ -199,9 +199,9 @@ function App() {
             case 'IntegrationsManager':
                 return <IntegrationsManager />;
             case 'WorkspaceManager':
-                return <WorkspaceManager onWorkspaceChange={(id: string) => setWorkspaceId(id)} onViewSelect={setSelectedView} view={String(props.view || 'wm_overview')} />;
+                return <WorkspaceManager onWorkspaceChange={(id: string | null) => setWorkspaceId(id)} onViewSelect={setSelectedView} view={String(props.view || 'wm_overview')} />;
             case 'WorkspaceSettings':
-                return <WorkspaceSettings workspaceId={workspaceId} onViewSelect={setSelectedView} onWorkspaceChange={(id: string) => setWorkspaceId(id)} view={String(props.view || 'ws_general')} />;
+                return <WorkspaceSettings workspaceId={workspaceId} onViewSelect={setSelectedView} onWorkspaceChange={(id: string | null) => setWorkspaceId(id)} view={String(props.view || 'ws_general')} />;
             default:
                 return <Overview onTableSelect={handleTableSelect} onViewSelect={setSelectedView} />;
         }
@@ -215,7 +215,7 @@ function App() {
             onTableSelect={handleTableSelect}
             tables={tables}
             refreshTables={loadTables}
-            onWorkspaceChange={(id: string) => setWorkspaceId(id)}
+            onWorkspaceChange={(id: string | null) => setWorkspaceId(id)}
             onMenuViewSelect={(view: string) => {
                 setSelectedView(view);
                 setSelectedTable(null);

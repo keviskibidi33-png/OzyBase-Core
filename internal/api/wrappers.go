@@ -59,7 +59,7 @@ func (h *Handler) CreateWrapper(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "name is required"})
 	}
 	for _, r := range input.Name {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-') {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' && r != '-' {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid wrapper name"})
 		}
 	}
@@ -78,7 +78,7 @@ func (h *Handler) DeleteWrapper(c echo.Context) error {
 	defer cancel()
 
 	for _, r := range name {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-') {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' && r != '-' {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid wrapper name"})
 		}
 	}

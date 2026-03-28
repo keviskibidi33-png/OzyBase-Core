@@ -19,9 +19,8 @@ func TestActorUserIDFromContext(t *testing.T) {
 	actor := actorUserIDFromContext(c)
 	if actor == nil {
 		t.Fatalf("expected actor user id")
-	}
-	if *actor != validUserID {
-		t.Fatalf("unexpected actor user id: %s", *actor)
+	} else if actorID := *actor; actorID != validUserID {
+		t.Fatalf("unexpected actor user id: %s", actorID)
 	}
 }
 

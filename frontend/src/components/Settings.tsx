@@ -257,7 +257,7 @@ const Settings: React.FC<SettingsProps> = ({ view = 'general', onViewSelect }) =
                                 <div className="flex items-center justify-between gap-4">
                                     <code className="text-sm text-white break-all">{value || 'unknown'}</code>
                                     <button
-                                        onClick={() => void copyValue(value, label)}
+                                        onClick={() => void copyValue(typeof value === 'string' ? value : undefined, String(label))}
                                         className="p-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-500 hover:text-white transition-colors"
                                     >
                                         {copied === label ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}

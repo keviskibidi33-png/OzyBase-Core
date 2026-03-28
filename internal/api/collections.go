@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -870,140 +869,6 @@ func (h *Handler) GetProjectInfo(c echo.Context) error {
 	return c.JSON(http.StatusOK, info)
 }
 
-type projectConnectionInfo struct {
-	Host             string
-	Port             string
-	Database         string
-	User             string
-	Password         string
-	SSLMode          string
-	PoolerHost       string
-	PoolerPort       string
-	PoolerTxPort     string
-	ReadReplicaHost  string
-	ReadReplicaPort  string
-	ReadReplicaMode  string
-	InternalOnlyHost bool
-}
-
-func resolveProjectConnectionInfo() *projectConnectionInfo {
-	host := readEnvForProjectInfo("DB_PUBLIC_HOST")
-	port := readEnvForProjectInfo("DB_PUBLIC_PORT")
-	db := readEnvForProjectInfo("DB_NAME")
-	user := readEnvForProjectInfo("DB_USER")
-	password := readEnvForProjectInfo("DB_PASSWORD")
-	sslmode := readEnvForProjectInfo("DB_SSLMODE")
-	poolerHost := firstNonEmptyEnv("DB_POOLER_HOST", "POOLER_HOST")
-	poolerPort := firstNonEmptyEnv("DB_POOLER_PORT", "POOLER_PORT")
-	poolerTxPort := firstNonEmptyEnv("DB_POOLER_TX_PORT", "POOLER_TX_PORT")
-	readReplicaHost := firstNonEmptyEnv("DB_READ_REPLICA_HOST", "READ_REPLICA_HOST")
-	readReplicaPort := firstNonEmptyEnv("DB_READ_REPLICA_PORT", "READ_REPLICA_PORT")
-	readReplicaMode := firstNonEmptyEnv("DB_READ_REPLICA_SSLMODE", "READ_REPLICA_SSLMODE")
-
-	if host == "" {
-		host = readEnvForProjectInfo("DB_HOST")
-	}
-	if port == "" {
-		port = readEnvForProjectInfo("DB_PORT")
-	}
-
-	if host == "" || db == "" || user == "" {
-		if parsed := parseDatabaseURL(readEnvForProjectInfo("DATABASE_URL")); parsed != nil {
-			if host == "" {
-				host = parsed.Host
-			}
-			if port == "" {
-				port = parsed.Port
-			}
-			if db == "" {
-				db = parsed.Database
-			}
-			if user == "" {
-				user = parsed.User
-			}
-			if password == "" {
-				password = parsed.Password
-			}
-			if sslmode == "" {
-				sslmode = parsed.SSLMode
-			}
-		}
-	}
-
-	if host == "" {
-		host = "localhost"
-	}
-	if port == "" {
-		port = "5432"
-	}
-	if db == "" {
-		db = "ozybase"
-	}
-	if user == "" {
-		user = "postgres"
-	}
-	if sslmode == "" {
-		sslmode = "disable"
-	}
-	if poolerPort == "" {
-		poolerPort = "6543"
-	}
-	if poolerTxPort == "" {
-		poolerTxPort = "6543"
-	}
-	if readReplicaMode == "" {
-		readReplicaMode = sslmode
-	}
-
-	return &projectConnectionInfo{
-		Host:             host,
-		Port:             port,
-		Database:         db,
-		User:             user,
-		Password:         password,
-		SSLMode:          sslmode,
-		PoolerHost:       poolerHost,
-		PoolerPort:       poolerPort,
-		PoolerTxPort:     poolerTxPort,
-		ReadReplicaHost:  readReplicaHost,
-		ReadReplicaPort:  readReplicaPort,
-		ReadReplicaMode:  readReplicaMode,
-		InternalOnlyHost: isInternalDBHost(host),
-	}
-}
-
-func parseDatabaseURL(raw string) *projectConnectionInfo {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return nil
-	}
-	password, _ := u.User.Password()
-	sslmode := u.Query().Get("sslmode")
-	if sslmode == "" {
-		sslmode = "disable"
-	}
-	return &projectConnectionInfo{
-		Host:     u.Hostname(),
-		Port:     u.Port(),
-		Database: strings.TrimPrefix(u.Path, "/"),
-		User:     u.User.Username(),
-		Password: password,
-		SSLMode:  sslmode,
-	}
-}
-
-func firstNonEmptyEnv(keys ...string) string {
-	for _, key := range keys {
-		if v := readEnvForProjectInfo(key); v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
 func readEnvForProjectInfo(key string) string {
 	val := strings.TrimSpace(os.Getenv(key))
 	if val == "" {
@@ -1019,11 +884,6 @@ func isSetPlaceholder(value, key string) bool {
 	v := strings.ToLower(strings.TrimSpace(value))
 	k := strings.ToLower(strings.TrimSpace(key))
 	return v == "set_"+k || v == "set "+k || v == "set-"+k || v == "set:"+k
-}
-
-func isInternalDBHost(host string) bool {
-	h := strings.ToLower(strings.TrimSpace(host))
-	return h == "localhost" || h == "127.0.0.1" || h == "db" || strings.HasSuffix(h, ".internal")
 }
 
 func (h *Handler) getCachedProjectInfo() (ProjectInfo, bool) {
