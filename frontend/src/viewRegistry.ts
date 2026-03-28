@@ -104,19 +104,12 @@ export const VIEW_REGISTRY: Record<string, ViewMeta> = {
 
     storage: { id: 'storage', group: 'storage', label: 'Storage', component: 'StorageManager', props: { view: 'buckets' }, supportsExplorer: true },
     buckets: { id: 'buckets', group: 'storage', label: 'Buckets', component: 'StorageManager', props: { view: 'buckets' }, supportsExplorer: true },
-    storage_policies: { id: 'storage_policies', group: 'storage', label: 'Policies', component: 'StorageManager', props: { view: 'policies' }, supportsExplorer: true },
-    usage: { id: 'usage', group: 'storage', label: 'Usage', component: 'StorageManager', props: { view: 'usage' }, supportsExplorer: true },
-    storage_settings: { id: 'storage_settings', group: 'storage', label: 'Settings', component: 'StorageManager', props: { view: 'settings' }, supportsExplorer: true },
 
     edge: { id: 'edge', group: 'edge', label: 'Edge Functions', component: 'EdgeFunctions', props: { view: 'functions' }, supportsExplorer: true },
     functions: { id: 'functions', group: 'edge', label: 'Functions', component: 'EdgeFunctions', props: { view: 'functions' }, supportsExplorer: true },
-    deployments: { id: 'deployments', group: 'edge', label: 'Deployments', component: 'EdgeFunctions', props: { view: 'deployments' }, supportsExplorer: true },
-    secrets: { id: 'secrets', group: 'edge', label: 'Env Variables', component: 'EdgeFunctions', props: { view: 'secrets' }, supportsExplorer: true },
-    edge_logs: { id: 'edge_logs', group: 'edge', label: 'Edge Logs', component: 'EdgeFunctions', props: { view: 'logs' }, supportsExplorer: true },
 
     realtime: { id: 'realtime', group: 'realtime', label: 'Realtime', component: 'RealtimeInspector', props: { view: 'inspector' }, supportsExplorer: true },
     inspector: { id: 'inspector', group: 'realtime', label: 'Inspector', component: 'RealtimeInspector', props: { view: 'inspector' }, supportsExplorer: true },
-    channels: { id: 'channels', group: 'realtime', label: 'Channels', component: 'RealtimeInspector', props: { view: 'channels' }, supportsExplorer: true },
     config: { id: 'config', group: 'realtime', label: 'Configuration', component: 'RealtimeInspector', props: { view: 'config' }, supportsExplorer: true },
 
     advisors: { id: 'advisors', group: 'advisors', label: 'Advisors', component: 'Advisors', supportsExplorer: false },
@@ -196,19 +189,12 @@ export const SUBMENUS: Record<string, SubmenuItem[]> = {
     ],
     storage: [
         { id: 'buckets', name: 'Buckets', icon: FolderOpen },
-        { id: 'storage_policies', name: 'Policies', icon: Shield },
-        { id: 'usage', name: 'Usage', icon: Activity },
-        { id: 'storage_settings', name: 'Settings', icon: Settings },
     ],
     edge: [
         { id: 'functions', name: 'Functions', icon: Code },
-        { id: 'deployments', name: 'Deployments', icon: Zap },
-        { id: 'secrets', name: 'Env Variables', icon: Key },
-        { id: 'edge_logs', name: 'Edge Logs', icon: List },
     ],
     realtime: [
         { id: 'inspector', name: 'Inspector', icon: Search },
-        { id: 'channels', name: 'Channels', icon: Activity },
         { id: 'config', name: 'Configuration', icon: Settings },
     ],
     logs: [

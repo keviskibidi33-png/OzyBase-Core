@@ -13,18 +13,35 @@ import {
     Settings,
     Zap,
     RefreshCw,
-    Database,
-    Layers
+    Database
 } from 'lucide-react';
 
-const RealtimeInspector = () => {
+interface RealtimeInspectorProps {
+    view?: 'inspector' | 'config' | 'configuration';
+}
+
+const normalizeRealtimeView = (view?: string) => {
+    if (view === 'config') {
+        return 'configuration';
+    }
+    if (view === 'configuration' || view === 'inspector') {
+        return view;
+    }
+    return 'inspector';
+};
+
+const RealtimeInspector: React.FC<RealtimeInspectorProps> = ({ view = 'inspector' }) => {
     const [events, setEvents] = useState<any[]>([]);
     const [isListening, setIsListening] = useState(true);
     const [selectedEvent, setSelectedEvent] = useState<any>(null);
-    const [activeTab, setActiveTab] = useState('inspector');
+    const [activeTab, setActiveTab] = useState(normalizeRealtimeView(view));
     const [collections, setCollections] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
     const [diagnosticStatus, setDiagnosticStatus] = useState<any>(null);
+
+    useEffect(() => {
+        setActiveTab(normalizeRealtimeView(view));
+    }, [view]);
 
     const fetchCollections = useCallback(async () => {
         setLoading(true);
@@ -119,7 +136,7 @@ const RealtimeInspector = () => {
 
     const renderTabs = () => (
         <div className="flex px-6 pt-4 gap-8">
-            {['inspector', 'channels', 'configuration'].map((tab: any) => (
+            {['inspector', 'configuration'].map((tab: any) => (
                 <button
                     key={tab}
                     onClick={() => setActiveTab(tab)}
@@ -282,7 +299,7 @@ const RealtimeInspector = () => {
                             </div>
                         </div>
                     </>
-                ) : activeTab === 'configuration' ? (
+                ) : (
                     <div className="flex-1 p-8 bg-[#111111] overflow-y-auto custom-scrollbar">
                         <div className="max-w-4xl mx-auto">
                             <div className="flex items-center gap-4 mb-8">
@@ -347,11 +364,6 @@ const RealtimeInspector = () => {
                             </div>
                         </div>
                     </div>
-                ) : (
-                    <div className="flex-1 flex flex-col items-center justify-center opacity-30 gap-4 grayscale text-[#111111]">
-                        <Layers size={64} className="text-zinc-700" />
-                        <span className="text-xs font-black uppercase tracking-[0.4em]">Channels feature coming soon</span>
-                    </div>
                 )}
             </div>
         </div>
@@ -359,5 +371,3 @@ const RealtimeInspector = () => {
 };
 
 export default RealtimeInspector;
-
-

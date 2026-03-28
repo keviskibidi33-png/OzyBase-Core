@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,18 @@ type tableViewPayload struct {
 	IsDefault *bool          `json:"is_default"`
 }
 
+func (h *Handler) tableViewsRelationExists(ctx context.Context) bool {
+	if h == nil || h.DB == nil || h.DB.Pool == nil {
+		return false
+	}
+
+	var exists bool
+	if err := h.DB.Pool.QueryRow(ctx, `SELECT to_regclass('public._v_table_views') IS NOT NULL`).Scan(&exists); err != nil {
+		return false
+	}
+	return exists
+}
+
 // ListTableViews handles GET /api/tables/:name/views
 func (h *Handler) ListTableViews(c echo.Context) error {
 	tableName := c.Param("name")
@@ -33,6 +46,10 @@ func (h *Handler) ListTableViews(c echo.Context) error {
 	}
 	if _, err := uuid.Parse(userID); err != nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid user context"})
+	}
+
+	if !h.tableViewsRelationExists(c.Request().Context()) {
+		return c.JSON(http.StatusOK, []map[string]any{})
 	}
 
 	workspaceID, _ := c.Get("workspace_id").(string)
@@ -101,6 +118,10 @@ func (h *Handler) CreateTableView(c echo.Context) error {
 	}
 	if _, err := uuid.Parse(userID); err != nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid user context"})
+	}
+
+	if !h.tableViewsRelationExists(c.Request().Context()) {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "table views feature unavailable until migrations are applied"})
 	}
 
 	var payload tableViewPayload
@@ -177,6 +198,10 @@ func (h *Handler) UpdateTableView(c echo.Context) error {
 	userID, _ := c.Get("user_id").(string)
 	if userID == "" {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+	}
+
+	if !h.tableViewsRelationExists(c.Request().Context()) {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "table views feature unavailable until migrations are applied"})
 	}
 
 	var payload tableViewPayload
@@ -266,6 +291,10 @@ func (h *Handler) DeleteTableView(c echo.Context) error {
 	userID, _ := c.Get("user_id").(string)
 	if userID == "" {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+	}
+
+	if !h.tableViewsRelationExists(c.Request().Context()) {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "table views feature unavailable until migrations are applied"})
 	}
 
 	workspaceID, _ := c.Get("workspace_id").(string)

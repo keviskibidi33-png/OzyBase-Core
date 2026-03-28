@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/Xangel0s/OzyBase/internal/security"
@@ -16,7 +17,8 @@ import (
 )
 
 type WebhookIntegration struct {
-	pool *pgxpool.Pool
+	pool               *pgxpool.Pool
+	warnedNoActiveSIEM atomic.Bool
 }
 
 type IntegrationType string
@@ -553,9 +555,12 @@ func (w *WebhookIntegration) SendLogBatch(ctx context.Context, logs []map[string
 		return nil
 	}
 	if len(integrations) == 0 {
-		log.Printf("[integrations] no active SIEM integrations configured; batch retained locally")
+		if !w.warnedNoActiveSIEM.Swap(true) {
+			log.Printf("[integrations] no active SIEM integrations configured; batch retained locally")
+		}
 		return nil
 	}
+	w.warnedNoActiveSIEM.Store(false)
 
 	payload := map[string]any{
 		"source":    "ozybase",
