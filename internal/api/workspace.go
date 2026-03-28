@@ -138,7 +138,11 @@ func (h *WorkspaceHandler) AddMember(c echo.Context) error {
 		`, targetUserID, id).Scan(&email, &workspaceName)
 
 		if err == nil {
-			_ = h.mailer.SendWorkspaceInvite(email, workspaceName, inviterEmail)
+			_ = mailer.SendTemplateEmail(ctx, h.service.GetDB(), h.mailer, "workspace_invite", email, map[string]string{
+				"app_name":       "OzyBase",
+				"workspace_name": workspaceName,
+				"inviter_email":  inviterEmail,
+			})
 		}
 	}()
 

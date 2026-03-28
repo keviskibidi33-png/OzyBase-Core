@@ -25,9 +25,10 @@ interface WorkspaceSwitcherProps {
     onWorkspaceChange?: (workspaceID: string) => void;
     onViewSelect?: (view: string) => void;
     isExpanded?: boolean;
+    workspaceId?: string | null;
 }
 
-const WorkspaceSwitcher = ({ onWorkspaceChange, onViewSelect, isExpanded = false }: WorkspaceSwitcherProps) => {
+const WorkspaceSwitcher = ({ onWorkspaceChange, onViewSelect, isExpanded = false, workspaceId = null }: WorkspaceSwitcherProps) => {
     const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
     const [activeWorkspace, setActiveWorkspace] = useState<Workspace | null>(null);
     const [isOpen, setIsOpen] = useState(false);
@@ -42,12 +43,12 @@ const WorkspaceSwitcher = ({ onWorkspaceChange, onViewSelect, isExpanded = false
                 const workspaceData = Array.isArray(data) ? (data as Workspace[]) : [];
                 setWorkspaces(workspaceData);
                 
-                const storedId = localStorage.getItem('ozy_workspace_id');
+                const storedId = workspaceId || localStorage.getItem('ozy_workspace_id');
                 const active = workspaceData.find((w: any) => w.id === storedId) || workspaceData[0] || null;
                 
                 if (active) {
                     setActiveWorkspace(active);
-                    if (!storedId) {
+                    if (!storedId || storedId !== active.id) {
                         localStorage.setItem('ozy_workspace_id', active.id);
                     }
                 }
@@ -72,6 +73,16 @@ const WorkspaceSwitcher = ({ onWorkspaceChange, onViewSelect, isExpanded = false
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [fetchWorkspaces]);
+
+    useEffect(() => {
+        if (!workspaceId || workspaces.length === 0) {
+            return;
+        }
+        const nextActive = workspaces.find((workspace: Workspace) => workspace.id === workspaceId) || null;
+        if (nextActive) {
+            setActiveWorkspace(nextActive);
+        }
+    }, [workspaceId, workspaces]);
 
     const handleSelect = (workspace: Workspace) => {
         setActiveWorkspace(workspace);

@@ -4,6 +4,8 @@ import (
 	"embed"
 	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -14,13 +16,23 @@ import (
 //go:embed all:frontend_dist
 var distEmbedFS embed.FS
 
-// RegisterStaticRoutes registers the routes for serving the embedded frontend
-func RegisterStaticRoutes(e *echo.Echo) {
-	// Root of the embedded FS is 'frontend_dist'
+func resolveStaticFS() fs.FS {
+	devDistPath := filepath.Join("frontend", "dist")
+	if _, err := os.Stat(filepath.Join(devDistPath, "index.html")); err == nil {
+		return os.DirFS(devDistPath)
+	}
+
 	distFS, err := fs.Sub(distEmbedFS, "frontend_dist")
 	if err != nil {
 		panic(err)
 	}
+
+	return distFS
+}
+
+// RegisterStaticRoutes registers the routes for serving the embedded frontend
+func RegisterStaticRoutes(e *echo.Echo) {
+	distFS := resolveStaticFS()
 
 	// Create a file server handler
 	fileServer := http.FileServer(http.FS(distFS))

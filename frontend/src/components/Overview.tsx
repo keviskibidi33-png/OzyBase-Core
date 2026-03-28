@@ -14,6 +14,11 @@ import {
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
 
+interface OverviewProps {
+    onTableSelect?: (tableName: string | null) => void;
+    onViewSelect?: (view: string) => void;
+}
+
 const DEFAULT_POINTS = 12;
 
 const normalizeSeries = (data: any, fallbackSize: any = DEFAULT_POINTS) => {
@@ -273,7 +278,7 @@ const ModuleCard = ({ icon, title, metricLabel, value, data, tone, signalText, t
     );
 };
 
-const Overview = () => {
+const Overview: React.FC<OverviewProps> = ({ onViewSelect }) => {
     const [projectInfo, setProjectInfo] = useState<any>(null);
     const [healthIssues, setHealthIssues] = useState<any[]>([]);
     const [issuesTab, setIssuesTab] = useState('security');
@@ -384,7 +389,7 @@ const Overview = () => {
                 <div className="flex items-center gap-12">
                     <div className="flex items-center gap-8">
                         <button
-                            onClick={() => {}}
+                            onClick={() => onViewSelect?.('tables')}
                             className="text-center group transition-all"
                         >
                             <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest leading-none mb-1 group-hover:text-primary">User Tables</p>
@@ -395,14 +400,14 @@ const Overview = () => {
                             <p className="text-xl font-black text-zinc-500 leading-none">{(projectInfo?.system_table_count !== undefined) ? projectInfo.system_table_count : '...'}</p>
                         </div>
                         <button
-                            onClick={() => {}}
+                            onClick={() => onViewSelect?.('functions')}
                             className="text-center group transition-all"
                         >
                             <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest leading-none mb-1 group-hover:text-primary">Functions</p>
                             <p className="text-xl font-black text-white leading-none group-hover:scale-110 transition-transform">{projectInfo?.function_count || 0}</p>
                         </button>
                         <button
-                            onClick={() => {}}
+                            onClick={() => onViewSelect?.('visualizer')}
                             className="text-center group transition-all"
                         >
                             <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest leading-none mb-1 group-hover:text-primary">Schemas</p>

@@ -27,6 +27,8 @@ interface WorkspaceMember {
 interface WorkspaceSettingsProps {
     workspaceId?: string | number | null;
     view?: 'ws_general' | 'ws_members' | 'ws_danger' | string;
+    onViewSelect?: (view: string) => void;
+    onWorkspaceChange?: (workspaceId: string | null) => void;
 }
 
 const isWorkspace = (value: unknown): value is Workspace => (
@@ -45,7 +47,12 @@ const isWorkspaceMember = (value: unknown): value is WorkspaceMember => (
     typeof (value as { role?: unknown }).role === 'string'
 );
 
-const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({ workspaceId, view = 'ws_general' }: any) => {
+const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
+    workspaceId,
+    view = 'ws_general',
+    onViewSelect,
+    onWorkspaceChange
+}) => {
     const [workspace, setWorkspace] = useState<Workspace | null>(null);
     const [members, setMembers] = useState<WorkspaceMember[]>([]);
     const [loading, setLoading] = useState(true);
@@ -143,6 +150,34 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({ workspaceId, view
             }
         } catch (err: unknown) {
             console.error(err);
+        }
+    };
+
+    const handleDeleteWorkspace = async () => {
+        if (!workspaceId || !workspace) return;
+        const confirmed = window.confirm(`Delete workspace "${workspace.name}"? This action cannot be undone.`);
+        if (!confirmed) return;
+
+        setSaving(true);
+        try {
+            const res = await fetchWithAuth(`/api/workspaces/${workspaceId}`, {
+                method: 'DELETE'
+            });
+            if (!res.ok) {
+                throw new Error('failed to delete workspace');
+            }
+
+            const activeWorkspaceId = localStorage.getItem('ozy_workspace_id');
+            if (activeWorkspaceId && String(activeWorkspaceId) === String(workspaceId)) {
+                localStorage.removeItem('ozy_workspace_id');
+                onWorkspaceChange?.(null);
+            }
+
+            onViewSelect?.('workspaces');
+        } catch (err: unknown) {
+            console.error(err);
+        } finally {
+            setSaving(false);
         }
     };
 
@@ -310,7 +345,11 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({ workspaceId, view
                             <p className="text-sm text-zinc-400 font-bold mb-6 italic">
                                 Deleting this project will permanently erase all associated data, configurations, and edge functions. This action is catastrophic and irreversible.
                             </p>
-                            <button className="px-8 py-3 bg-red-600 text-white font-black uppercase text-xs tracking-[0.2em] rounded-xl hover:bg-red-700 transition-colors flex items-center gap-3">
+                            <button
+                                onClick={handleDeleteWorkspace}
+                                disabled={saving}
+                                className="px-8 py-3 bg-red-600 text-white font-black uppercase text-xs tracking-[0.2em] rounded-xl hover:bg-red-700 transition-colors flex items-center gap-3 disabled:opacity-60 disabled:cursor-not-allowed"
+                            >
                                 <Trash2 size={16} />
                                 Delete Workspace
                             </button>

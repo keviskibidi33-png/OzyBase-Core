@@ -9,6 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/Xangel0s/OzyBase/internal/data"
@@ -65,8 +68,11 @@ func (s *AuthService) Signup(ctx context.Context, email, password string) (*User
 			VALUES ($1, $2, $3)
 		`, user.ID, token, expiresAt)
 
-		// Send email (async ideally, but simple for now)
-		_ = s.mailer.SendVerificationEmail(user.Email, token)
+		_ = mailer.SendTemplateEmail(ctx, s.db, s.mailer, "verification", user.Email, map[string]string{
+			"app_name":    "OzyBase",
+			"action_link": buildTokenURL("/verify-email", token),
+			"token":       token,
+		})
 	}
 
 	return &user, nil
@@ -204,10 +210,33 @@ func (s *AuthService) RequestPasswordReset(ctx context.Context, email string) (s
 		return "", fmt.Errorf("failed to save reset token: %w", err)
 	}
 
-	// In a real app, you would send an email here.
-	_ = s.mailer.SendPasswordResetEmail(email, token)
+	_ = mailer.SendTemplateEmail(ctx, s.db, s.mailer, "password_reset", email, map[string]string{
+		"app_name":    "OzyBase",
+		"action_link": buildTokenURL("/reset-password", token),
+		"token":       token,
+	})
 
 	return token, nil
+}
+
+func buildTokenURL(path, token string) string {
+	base := strings.TrimSpace(os.Getenv("SITE_URL"))
+	if base == "" {
+		base = "http://localhost:5342"
+	}
+	base = strings.TrimRight(base, "/")
+
+	u, err := url.Parse(base)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		u, _ = url.Parse("http://localhost:5342")
+	}
+
+	u.Path = strings.TrimRight(u.Path, "/") + path
+	query := u.Query()
+	query.Set("token", token)
+	u.RawQuery = query.Encode()
+
+	return u.String()
 }
 
 // ConfirmPasswordReset verifies the token and updates the user's password

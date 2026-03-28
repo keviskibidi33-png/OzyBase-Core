@@ -424,6 +424,8 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 	functionsHandler := api.NewFunctionsHandler(h.DB, "./functions")
 	webhookHandler := api.NewWebhookHandler(h.DB)
 	cronHandler := api.NewCronHandler(h.DB, cronMgr)
+	workspaceService := core.NewWorkspaceService(h.DB)
+	workspaceHandler := api.NewWorkspaceHandler(workspaceService, mailSvc)
 
 	// API Groups and Middlewares
 	authRequired := api.AuthMiddleware(h.DB, cfg.JWTSecret, false)
@@ -436,6 +438,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 
 	apiGroup := e.Group("/api")
 	apiGroup.Use(api.MetricsMiddleware(h))
+	apiGroup.Use(api.WorkspaceMiddleware(h.DB, cfg.JWTSecret))
 	{
 		apiGroup.GET("/health", h.Health)
 		apiGroup.GET("/project/metrics", h.GetPrometheusMetrics) // 📊 Enterprise Phase 1
@@ -454,6 +457,16 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		keysGroup.PATCH("/:id/toggle", h.ToggleAPIKey)
 		keysGroup.POST("/:id/rotate", h.RotateAPIKey)
 
+		// Workspaces
+		workspacesGroup := apiGroup.Group("/workspaces", authRequired)
+		workspacesGroup.POST("", workspaceHandler.Create)
+		workspacesGroup.GET("", workspaceHandler.List)
+		workspacesGroup.PATCH("/:id", workspaceHandler.Update)
+		workspacesGroup.DELETE("/:id", workspaceHandler.Delete)
+		workspacesGroup.GET("/:id/members", workspaceHandler.ListMembers)
+		workspacesGroup.POST("/:id/members", workspaceHandler.AddMember)
+		workspacesGroup.DELETE("/:id/members/:userId", workspaceHandler.RemoveMember)
+
 		// Auth
 		authGroup := apiGroup.Group("/auth")
 		authGroup.POST("/login", authHandler.Login)
@@ -465,6 +478,10 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		authGroup.POST("/verify-email", authHandler.VerifyEmail)
 		authGroup.GET("/users", authHandler.ListUsers, authRequired, adminOnly)
 		authGroup.PATCH("/users/:id/role", authHandler.UpdateRole, authRequired, adminOnly)
+		authGroup.GET("/providers", h.ListAuthProviders, authRequired, adminOnly)
+		authGroup.GET("/config", h.GetAuthConfig, authRequired, adminOnly)
+		authGroup.GET("/templates", h.ListAuthTemplates, authRequired, adminOnly)
+		authGroup.PUT("/templates/:type", h.UpdateAuthTemplate, authRequired, adminOnly)
 
 		// Social Login
 		authGroup.GET("/login/:provider", authHandler.GetOAuthURL)
@@ -518,6 +535,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 
 		// Project Info
 		apiGroup.GET("/project/info", h.GetProjectInfo, authRequired)
+		apiGroup.GET("/project/connection", h.GetProjectConnection, authRequired, adminOnly)
 		apiGroup.GET("/project/health", h.GetHealthIssues, authRequired)
 		apiGroup.GET("/project/performance/advisor", h.GetPerformanceAdvisor, authRequired, adminOnly)
 		apiGroup.GET("/project/performance/advisor/history", h.GetPerformanceAdvisorHistory, authRequired, adminOnly)
@@ -579,15 +597,18 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.POST("/webhooks", webhookHandler.Create, authRequired)
 		apiGroup.DELETE("/webhooks/:id", webhookHandler.Delete, authRequired)
 
-		apiGroup.GET("/cron", cronHandler.List, authRequired)
-		apiGroup.POST("/cron", cronHandler.Create, authRequired)
-		apiGroup.DELETE("/cron/:id", cronHandler.Delete, authRequired)
+		apiGroup.GET("/cron", cronHandler.List, authRequired, adminOnly)
+		apiGroup.POST("/cron/enable", cronHandler.Enable, authRequired, adminOnly)
+		apiGroup.POST("/cron", cronHandler.Create, authRequired, adminOnly)
+		apiGroup.DELETE("/cron/:id", cronHandler.Delete, authRequired, adminOnly)
 
 		apiGroup.GET("/vault", h.ListSecrets, authRequired)
 		apiGroup.POST("/vault", h.CreateSecret, authRequired, adminOnly)
 		apiGroup.DELETE("/vault/:id", h.DeleteSecret, authRequired, adminOnly)
 
 		apiGroup.GET("/wrappers", h.ListWrappers, authRequired)
+		apiGroup.POST("/wrappers", h.CreateWrapper, authRequired, adminOnly)
+		apiGroup.DELETE("/wrappers/:name", h.DeleteWrapper, authRequired, adminOnly)
 		apiGroup.POST("/graphql/v1", h.HandleGraphQL, authRequired)
 
 		apiGroup.GET("/schema/:name", h.GetTableSchema, authRequired)

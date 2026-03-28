@@ -690,22 +690,8 @@ func (h *Handler) GetVisualizeSchema(c echo.Context) error {
 // ProjectInfo represents the project information response
 type ProjectInfo struct {
 	Name             string      `json:"name"`
-	Host             string      `json:"host"`
-	Port             string      `json:"port"`
 	Database         string      `json:"database"`
-	User             string      `json:"user"`
-	Password         string      `json:"password,omitempty"`
-	SSLMode          string      `json:"ssl_mode,omitempty"`
-	PoolerHost       string      `json:"pooler_host,omitempty"`
-	PoolerPort       string      `json:"pooler_port,omitempty"`
-	PoolerTxPort     string      `json:"pooler_tx_port,omitempty"`
-	ReadReplicaHost  string      `json:"read_replica_host,omitempty"`
-	ReadReplicaPort  string      `json:"read_replica_port,omitempty"`
-	ReadReplicaMode  string      `json:"read_replica_ssl_mode,omitempty"`
 	APIURL           string      `json:"api_url,omitempty"`
-	ServiceRoleKey   string      `json:"service_role_key,omitempty"`
-	CanViewSecrets   bool        `json:"can_view_secrets"`
-	InternalOnlyHost bool        `json:"internal_only_host"`
 	TableCount       int         `json:"table_count"`
 	UserTableCount   int         `json:"user_table_count"`
 	SystemTableCount int         `json:"system_table_count"`
@@ -875,48 +861,13 @@ func (h *Handler) GetProjectInfo(c echo.Context) error {
 		info.SlowQueries = []SlowQuery{}
 	}
 
-	// Connection info
 	info.Name = info.Database
-	info.Host = "localhost"
-	info.Port = "5432"
-	info.User = "postgres"
-	info.SSLMode = "disable"
-
-	if conn := resolveProjectConnectionInfo(); conn != nil {
-		if conn.Host != "" {
-			info.Host = conn.Host
-		}
-		if conn.Port != "" {
-			info.Port = conn.Port
-		}
-		if conn.Database != "" {
-			info.Database = conn.Database
-			info.Name = conn.Database
-		}
-		if conn.User != "" {
-			info.User = conn.User
-		}
-		if conn.Password != "" {
-			info.Password = conn.Password
-		}
-		if conn.SSLMode != "" {
-			info.SSLMode = conn.SSLMode
-		}
-		info.PoolerHost = conn.PoolerHost
-		info.PoolerPort = conn.PoolerPort
-		info.PoolerTxPort = conn.PoolerTxPort
-		info.ReadReplicaHost = conn.ReadReplicaHost
-		info.ReadReplicaPort = conn.ReadReplicaPort
-		info.ReadReplicaMode = conn.ReadReplicaMode
-		info.InternalOnlyHost = conn.InternalOnlyHost
-	}
-
 	if apiURL := readEnvForProjectInfo("SITE_URL"); apiURL != "" {
 		info.APIURL = strings.TrimRight(apiURL, "/")
 	}
 
 	h.setCachedProjectInfo(info, 5*time.Second)
-	return c.JSON(http.StatusOK, h.applyProjectInfoAccess(info, c))
+	return c.JSON(http.StatusOK, info)
 }
 
 type projectConnectionInfo struct {
@@ -1085,31 +1036,13 @@ func (h *Handler) getCachedProjectInfo() (ProjectInfo, bool) {
 }
 
 func (h *Handler) setCachedProjectInfo(info ProjectInfo, ttl time.Duration) {
-	sanitized := info
-	sanitized.CanViewSecrets = false
-	sanitized.Password = ""
-	sanitized.ServiceRoleKey = ""
-
 	h.projectInfoCacheMu.Lock()
 	defer h.projectInfoCacheMu.Unlock()
-	h.projectInfoCache = &sanitized
+	h.projectInfoCache = &info
 	h.projectInfoCacheUntil = time.Now().Add(ttl)
 }
 
 func (h *Handler) applyProjectInfoAccess(info ProjectInfo, c echo.Context) ProjectInfo {
-	role, _ := c.Get("role").(string)
-	info.CanViewSecrets = role == "admin"
-	if info.CanViewSecrets {
-		if key := firstNonEmptyEnv("SERVICE_ROLE_KEY", "OZY_SERVICE_ROLE_KEY"); key != "" {
-			info.ServiceRoleKey = key
-		}
-		if info.Password == "" {
-			info.Password = "[set in DATABASE_URL]"
-		}
-	} else {
-		info.Password = ""
-		info.ServiceRoleKey = ""
-	}
 	return info
 }
 
@@ -1336,7 +1269,7 @@ func inferRLSAutoFixRuleFromColumns(tableName string, available map[string]struc
 		}
 	}
 
-	if (tableName == "users" || tableName == "_v_users") {
+	if tableName == "users" || tableName == "_v_users" {
 		if _, ok := available["id"]; ok {
 			return "id = auth.uid()"
 		}
@@ -1764,7 +1697,7 @@ func resolveRLSOwnerColumn(ctx context.Context, tx pgx.Tx, tableName string) (st
 			return candidate, nil
 		}
 	}
-	if (tableName == "users" || tableName == "_v_users") {
+	if tableName == "users" || tableName == "_v_users" {
 		if _, ok := available["id"]; ok {
 			return "id", nil
 		}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Xangel0s/OzyBase/internal/data"
+	"github.com/Xangel0s/OzyBase/internal/mailer"
 	"github.com/Xangel0s/OzyBase/internal/realtime"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -496,7 +497,11 @@ func MetricsMiddleware(h *Handler) echo.MiddlewareFunc {
 						for rows.Next() {
 							var email string
 							if err := rows.Scan(&email); err == nil {
-								_ = h.Mailer.SendSecurityAlert(email, "Geographic Access Breach", alertDetails)
+								_ = mailer.SendTemplateEmail(context.Background(), h.DB, h.Mailer, "security_alert", email, map[string]string{
+									"app_name":   "OzyBase",
+									"alert_type": "Geographic Access Breach",
+									"details":    alertDetails,
+								})
 							}
 						}
 					}()

@@ -23,7 +23,7 @@ func (h *Handler) ListSecrets(c echo.Context) error {
 
 	rows, err := h.DB.Pool.Query(ctx, "SELECT id, key, value, description, created_at FROM _v_secrets ORDER BY key ASC")
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(http.StatusOK, []Secret{})
 	}
 	defer rows.Close()
 
@@ -34,6 +34,10 @@ func (h *Handler) ListSecrets(c echo.Context) error {
 			continue
 		}
 		secrets = append(secrets, s)
+	}
+
+	if secrets == nil {
+		secrets = []Secret{}
 	}
 
 	return c.JSON(http.StatusOK, secrets)

@@ -55,108 +55,39 @@ import NotificationCenter from './NotificationCenter';
 import AutoFixModal from './AutoFixModal';
 import ConfirmModal from './ConfirmModal';
 import WorkspaceSwitcher from './WorkspaceSwitcher';
+import {
+    PRIMARY_NAV,
+    SUBMENUS,
+    getDefaultViewForSection,
+    getExplorerModule,
+    getViewLabel,
+    isPrimaryNavActive,
+    shouldShowExplorer
+} from '../viewRegistry';
+
 interface LayoutProps {
     children: React.ReactNode;
     selectedView: string;
     selectedTable: string | null;
+    workspaceId: string | null;
     onTableSelect: (tableName: string | null) => void;
     onMenuViewSelect: (view: string) => void;
     tables?: any[];
     refreshTables: () => void;
-    onWorkspaceChange: (workspaceId: string) => void;
+    onWorkspaceChange: (workspaceId: string | null) => void;
 }
 
-const PRIMARY_NAV = [
-    { id: 'overview', icon: Home, label: 'Home' },
-    { id: 'tables', icon: Table2, label: 'Table Editor' },
-    { id: 'database', icon: Database, label: 'Database' },
-    { id: 'sql', icon: Terminal, label: 'SQL Editor' },
-    { type: 'separator' },
-    { id: 'auth', icon: Lock, label: 'Authentication' },
-    { id: 'storage', icon: FolderOpen, label: 'Storage' },
-    { id: 'edge', icon: Zap, label: 'Edge Functions' },
-    { id: 'realtime', icon: MousePointer2, label: 'Realtime' },
-    { type: 'separator' },
-    { id: 'advisors', icon: Lightbulb, label: 'Advisors' },
-    { id: 'observability', icon: Telescope, label: 'Observability' },
-    { id: 'logs', icon: List, label: 'Logs' },
-    { id: 'docs', icon: FileText, label: 'API Docs' },
-    { id: 'integrations', icon: LayoutGrid, label: 'Integrations' },
-];
-
-const SUBMENUS = {
-    auth: [
-        { id: 'users', name: 'Users', icon: Users },
-        { id: 'providers', name: 'Providers', icon: Key },
-        { id: 'policies', name: 'Permissions', icon: Shield },
-        { id: 'two_factor', name: '2FA Settings', icon: ShieldCheck },
-        { id: 'security', name: 'Security Hub', icon: ShieldAlert },
-        { id: 'security_policies', name: 'Geo-Fencing', icon: Globe },
-        { id: 'firewall', name: 'IP Firewall', icon: ShieldBan },
-        { id: 'security_notifications', name: 'Alert Notifications', icon: Bell },
-        { id: 'integrations', name: 'Integrations & SIEM', icon: Activity },
-        { id: 'templates', name: 'Email Templates', icon: FileText },
-        { id: 'auth_settings', name: 'Auth Settings', icon: Settings }
-    ],
-    storage: [
-        { id: 'buckets', name: 'Buckets', icon: FolderOpen },
-        { id: 'storage_policies', name: 'Policies', icon: Shield },
-        { id: 'usage', name: 'Usage', icon: Activity },
-        { id: 'storage_settings', name: 'Settings', icon: Settings }
-    ],
-    edge: [
-        { id: 'functions', name: 'Functions', icon: Code },
-        { id: 'deployments', name: 'Deployments', icon: Zap },
-        { id: 'secrets', name: 'Env Variables', icon: Key },
-        { id: 'edge_logs', name: 'Edge Logs', icon: List }
-    ],
-    realtime: [
-        { id: 'inspector', name: 'Inspector', icon: Search },
-        { id: 'channels', name: 'Channels', icon: Activity },
-        { id: 'config', name: 'Configuration', icon: Settings }
-    ],
-    logs: [
-        { id: 'explorer', name: 'Log Explorer', icon: Search },
-        { id: 'live', name: 'Live Tail', icon: Activity },
-        { id: 'alerts', name: 'Security Alerts', icon: Bell },
-        { id: 'metrics', name: 'Traffic Analysis', icon: BarChart }
-    ],
-    docs: [
-        { id: 'intro', name: 'Getting Started', icon: Home },
-        { id: 'auth_api', name: 'Authentication', icon: Lock },
-        { id: 'db_api', name: 'Database & SQL', icon: Database },
-        { id: 'storage_api', name: 'Storage', icon: FolderOpen },
-        { id: 'realtime_api', name: 'Realtime', icon: MousePointer2 },
-        { id: 'edge_api', name: 'Edge Functions', icon: Zap },
-        { id: 'sdk', name: 'Client SDKs', icon: Code }
-    ],
-    settings: [
-        { id: 'general', name: 'General', icon: Settings },
-        { id: 'infrastructure', name: 'Infrastructure', icon: Server },
-        { id: 'billing', name: 'Billing', icon: CreditCard },
-        { id: 'api_keys', name: 'API Keys', icon: Key }
-    ],
-    integrations: [
-        { id: 'wrappers', name: 'Wrappers', icon: Globe },
-        { id: 'webhooks', name: 'Webhooks', icon: Zap },
-        { id: 'cron', name: 'Cron Jobs', icon: History },
-        { id: 'extensions', name: 'PG Extensions', icon: Cpu },
-        { id: 'vault', name: 'Vault', icon: Shield },
-        { id: 'graphql', name: 'GraphQL', icon: Code }
-    ],
-    workspace_settings: [
-        { id: 'ws_general', name: 'General', icon: Settings },
-        { id: 'ws_members', name: 'Team Members', icon: Users },
-        { id: 'ws_danger', name: 'Danger Zone', icon: AlertTriangle }
-    ],
-    workspaces: [
-        { id: 'wm_overview', name: 'My Projects', icon: Briefcase },
-        { id: 'wm_shared', name: 'Shared with me', icon: Users },
-        { id: 'wm_templates', name: 'Templates', icon: LayoutGrid }
-    ]
-};
-
-const Layout: React.FC<LayoutProps> = ({ children, selectedView, selectedTable, onTableSelect, onMenuViewSelect, tables = [], refreshTables, onWorkspaceChange }: any) => {
+const Layout: React.FC<LayoutProps> = ({
+    children,
+    selectedView,
+    selectedTable,
+    workspaceId,
+    onTableSelect,
+    onMenuViewSelect,
+    tables = [],
+    refreshTables,
+    onWorkspaceChange
+}) => {
     const [dbStatus, setDbStatus] = useState('Checking...');
     const [user] = useState(() => {
         const storedUser = localStorage.getItem('ozy_user');
@@ -246,9 +177,6 @@ const Layout: React.FC<LayoutProps> = ({ children, selectedView, selectedTable, 
             .catch(() => setDbStatus('Disconnected'));
 
 
-        // Load tables
-        refreshTables();
-
         // Load schemas
         fetchWithAuth('/api/collections/schemas')
             .then((res: any) => res.json())
@@ -284,7 +212,7 @@ const Layout: React.FC<LayoutProps> = ({ children, selectedView, selectedTable, 
             clearInterval(healthInterval);
             clearInterval(bannerReminderInterval);
         };
-    }, [refreshTables]);
+    }, []);
 
     useEffect(() => {
         const handleClickOutside = (event: any) => {
@@ -341,23 +269,9 @@ const Layout: React.FC<LayoutProps> = ({ children, selectedView, selectedTable, 
 
     // --- Explorer Sidebar Submodules Content ---
     const renderExplorerContent = () => {
-        let currentModule = selectedView;
-        if (selectedView === 'table') currentModule = 'tables';
-        if (selectedView === 'visualizer') currentModule = 'database';
-        
-        // Fix persistence for sub-views
-        if (['users', 'providers', 'policies', 'two_factor', 'security', 'security_policies', 'firewall', 'security_notifications', 'templates', 'auth_settings'].includes(selectedView)) currentModule = 'auth';
-        if (['buckets', 'storage_policies', 'usage', 'storage_settings'].includes(selectedView)) currentModule = 'storage';
-        if (['functions', 'deployments', 'secrets', 'edge_logs'].includes(selectedView)) currentModule = 'edge';
-        if (['inspector', 'channels', 'config'].includes(selectedView)) currentModule = 'realtime';
-        if (['explorer', 'live', 'alerts', 'metrics'].includes(selectedView)) currentModule = 'logs';
-        if (['intro', 'auth_api', 'db_api', 'storage_api', 'realtime_api', 'edge_api', 'sdk'].includes(selectedView)) currentModule = 'docs';
-        if (['wrappers', 'webhooks', 'cron', 'extensions', 'vault', 'graphql'].includes(selectedView)) currentModule = 'integrations';
-        if (['general', 'infrastructure', 'billing', 'api_keys'].includes(selectedView)) currentModule = 'settings';
-        if (['ws_general', 'ws_members', 'ws_danger'].includes(selectedView)) currentModule = 'workspace_settings';
-        if (['wm_overview', 'wm_shared', 'wm_templates'].includes(selectedView)) currentModule = 'workspaces';
-
-        const activeSubmenu = SUBMENUS[currentModule as keyof typeof SUBMENUS] || [
+        const currentModule = getExplorerModule(selectedView);
+        const resolvedView = getDefaultViewForSection(selectedView);
+        const activeSubmenu = SUBMENUS[currentModule] || [
             { id: 'general', name: 'Dashboard', icon: LayoutGrid },
             { id: 'status', name: 'System Status', icon: Activity }
         ];
@@ -629,7 +543,7 @@ const Layout: React.FC<LayoutProps> = ({ children, selectedView, selectedTable, 
                                     <button
                                         key={item.id}
                                         onClick={() => onMenuViewSelect(item.id)}
-                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs transition-all group ${selectedView === item.id ? 'bg-zinc-900 text-primary font-bold' : 'text-zinc-600 hover:text-zinc-300 hover:bg-zinc-900/40'}`}
+                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs transition-all group ${resolvedView === item.id ? 'bg-zinc-900 text-primary font-bold' : 'text-zinc-600 hover:text-zinc-300 hover:bg-zinc-900/40'}`}
                                     >
                                         <item.icon size={14} className="text-zinc-800 group-hover:text-zinc-500" />
                                         <span className="truncate font-medium">{item.name}</span>
@@ -660,7 +574,7 @@ const Layout: React.FC<LayoutProps> = ({ children, selectedView, selectedTable, 
                             <button
                                 key={item.id}
                                 onClick={() => onMenuViewSelect(item.id)}
-                                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs transition-all group ${selectedView === item.id ? 'bg-zinc-900 text-primary font-bold' : 'text-zinc-600 hover:text-zinc-300 hover:bg-zinc-900/40'}`}
+                                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs transition-all group ${resolvedView === item.id ? 'bg-zinc-900 text-primary font-bold' : 'text-zinc-600 hover:text-zinc-300 hover:bg-zinc-900/40'}`}
                             >
                                 <item.icon size={14} className="text-zinc-800 group-hover:text-zinc-500" />
                                 <span className="truncate font-medium">{item.name}</span>
@@ -696,6 +610,7 @@ const Layout: React.FC<LayoutProps> = ({ children, selectedView, selectedTable, 
 
                 <WorkspaceSwitcher 
                     isExpanded={isExpanded}
+                    workspaceId={workspaceId}
                     onWorkspaceChange={onWorkspaceChange} 
                     onViewSelect={onMenuViewSelect} 
                 />
@@ -704,14 +619,7 @@ const Layout: React.FC<LayoutProps> = ({ children, selectedView, selectedTable, 
                     {PRIMARY_NAV.map((item: any, i: any) => {
                         if (item.type === 'separator') return <div key={i} className="h-[1px] bg-[#2e2e2e] my-2 mx-2 shrink-0" />;
                         const Icon = (item as any).icon;
-
-                        const isActive = (item.id === 'tables' && (selectedView === 'tables' || selectedView === 'table')) ||
-                            (item.id === 'logs' && ['explorer', 'live', 'alerts', 'metrics'].includes(selectedView)) ||
-                            (item.id === 'auth' && ['users', 'providers', 'policies', 'two_factor', 'security', 'security_policies', 'firewall', 'security_notifications', 'templates', 'auth_settings'].includes(selectedView)) ||
-                            (item.id === 'storage' && ['buckets', 'storage_policies', 'usage', 'storage_settings'].includes(selectedView)) ||
-                            (item.id === 'edge' && ['functions', 'deployments', 'secrets', 'edge_logs'].includes(selectedView)) ||
-                            (item.id === 'realtime' && ['inspector', 'channels', 'config'].includes(selectedView)) ||
-                            (selectedView === item.id);
+                        const isActive = isPrimaryNavActive(String(item.id || ''), selectedView);
 
                         return (
                             <button
@@ -725,7 +633,7 @@ const Layout: React.FC<LayoutProps> = ({ children, selectedView, selectedTable, 
                                     } else if (item.id === 'database') {
                                         onTableSelect('__visualizer__');
                                     } else {
-                                        onMenuViewSelect(String(item.id || 'overview'));
+                                        onMenuViewSelect(getDefaultViewForSection(String(item.id || 'overview')));
                                     }
                                 }}
                                 className={`flex items-center w-full p-2 rounded-xl transition-all group relative shrink-0 ${isActive ? 'text-primary bg-zinc-800 shadow-lg' : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900/40'
@@ -749,8 +657,8 @@ const Layout: React.FC<LayoutProps> = ({ children, selectedView, selectedTable, 
 
                 <div className="mt-auto flex flex-col gap-1 px-2 border-t border-[#2e2e2e] pt-4 shrink-0">
                     <button
-                        onClick={() => onMenuViewSelect('settings')}
-                        className={`flex items-center w-full p-2 transition-all rounded-xl ${selectedView === 'settings' ? 'text-primary bg-zinc-800' : 'text-zinc-600 hover:text-zinc-300 hover:bg-zinc-900/40'
+                        onClick={() => onMenuViewSelect(getDefaultViewForSection('settings'))}
+                        className={`flex items-center w-full p-2 transition-all rounded-xl ${getExplorerModule(selectedView) === 'settings' ? 'text-primary bg-zinc-800' : 'text-zinc-600 hover:text-zinc-300 hover:bg-zinc-900/40'
                             }`}
                     >
                         <div className="w-6 flex justify-center shrink-0">
@@ -777,8 +685,8 @@ const Layout: React.FC<LayoutProps> = ({ children, selectedView, selectedTable, 
                 </div>
             </div>
 
-            {/* Explorer Sidebar â€” only rendered for views that need it */}
-            {!['overview', 'sql', 'settings', 'advisors', 'observability'].includes(selectedView) && (
+            {/* Explorer Sidebar - only rendered for views that need it */}
+            {shouldShowExplorer(selectedView) && (
             <div className="bg-[#0c0c0c] border-r border-[#2e2e2e] flex flex-col w-60">
                 <div className="h-14 flex items-center px-4 border-b border-[#2e2e2e] flex-shrink-0">
                     <span className="font-black text-[10px] uppercase tracking-[0.25em] text-zinc-500 truncate">
@@ -803,7 +711,7 @@ const Layout: React.FC<LayoutProps> = ({ children, selectedView, selectedTable, 
             )}
 
             {/* Main Content Area */}
-            <div key={selectedView} className={`flex-1 flex flex-col min-w-0 bg-[#0c0c0c] ${['overview', 'sql', 'settings', 'advisors', 'observability'].includes(selectedView) ? 'animate-in fade-in slide-in-from-left-2 duration-300' : ''}`}>
+            <div className={`flex-1 flex flex-col min-w-0 bg-[#0c0c0c] ${!shouldShowExplorer(selectedView) ? 'animate-in fade-in slide-in-from-left-2 duration-300' : ''}`}>
                 <header className="h-14 border-b border-[#2e2e2e] bg-[#111111] flex items-center justify-between px-6 flex-shrink-0">
                     <div className="flex items-center gap-2 text-[11px] font-bold tracking-tight">
                         <span className="text-zinc-600 hover:text-zinc-400 cursor-pointer transition-colors uppercase tracking-[0.1em]">OzyBase</span>
@@ -811,7 +719,7 @@ const Layout: React.FC<LayoutProps> = ({ children, selectedView, selectedTable, 
                         <span className="text-[11px] font-black text-white uppercase tracking-wider">PROJECT</span>
                         <span className="text-zinc-800 text-lg font-thin">/</span>
                         <span className="bg-zinc-900 text-primary border border-primary/20 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest shadow-[0_0_10px_rgba(254,254,0,0.05)]">
-                            {selectedTable || selectedView}
+                            {selectedTable || getViewLabel(selectedView)}
                         </span>
                     </div>
 

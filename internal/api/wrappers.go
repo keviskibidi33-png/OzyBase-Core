@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -35,6 +36,10 @@ func (h *Handler) ListWrappers(c echo.Context) error {
 		wrappers = append(wrappers, w)
 	}
 
+	if wrappers == nil {
+		wrappers = []Wrapper{}
+	}
+
 	return c.JSON(http.StatusOK, wrappers)
 }
 
@@ -50,14 +55,21 @@ func (h *Handler) CreateWrapper(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
 	defer cancel()
 
-	// This is a naive implementation, real world usually involves CREATE SERVER...
-	// Just executing the SQL CREATE EXTENSION wrapper usually
-	_, err := h.DB.Pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS "+input.Name)
+	if strings.TrimSpace(input.Name) == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "name is required"})
+	}
+	for _, r := range input.Name {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-') {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid wrapper name"})
+		}
+	}
+
+	_, err := h.DB.Pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS "`+input.Name+`"`)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
-	return c.NoContent(http.StatusCreated)
+	return c.JSON(http.StatusCreated, map[string]string{"status": "created"})
 }
 
 func (h *Handler) DeleteWrapper(c echo.Context) error {
@@ -65,7 +77,13 @@ func (h *Handler) DeleteWrapper(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
 	defer cancel()
 
-	_, err := h.DB.Pool.Exec(ctx, "DROP EXTENSION IF EXISTS "+name+" CASCADE") // Risky but effective
+	for _, r := range name {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-') {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid wrapper name"})
+		}
+	}
+
+	_, err := h.DB.Pool.Exec(ctx, `DROP EXTENSION IF EXISTS "`+name+`" CASCADE`)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
