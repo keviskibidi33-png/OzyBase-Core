@@ -220,12 +220,13 @@ const AddRowModal: React.FC<AddRowModalProps> = ({ isOpen, onClose, schema, tabl
 
     return (
         <div
-            className={`fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm transition-opacity ${isVisible ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+            className={`fixed inset-0 z-[100] flex items-center justify-center p-4 transition-opacity ${isVisible ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
             style={{ transitionDuration: `${isVisible ? MODAL_ENTER_MS : MODAL_EXIT_MS}ms` }}
             onClick={(e: any) => e.target === e.currentTarget && requestClose()}
         >
+            <div className="absolute inset-0 ozy-overlay-backdrop backdrop-blur-md" />
             <div
-                className={`w-full max-w-5xl bg-[#171717] border border-[#2e2e2e] rounded-xl shadow-2xl overflow-hidden origin-top transition-all transform-gpu ${isVisible ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-1.5 scale-95'}`}
+                className={`ozy-dialog-panel w-full max-w-5xl origin-top transition-all transform-gpu ${isVisible ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-1.5 scale-95'}`}
                 style={{ transitionDuration: `${isVisible ? MODAL_ENTER_MS : MODAL_EXIT_MS}ms` }}
             >
                 {/* Header */}

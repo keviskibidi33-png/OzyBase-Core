@@ -11,6 +11,8 @@ import {
     CheckCircle2,
     XCircle
 } from 'lucide-react';
+import ConfirmModal from './ConfirmModal';
+import { BrandedToast } from './OverlayPrimitives';
 
 interface WebhookRecord {
     id: string;
@@ -29,6 +31,8 @@ const WebhooksManager = () => {
     const [loading, setLoading] = useState(true);
     const [showModal, setShowModal] = useState(false);
     const [newWebhook, setNewWebhook] = useState<NewWebhookInput>({ url: '', events: '*' });
+    const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+    const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
     useEffect(() => {
         fetchWebhooks();
@@ -63,24 +67,29 @@ const WebhooksManager = () => {
             });
             if (res.ok) {
                 setShowModal(false);
+                setToast({ message: 'Webhook created', type: 'success' });
                 fetchWebhooks();
             }
         } catch (error) {
             console.error('Failed to create webhook:', error);
+            setToast({ message: 'Failed to create webhook', type: 'error' });
         }
     };
 
     const deleteWebhook = async (id: string) => {
-        if (!confirm('Are you sure you want to delete this webhook?')) return;
         try {
             const token = localStorage.getItem('ozy_token');
             const res = await fetch(`/api/webhooks/${id}`, {
                 method: 'DELETE',
                 headers: { 'Authorization': `Bearer ${token}` }
             });
-            if (res.ok) fetchWebhooks();
+            if (res.ok) {
+                setToast({ message: 'Webhook deleted', type: 'success' });
+                fetchWebhooks();
+            }
         } catch (error) {
             console.error('Failed to delete webhook:', error);
+            setToast({ message: 'Failed to delete webhook', type: 'error' });
         }
     };
 
@@ -148,7 +157,7 @@ const WebhooksManager = () => {
                                 </div>
                                 <div className="flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
                                     <button className="p-2 text-zinc-600 hover:text-white"><ExternalLink size={16} /></button>
-                                    <button onClick={() => deleteWebhook(w.id)} className="p-2 text-zinc-600 hover:text-red-500"><Trash2 size={16} /></button>
+                                    <button onClick={() => setPendingDeleteId(w.id)} className="p-2 text-zinc-600 hover:text-red-500"><Trash2 size={16} /></button>
                                 </div>
                             </div>
                         ))}
@@ -158,8 +167,9 @@ const WebhooksManager = () => {
 
             {/* Modal */}
             {showModal && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-6 animate-in fade-in duration-300">
-                    <div className="bg-[#171717] border border-[#2e2e2e] rounded-3xl w-full max-w-lg overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.5)]">
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+                    <div className="absolute inset-0 ozy-overlay-backdrop backdrop-blur-md" onClick={() => setShowModal(false)} />
+                    <div className="ozy-dialog-panel w-full max-w-lg overflow-hidden">
                         <div className="px-8 py-6 border-b border-[#2e2e2e] flex items-center justify-between bg-[#1a1a1a]">
                             <div className="flex items-center gap-4">
                                 <div className="p-2 bg-primary/10 rounded-xl">
@@ -203,6 +213,24 @@ const WebhooksManager = () => {
                     </div>
                 </div>
             )}
+
+            <ConfirmModal
+                isOpen={!!pendingDeleteId}
+                onClose={() => setPendingDeleteId(null)}
+                onConfirm={() => pendingDeleteId ? deleteWebhook(pendingDeleteId) : undefined}
+                title="Delete Webhook"
+                message="Outbound deliveries to this endpoint will stop immediately."
+                confirmText="Delete Webhook"
+                type="danger"
+            />
+
+            {toast ? (
+                <BrandedToast
+                    tone={toast.type === 'success' ? 'success' : 'error'}
+                    message={toast.message}
+                    onClose={() => setToast(null)}
+                />
+            ) : null}
         </div>
     );
 };

@@ -4,7 +4,9 @@ import {
     Loader2, Info, Activity, Radio, Play
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
+import ConfirmModal from './ConfirmModal';
 import ModuleScrollContainer from './ModuleScrollContainer';
+import { BrandedToast } from './OverlayPrimitives';
 
 type IntegrationType = 'slack' | 'discord' | 'siem';
 type ToastType = 'success' | 'error';
@@ -45,6 +47,7 @@ const IntegrationsManager: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [showAdd, setShowAdd] = useState(false);
     const [toast, setToast] = useState<IntegrationToast | null>(null);
+    const [pendingDeleteId, setPendingDeleteId] = useState<number | string | null>(null);
     const [newIntegration, setNewIntegration] = useState<NewIntegration>({
         name: '',
         type: 'slack',
@@ -98,8 +101,6 @@ const IntegrationsManager: React.FC = () => {
     };
 
     const handleDelete = async (id: number | string) => {
-        if (!confirm('Are you sure you want to delete this integration?')) return;
-
         try {
             const res = await fetchWithAuth(`/api/project/integrations/${id}`, {
                 method: 'DELETE'
@@ -259,7 +260,7 @@ const IntegrationsManager: React.FC = () => {
                                 <Play size={10} /> Test
                             </button>
                             <button
-                                onClick={() => handleDelete(integration.id)}
+                                onClick={() => setPendingDeleteId(integration.id)}
                                 className="p-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-lg transition-all"
                             >
                                 <Trash2 size={16} />
@@ -292,13 +293,23 @@ const IntegrationsManager: React.FC = () => {
                 </div>
             </div>
 
-            {/* Toast */}
-            {toast && (
-                <div className={`fixed bottom-8 right-8 px-6 py-3 rounded-xl border text-[10px] font-black uppercase tracking-widest flex items-center gap-3 animate-in slide-in-from-bottom duration-300 ${toast.type === 'success' ? 'bg-green-500/10 border-green-500/20 text-green-500' : 'bg-red-500/10 border-red-500/20 text-red-500'}`}>
-                    {toast.type === 'success' ? <Check size={14} /> : <AlertCircle size={14} />}
-                    {toast.message}
-                </div>
-            )}
+            <ConfirmModal
+                isOpen={pendingDeleteId !== null}
+                onClose={() => setPendingDeleteId(null)}
+                onConfirm={() => pendingDeleteId !== null ? handleDelete(pendingDeleteId) : undefined}
+                title="Delete Integration"
+                message="This webhook target will stop receiving alerts and audit batches immediately."
+                confirmText="Delete Integration"
+                type="danger"
+            />
+
+            {toast ? (
+                <BrandedToast
+                    tone={toast.type === 'success' ? 'success' : 'error'}
+                    message={toast.message}
+                    onClose={() => setToast(null)}
+                />
+            ) : null}
         </ModuleScrollContainer>
     );
 };

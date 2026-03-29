@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Code, Copy, LayoutGrid, Loader2, Plus, RefreshCw } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
+import ConfirmModal from './ConfirmModal';
 
 const WRAPPERS = [
     ['postgres_fdw', 'Postgres FDW'],
@@ -32,6 +33,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ page = 'wrappers' }) => {
     const [modal, setModal] = useState<'webhook' | 'cron' | 'secret' | 'wrapper' | null>(null);
     const [form, setForm] = useState<Record<string, any>>(EMPTY.webhook);
     const [copied, setCopied] = useState<string | null>(null);
+    const [pendingDelete, setPendingDelete] = useState<{ type: 'webhook' | 'cron' | 'secret' | 'wrapper'; id: string } | null>(null);
 
     const graphqlUrl = `${window.location.origin}/api/graphql/v1`;
     const graphiqlUrl = `${window.location.origin}/graphiql.html`;
@@ -110,9 +112,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ page = 'wrappers' }) => {
     };
 
     const remove = async (type: 'webhook' | 'cron' | 'secret' | 'wrapper', id: string) => {
-        if (!window.confirm('Delete this item?')) {
-            return;
-        }
         const endpoints = { webhook: `/api/webhooks/${id}`, cron: `/api/cron/${id}`, secret: `/api/vault/${id}`, wrapper: `/api/wrappers/${id}` };
         setBusy(true);
         try {
@@ -166,7 +165,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ page = 'wrappers' }) => {
                             <p className="text-xs text-zinc-500 mt-2">{id}</p>
                             <div className="flex gap-3 mt-5">
                                 <button onClick={() => openModal('wrapper', { name: id })} className="flex-1 px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-xl text-[10px] font-black uppercase tracking-widest text-zinc-300">Configure Wrapper</button>
-                                {activeWrappers.has(id.toLowerCase()) && <button onClick={() => void remove('wrapper', id)} className="px-4 py-2 bg-red-500/10 border border-red-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest text-red-500">Remove</button>}
+                                {activeWrappers.has(id.toLowerCase()) && <button onClick={() => setPendingDelete({ type: 'wrapper', id })} className="px-4 py-2 bg-red-500/10 border border-red-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest text-red-500">Remove</button>}
                             </div>
                         </div>
                     ))}
@@ -181,7 +180,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ page = 'wrappers' }) => {
                         <p className="text-sm font-black text-white">{item.name}</p>
                         <code className="text-xs text-zinc-500">{item.url}</code>
                         <div className="mt-4">
-                            <button onClick={() => void remove('webhook', String(item.id))} className="px-4 py-2 bg-red-500/10 border border-red-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest text-red-500">Delete</button>
+                            <button onClick={() => setPendingDelete({ type: 'webhook', id: String(item.id) })} className="px-4 py-2 bg-red-500/10 border border-red-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest text-red-500">Delete</button>
                         </div>
                     </div>
                 ));
@@ -207,7 +206,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ page = 'wrappers' }) => {
                     <p className="text-xs text-primary font-mono mt-2">{item.schedule}</p>
                     <p className="text-[10px] uppercase tracking-widest text-zinc-500 mt-2">Last: {item.last_run || 'Never'} | Next: {item.next_run || 'Unknown'}</p>
                     <div className="mt-4">
-                        <button onClick={() => void remove('cron', String(item.id))} className="px-4 py-2 bg-red-500/10 border border-red-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest text-red-500">Delete</button>
+                        <button onClick={() => setPendingDelete({ type: 'cron', id: String(item.id) })} className="px-4 py-2 bg-red-500/10 border border-red-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest text-red-500">Delete</button>
                     </div>
                 </div>
             ));
@@ -230,7 +229,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ page = 'wrappers' }) => {
                     <div key={item.id} className={`${itemClass} mb-3`}>
                         <p className="text-sm font-black text-white">{item.key}</p>
                         <p className="text-[10px] uppercase tracking-widest text-zinc-500 mt-2">Value hidden by design</p>
-                        <button onClick={() => void remove('secret', String(item.id))} className="mt-4 px-4 py-2 bg-red-500/10 border border-red-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest text-red-500">Revoke</button>
+                        <button onClick={() => setPendingDelete({ type: 'secret', id: String(item.id) })} className="mt-4 px-4 py-2 bg-red-500/10 border border-red-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest text-red-500">Revoke</button>
                     </div>
                 ));
         }
@@ -253,8 +252,8 @@ const Integrations: React.FC<IntegrationsProps> = ({ page = 'wrappers' }) => {
         <div className="flex flex-col h-full bg-[#171717] animate-in fade-in duration-500 overflow-hidden relative">
             {modal && (
                 <div className="fixed inset-0 z-[120] flex items-center justify-center p-6">
-                    <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={closeModal} />
-                    <form onSubmit={create} className="relative w-full max-w-lg bg-[#111111] border border-[#2e2e2e] rounded-3xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+                    <div className="absolute inset-0 ozy-overlay-backdrop backdrop-blur-md" onClick={closeModal} />
+                    <form onSubmit={create} className="ozy-dialog-panel relative w-full max-w-lg overflow-hidden">
                         <div className="px-8 py-6 border-b border-[#2e2e2e] bg-[#171717]"><h3 className="text-xl font-black text-white uppercase tracking-tight">{modal === 'wrapper' ? 'Configure Wrapper' : modal === 'webhook' ? 'Create Webhook' : modal === 'cron' ? 'New Cron Job' : 'Add Secret'}</h3></div>
                         <div className="p-8 space-y-4">
                             {modal === 'wrapper' && (
@@ -306,6 +305,16 @@ const Integrations: React.FC<IntegrationsProps> = ({ page = 'wrappers' }) => {
             </div>
 
             <div className="p-8 flex-1 overflow-auto custom-scrollbar">{renderContent()}</div>
+
+            <ConfirmModal
+                isOpen={!!pendingDelete}
+                onClose={() => setPendingDelete(null)}
+                onConfirm={() => pendingDelete ? remove(pendingDelete.type, pendingDelete.id) : undefined}
+                title="Delete Integration Item"
+                message="This runtime integration entry will be removed from the project configuration."
+                confirmText="Delete Item"
+                type="danger"
+            />
         </div>
     );
 };

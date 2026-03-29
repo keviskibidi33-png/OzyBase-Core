@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { ShieldBan, Plus, Trash2, ShieldCheck, AlertTriangle, Search } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { AlertTriangle, Plus, Search, ShieldBan, ShieldCheck, Trash2 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
+import ConfirmModal from './ConfirmModal';
+import { BrandedToast } from './OverlayPrimitives';
 
 interface FirewallRule {
     id: string;
@@ -34,6 +36,8 @@ const FirewallManager = () => {
         reason: '',
         duration_hours: 0
     });
+    const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+    const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
     useEffect(() => {
         fetchRules();
@@ -64,18 +68,19 @@ const FirewallManager = () => {
             setShowModal(false);
             fetchRules();
             setNewRule({ ip_address: '', rule_type: 'BLOCK', reason: '', duration_hours: 0 });
+            setToast({ message: 'Firewall rule deployed', type: 'success' });
         } catch (error) {
-            alert(getErrorMessage(error));
+            setToast({ message: getErrorMessage(error), type: 'error' });
         }
     };
 
     const handleDelete = async (id: string) => {
-        if (!confirm('Release this IP rule?')) return;
         try {
             await fetchWithAuth(`/api/security/firewall/${id}`, { method: 'DELETE' });
             fetchRules();
+            setToast({ message: 'Firewall rule released', type: 'success' });
         } catch (error) {
-            alert(getErrorMessage(error));
+            setToast({ message: getErrorMessage(error), type: 'error' });
         }
     };
 
@@ -139,7 +144,7 @@ const FirewallManager = () => {
                                     </div>
                                 </div>
                                 <button
-                                    onClick={() => handleDelete(rule.id)}
+                                    onClick={() => setPendingDeleteId(rule.id)}
                                     className="p-3 text-zinc-600 hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all opacity-0 group-hover:opacity-100"
                                 >
                                     <Trash2 size={18} />
@@ -152,8 +157,9 @@ const FirewallManager = () => {
 
             {/* Modal */}
             {showModal && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-6 animate-in fade-in duration-300">
-                    <div className="bg-[#171717] border border-[#2e2e2e] rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl">
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+                    <div className="absolute inset-0 ozy-overlay-backdrop backdrop-blur-md" onClick={() => setShowModal(false)} />
+                    <div className="ozy-dialog-panel w-full max-w-lg overflow-hidden">
                         <div className="px-8 py-6 border-b border-[#2e2e2e] bg-[#1a1a1a] flex justify-between items-center">
                             <h3 className="text-lg font-black text-white uppercase tracking-tighter italic">Add Firewall Rule</h3>
                             <button onClick={() => setShowModal(false)}><Plus className="rotate-45 text-zinc-500 hover:text-white" /></button>
@@ -212,6 +218,24 @@ const FirewallManager = () => {
                     </div>
                 </div>
             )}
+
+            <ConfirmModal
+                isOpen={!!pendingDeleteId}
+                onClose={() => setPendingDeleteId(null)}
+                onConfirm={() => pendingDeleteId ? handleDelete(pendingDeleteId) : undefined}
+                title="Release Firewall Rule"
+                message="Traffic from this IP will be allowed again once the rule is removed."
+                confirmText="Release Rule"
+                type="danger"
+            />
+
+            {toast ? (
+                <BrandedToast
+                    tone={toast.type === 'success' ? 'success' : 'error'}
+                    message={toast.message}
+                    onClose={() => setToast(null)}
+                />
+            ) : null}
         </div>
     );
 };

@@ -879,7 +879,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                         {isTableSwitcherOpen && (
                             <>
                                 <div className="fixed inset-0 z-40" onClick={() => setIsTableSwitcherOpen(false)} />
-                                <div className="absolute top-full left-0 mt-2 w-64 bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                                <div className="absolute top-full left-0 mt-2 z-50 w-64 overflow-hidden ozy-floating-panel">
                                     <div className="max-h-80 overflow-y-auto custom-scrollbar p-1.5 space-y-4">
                                         <div>
                                             <p className="px-3 py-1 text-[9px] font-black text-zinc-600 uppercase tracking-widest">User Tables</p>
@@ -936,7 +936,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                         {isViewsOpen && (
                             <>
                                 <div className="fixed inset-0 z-40" onClick={() => setIsViewsOpen(false)} />
-                                <div className="absolute top-full left-0 mt-2 w-80 bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                                <div className="absolute top-full left-0 mt-2 z-50 w-80 overflow-hidden ozy-floating-panel">
                                     <div className="p-3 space-y-3">
                                         <div className="space-y-2">
                                             <p className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Saved Views</p>
@@ -1066,7 +1066,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                                     className="fixed inset-0 z-40 outline-none"
                                     onClick={() => setIsInsertDropdownOpen(false)}
                                 />
-                                <div className="absolute top-full left-0 mt-2 w-56 bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                                <div className="absolute top-full left-0 mt-2 z-50 w-56 overflow-hidden ozy-floating-panel">
                                     <div className="p-1.5 space-y-0.5">
                                         <button
                                             onClick={() => { setEditingRow(null); setIsModalOpen(true); setIsInsertDropdownOpen(false); }}

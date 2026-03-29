@@ -50,8 +50,8 @@ const ConnectionModal: React.FC<ConnectionModalProps> = ({ isOpen, onClose }) =>
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center">
-            <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
-            <div className="relative bg-[#1a1a1a] border border-[#2e2e2e] rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] overflow-hidden animate-in zoom-in-95 fade-in duration-200">
+            <div className="absolute inset-0 ozy-overlay-backdrop backdrop-blur-md" onClick={onClose} />
+            <div className="ozy-dialog-panel w-full max-w-4xl max-h-[85vh]">
                 <div className="px-6 py-4 border-b border-[#2e2e2e] flex items-center justify-between">
                     <div>
                         <h2 className="text-lg font-black text-white uppercase tracking-tight">Connect to your project</h2>

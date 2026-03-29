@@ -12,6 +12,7 @@ import {
     Trash2,
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
+import ConfirmModal from './ConfirmModal';
 
 const MENU_ITEMS = [
     { id: 'general', name: 'General', icon: SettingsIcon },
@@ -65,6 +66,7 @@ const Settings: React.FC<SettingsProps> = ({ view = 'general', onViewSelect }) =
     const [creatingKey, setCreatingKey] = useState(false);
     const [createdKey, setCreatedKey] = useState<Record<string, any> | null>(null);
     const [copied, setCopied] = useState<string | null>(null);
+    const [pendingDeleteKeyId, setPendingDeleteKeyId] = useState<string | null>(null);
 
     const currentView = useMemo(
         () => MENU_ITEMS.some((item) => item.id === view) ? view : 'general',
@@ -159,9 +161,6 @@ const Settings: React.FC<SettingsProps> = ({ view = 'general', onViewSelect }) =
     };
 
     const handleDeleteKey = async (keyId: string) => {
-        if (!window.confirm('Delete this API key?')) {
-            return;
-        }
         try {
             const res = await fetchWithAuth(`/api/project/keys/${keyId}`, { method: 'DELETE' });
             if (res.ok) {
@@ -388,7 +387,7 @@ const Settings: React.FC<SettingsProps> = ({ view = 'general', onViewSelect }) =
                                                 {apiKey.is_active ? 'Disable' : 'Enable'}
                                             </button>
                                             <button
-                                                onClick={() => void handleDeleteKey(apiKey.id)}
+                                                onClick={() => setPendingDeleteKeyId(apiKey.id)}
                                                 className="px-4 py-2 bg-red-500/10 border border-red-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest text-red-500 hover:bg-red-500/20 transition-all flex items-center gap-2"
                                             >
                                                 <Trash2 size={12} />
@@ -453,6 +452,16 @@ const Settings: React.FC<SettingsProps> = ({ view = 'general', onViewSelect }) =
                     {currentView === 'api_keys' && renderApiKeys()}
                 </div>
             </div>
+
+            <ConfirmModal
+                isOpen={!!pendingDeleteKeyId}
+                onClose={() => setPendingDeleteKeyId(null)}
+                onConfirm={() => pendingDeleteKeyId ? handleDeleteKey(pendingDeleteKeyId) : undefined}
+                title="Delete API Key"
+                message="This key will stop authenticating requests immediately. Existing clients using it will start failing."
+                confirmText="Delete Key"
+                type="danger"
+            />
         </div>
     );
 };

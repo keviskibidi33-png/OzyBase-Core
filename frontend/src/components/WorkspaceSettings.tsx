@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { 
-    Users, 
+import {
+    Users,
     Settings, 
     Trash2, 
     Mail, 
@@ -10,6 +10,7 @@ import {
     Lock
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
+import ConfirmModal from './ConfirmModal';
 
 interface Workspace {
     id: string | number;
@@ -60,6 +61,7 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
     const [inviteRole, setInviteRole] = useState('member');
     const [saving, setSaving] = useState(false);
     const [name, setName] = useState('');
+    const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 
     const fetchData = React.useCallback(async () => {
         if (!workspaceId) {
@@ -155,8 +157,6 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
 
     const handleDeleteWorkspace = async () => {
         if (!workspaceId || !workspace) return;
-        const confirmed = window.confirm(`Delete workspace "${workspace.name}"? This action cannot be undone.`);
-        if (!confirmed) return;
 
         setSaving(true);
         try {
@@ -346,7 +346,7 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
                                 Deleting this project will permanently erase all associated data, configurations, and edge functions. This action is catastrophic and irreversible.
                             </p>
                             <button
-                                onClick={handleDeleteWorkspace}
+                                onClick={() => setIsDeleteConfirmOpen(true)}
                                 disabled={saving}
                                 className="px-8 py-3 bg-red-600 text-white font-black uppercase text-xs tracking-[0.2em] rounded-xl hover:bg-red-700 transition-colors flex items-center gap-3 disabled:opacity-60 disabled:cursor-not-allowed"
                             >
@@ -358,6 +358,16 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
                     )}
                 </div>
             </div>
+
+            <ConfirmModal
+                isOpen={isDeleteConfirmOpen}
+                onClose={() => setIsDeleteConfirmOpen(false)}
+                onConfirm={handleDeleteWorkspace}
+                title="Delete Workspace"
+                message={`Workspace "${workspace.name}" and its configuration metadata will be removed from the dashboard context.`}
+                confirmText="Delete Workspace"
+                type="danger"
+            />
         </div>
     );
 };

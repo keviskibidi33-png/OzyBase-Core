@@ -13,6 +13,8 @@ import {
     X,
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
+import ConfirmModal from './ConfirmModal';
+import { BrandedToast } from './OverlayPrimitives';
 
 interface AuthUser {
     id: string;
@@ -51,6 +53,7 @@ const AuthManager: React.FC<AuthManagerProps> = ({ view = 'users', onViewSelect 
     const [openMenuUserId, setOpenMenuUserId] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+    const [pendingSessionId, setPendingSessionId] = useState<string | null>(null);
 
     useEffect(() => {
         setActiveTab(view === 'sessions' ? 'sessions' : 'users');
@@ -164,9 +167,6 @@ const AuthManager: React.FC<AuthManagerProps> = ({ view = 'users', onViewSelect 
     };
 
     const handleRevokeSession = async (sessionId: string) => {
-        if (!window.confirm('Terminate this session?')) {
-            return;
-        }
         try {
             const res = await fetchWithAuth(`/api/auth/sessions/${sessionId}`, { method: 'DELETE' });
             if (!res.ok) {
@@ -327,7 +327,7 @@ const AuthManager: React.FC<AuthManagerProps> = ({ view = 'users', onViewSelect 
                                                         <MoreVertical size={16} />
                                                     </button>
                                                     {openMenuUserId === user.id && (
-                                                        <div className="absolute right-0 top-10 w-48 bg-[#1a1a1a] border border-[#2e2e2e] rounded-2xl shadow-2xl z-20 p-2">
+                                                        <div className="absolute right-0 top-10 z-20 w-48 p-2 ozy-floating-panel">
                                                             <button
                                                                 onClick={() => {
                                                                     setSelectedUser(user);
@@ -395,7 +395,7 @@ const AuthManager: React.FC<AuthManagerProps> = ({ view = 'users', onViewSelect 
                                             </td>
                                             <td className="px-8 py-5 text-right">
                                                 <button
-                                                    onClick={() => void handleRevokeSession(session.id)}
+                                                    onClick={() => setPendingSessionId(session.id)}
                                                     className="px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-500 text-[9px] font-black uppercase rounded hover:bg-red-500/20 transition-all opacity-0 group-hover:opacity-100"
                                                 >
                                                     Revoke
@@ -412,8 +412,8 @@ const AuthManager: React.FC<AuthManagerProps> = ({ view = 'users', onViewSelect 
 
             {showCreateUser && (
                 <div className="fixed inset-0 z-[120] flex items-center justify-center p-6">
-                    <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowCreateUser(false)} />
-                    <form onSubmit={handleCreateUser} className="relative w-full max-w-lg bg-[#111111] border border-[#2e2e2e] rounded-3xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+                    <div className="absolute inset-0 ozy-overlay-backdrop backdrop-blur-md" onClick={() => setShowCreateUser(false)} />
+                    <form onSubmit={handleCreateUser} className="ozy-dialog-panel relative w-full max-w-lg overflow-hidden">
                         <div className="px-8 py-6 border-b border-[#2e2e2e] bg-[#171717] flex items-center justify-between">
                             <div>
                                 <h2 className="text-xl font-black text-white uppercase tracking-tight">Create User</h2>
@@ -478,8 +478,8 @@ const AuthManager: React.FC<AuthManagerProps> = ({ view = 'users', onViewSelect 
 
             {selectedUser && (
                 <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
-                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setSelectedUser(null)} />
-                    <div className="relative w-full max-w-md bg-[#111111] border border-[#2e2e2e] rounded-3xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+                    <div className="absolute inset-0 ozy-overlay-backdrop backdrop-blur-md" onClick={() => setSelectedUser(null)} />
+                    <div className="ozy-dialog-panel relative w-full max-w-md overflow-hidden">
                         <div className="px-8 py-6 border-b border-[#2e2e2e] bg-[#171717] flex items-center justify-between">
                             <h2 className="text-xl font-black text-white uppercase tracking-tight">User Detail</h2>
                             <button onClick={() => setSelectedUser(null)} className="text-zinc-500 hover:text-white transition-colors">
@@ -508,11 +508,23 @@ const AuthManager: React.FC<AuthManagerProps> = ({ view = 'users', onViewSelect 
                 </div>
             )}
 
-            {toast && (
-                <div className={`fixed bottom-8 right-8 px-6 py-3 rounded-xl border text-[10px] font-black uppercase tracking-widest flex items-center gap-3 animate-in slide-in-from-bottom duration-300 ${toast.type === 'error' ? 'bg-red-500/10 border-red-500/20 text-red-500' : 'bg-green-500/10 border-green-500/20 text-green-500'}`}>
-                    {toast.message}
-                </div>
-            )}
+            <ConfirmModal
+                isOpen={!!pendingSessionId}
+                onClose={() => setPendingSessionId(null)}
+                onConfirm={() => pendingSessionId ? handleRevokeSession(pendingSessionId) : undefined}
+                title="Terminate Session"
+                message="This token will be revoked immediately and the client will need to authenticate again."
+                confirmText="Revoke Session"
+                type="danger"
+            />
+
+            {toast ? (
+                <BrandedToast
+                    tone={toast.type === 'error' ? 'error' : 'success'}
+                    message={toast.message}
+                    onClose={() => setToast(null)}
+                />
+            ) : null}
         </div>
     );
 };

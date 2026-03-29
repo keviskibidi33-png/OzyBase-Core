@@ -33,10 +33,11 @@ const AutoFixModal = ({ isOpen, onClose, issue, onConfirm }: AutoFixModalProps) 
 
     return (
         <div
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-[#000000]/80 backdrop-blur-sm animate-in fade-in duration-200"
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4"
             onClick={(e: React.MouseEvent<HTMLDivElement>) => e.target === e.currentTarget && onClose()}
         >
-            <div className="w-full max-w-xl bg-[#111111] border border-[#2e2e2e] rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
+            <div className="absolute inset-0 ozy-overlay-backdrop backdrop-blur-md" />
+            <div className="ozy-dialog-panel w-full max-w-xl">
                 {/* Header */}
                 <div className="px-8 py-6 border-b border-[#2e2e2e] flex items-center justify-between bg-zinc-900/30">
                     <div className="flex items-center gap-4">

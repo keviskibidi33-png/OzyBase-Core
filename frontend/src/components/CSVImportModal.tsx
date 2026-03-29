@@ -112,10 +112,11 @@ const CSVImportModal: React.FC<CSVImportModalProps> = ({
 
     return (
         <div
-            className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
+            className="fixed inset-0 z-[110] flex items-center justify-center p-4"
             onClick={(e: any) => e.target === e.currentTarget && onClose()}
         >
-            <div className="bg-[#171717] border border-[#2e2e2e] rounded-2xl w-full max-w-[1120px] max-h-[92vh] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col">
+            <div className="absolute inset-0 ozy-overlay-backdrop backdrop-blur-md" />
+            <div className="ozy-dialog-panel flex max-h-[92vh] w-full max-w-[1120px] flex-col">
                 <div className="px-4 lg:px-6 py-4 border-b border-[#2e2e2e] flex items-center justify-between bg-[#1a1a1a]">
                     <div className="flex items-center gap-3 min-w-0">
                         <div className="p-2 rounded-lg bg-primary/10 text-primary shrink-0">

@@ -19,7 +19,7 @@ interface NotificationCenterProps {
 const NotificationCenter = ({ isOpen, onClose, issues, onIssueAction, onViewLogs }: NotificationCenterProps) => {
     return (
         <div
-            className={`absolute top-16 right-6 w-[420px] bg-[#1a1a1a] border border-[#2e2e2e] rounded-2xl shadow-2xl z-[100] overflow-hidden origin-top-right transition-all duration-200 ${
+            className={`absolute top-16 right-6 z-[100] w-[420px] overflow-hidden origin-top-right transition-all duration-200 ozy-floating-panel ${
                 isOpen
                     ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto'
                     : 'opacity-0 -translate-y-2 scale-95 pointer-events-none'

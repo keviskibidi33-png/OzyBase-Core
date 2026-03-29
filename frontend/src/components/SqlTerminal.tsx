@@ -1139,9 +1139,9 @@ const SqlTerminal = () => {
 
             {/* Professional Modals */}
             {isSaveModalOpen && (
-                <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 animate-in fade-in duration-300">
-                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsSaveModalOpen(false)} />
-                    <div className="relative w-full max-w-md bg-[#111111] border border-[#2e2e2e] rounded-2xl shadow-2xl p-6 animate-in zoom-in-95 duration-300">
+                <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+                    <div className="absolute inset-0 ozy-overlay-backdrop backdrop-blur-md" onClick={() => setIsSaveModalOpen(false)} />
+                    <div className="ozy-dialog-panel relative w-full max-w-md p-6">
                         <div className="flex items-center gap-3 mb-6">
                             <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
                                 <Save size={20} />
@@ -1184,9 +1184,9 @@ const SqlTerminal = () => {
             )}
 
             {isExportConfirmOpen && (
-                <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 animate-in fade-in duration-300">
-                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsExportConfirmOpen(false)} />
-                    <div className="relative w-full max-w-sm bg-[#111111] border border-[#2e2e2e] rounded-2xl shadow-2xl p-6 animate-in zoom-in-95 duration-300">
+                <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+                    <div className="absolute inset-0 ozy-overlay-backdrop backdrop-blur-md" onClick={() => setIsExportConfirmOpen(false)} />
+                    <div className="ozy-dialog-panel relative w-full max-w-sm p-6">
                         <div className="flex flex-col items-center text-center gap-4 py-4">
                             <div className="w-16 h-16 rounded-3xl bg-primary/10 flex items-center justify-center text-primary mb-2">
                                 <Download size={32} />

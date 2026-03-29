@@ -164,7 +164,7 @@ const WorkspaceSwitcher = ({ onWorkspaceChange, onViewSelect, isExpanded = false
             </div>
 
             {isOpen && (
-                <div className={`absolute ${isExpanded ? 'top-[calc(100%+8px)] left-2 right-2' : 'top-0 left-[calc(100%+12px)] w-64'} bg-[#0c0c0c] border border-[#2e2e2e] rounded-2xl shadow-[0_20px_50px_-12px_rgba(0,0,0,0.8)] z-[200] overflow-hidden animate-in fade-in zoom-in-95 slide-in-from-top-4 duration-300 backdrop-blur-xl`}>
+                <div className={`absolute ${isExpanded ? 'top-[calc(100%+8px)] left-2 right-2' : 'top-0 left-[calc(100%+12px)] w-64'} z-[200] overflow-hidden backdrop-blur-xl ozy-floating-panel`}>
                     {/* Search Bar */}
                     <div className="p-3 border-b border-[#2e2e2e] bg-[#111111]/50">
                         <div className="relative">

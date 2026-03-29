@@ -34,8 +34,9 @@ const BulkEditModal = ({ isOpen, onClose, schema = [], onSubmit }: BulkEditModal
     };
 
     return (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <div className="w-full max-w-lg bg-[#171717] border border-[#2e2e2e] rounded-xl shadow-2xl overflow-hidden">
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+            <div className="absolute inset-0 ozy-overlay-backdrop backdrop-blur-md" onClick={onClose} />
+            <div className="ozy-dialog-panel w-full max-w-lg">
                 <div className="flex items-center justify-between px-6 py-4 border-b border-[#2e2e2e]">
                     <div>
                         <h3 className="text-sm font-bold text-white uppercase tracking-wider">Bulk Edit</h3>

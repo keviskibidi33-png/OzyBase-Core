@@ -137,6 +137,8 @@ const CreateTableModal: React.FC<CreateTableModalProps> = ({ isOpen, onClose, on
     const [error, setError] = useState<string | null>(null);
     const [csvRecords, setCsvRecords] = useState<CsvRecord[]>([]);
     const [allTables, setAllTables] = useState<CollectionSummary[]>([]); // For relations
+    const [relationEditorIndex, setRelationEditorIndex] = useState<number | null>(null);
+    const [relationDraft, setRelationDraft] = useState('');
     const normalizedTableName = useMemo(() => normalizeIdentifier(name), [name]);
     const usesUserIDInPolicies = useMemo(
         () => Object.values(rlsPolicies).some((rule: any) => String(rule || '').includes('user_id')),
@@ -361,6 +363,24 @@ const CreateTableModal: React.FC<CreateTableModalProps> = ({ isOpen, onClose, on
         setColumns((prev: any) => prev.map((col: any, i: any) => (i === index ? { ...col, [field]: value } : col)));
     };
 
+    const openRelationEditor = (index: number) => {
+        setRelationEditorIndex(index);
+        setRelationDraft(String(columns[index]?.references || ''));
+    };
+
+    const closeRelationEditor = () => {
+        setRelationEditorIndex(null);
+        setRelationDraft('');
+    };
+
+    const applyRelationDraft = () => {
+        if (relationEditorIndex === null) {
+            return;
+        }
+        handleColumnChange(relationEditorIndex, 'references', relationDraft.trim());
+        closeRelationEditor();
+    };
+
     const handleSave = async () => {
         setLoading(true);
         setError(null);
@@ -451,12 +471,13 @@ const CreateTableModal: React.FC<CreateTableModalProps> = ({ isOpen, onClose, on
 
     return (
         <div
-            className={`fixed inset-0 z-50 flex items-center justify-end bg-black/50 backdrop-blur-sm transition-opacity ${isVisible ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+            className={`fixed inset-0 z-50 flex items-center justify-end transition-opacity ${isVisible ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
             style={{ transitionDuration: `${isVisible ? MODAL_ENTER_MS : MODAL_EXIT_MS}ms` }}
             onClick={(e: any) => e.target === e.currentTarget && requestClose()}
         >
+            <div className="absolute inset-0 ozy-overlay-backdrop backdrop-blur-md" />
             <div
-                className={`w-full max-w-2xl h-full bg-[#111111] border-l border-[#2e2e2e] shadow-2xl flex flex-col transform-gpu transition-all ${isVisible ? 'translate-x-0 opacity-100' : 'translate-x-4 opacity-0'}`}
+                className={`ozy-sheet-panel h-full w-full max-w-2xl flex flex-col transform-gpu transition-all ${isVisible ? 'translate-x-0 opacity-100' : 'translate-x-4 opacity-0'}`}
                 style={{ transitionDuration: `${isVisible ? MODAL_ENTER_MS : MODAL_EXIT_MS}ms` }}
             >
 
@@ -726,9 +747,7 @@ const CreateTableModal: React.FC<CreateTableModalProps> = ({ isOpen, onClose, on
                                             title={col.references ? `Ref: ${col.references}` : 'Add Relation'}
                                             onClick={() => {
                                                 if (col.isSystem) return;
-                                                const suggestions = allTables.map((t: any) => t.name).join(', ');
-                                                const refs = prompt(`Enter reference (table.column). \nExisting tables: ${suggestions}`, col.references || '');
-                                                if (refs !== null) handleColumnChange(idx, 'references', refs);
+                                                openRelationEditor(idx);
                                             }}
                                         >
                                             <LinkIcon size={14} />
@@ -777,6 +796,75 @@ const CreateTableModal: React.FC<CreateTableModalProps> = ({ isOpen, onClose, on
                         {loading ? 'Saving...' : 'Save'}
                     </button>
                 </div>
+
+                {relationEditorIndex !== null && (
+                    <div className="absolute inset-0 z-20 flex items-center justify-center p-6">
+                        <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={closeRelationEditor} />
+                        <div className="ozy-dialog-panel relative w-full max-w-xl overflow-hidden">
+                            <div className="flex items-center justify-between border-b border-[#2e2e2e] bg-[#171717] px-6 py-4">
+                                <div>
+                                    <h3 className="text-sm font-black uppercase tracking-widest text-white">Configure Relation</h3>
+                                    <p className="mt-1 text-[10px] font-black uppercase tracking-widest text-zinc-500">
+                                        Format: table.column
+                                    </p>
+                                </div>
+                                <button onClick={closeRelationEditor} className="text-zinc-500 transition-colors hover:text-white">
+                                    <X size={18} />
+                                </button>
+                            </div>
+                            <div className="space-y-5 p-6">
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Reference Target</label>
+                                    <input
+                                        autoFocus
+                                        type="text"
+                                        value={relationDraft}
+                                        onChange={(event) => setRelationDraft(event.target.value)}
+                                        placeholder="profiles.id"
+                                        className="w-full rounded-xl border border-zinc-800 bg-[#0c0c0c] px-4 py-3 text-sm text-white focus:border-primary/50 focus:outline-none"
+                                    />
+                                </div>
+
+                                <div className="space-y-3">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Detected Tables</p>
+                                    <div className="flex max-h-40 flex-wrap gap-2 overflow-y-auto custom-scrollbar">
+                                        {allTables.map((table: any) => (
+                                            <button
+                                                key={table.name}
+                                                type="button"
+                                                onClick={() => setRelationDraft(`${table.name}.id`)}
+                                                className="rounded-full border border-zinc-800 bg-zinc-900/60 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-zinc-400 transition-colors hover:border-primary/30 hover:text-primary"
+                                            >
+                                                {table.name}.id
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="flex items-center justify-end gap-3 border-t border-[#2e2e2e] bg-[#111111]/85 px-6 py-4">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        if (relationEditorIndex !== null) {
+                                            handleColumnChange(relationEditorIndex, 'references', '');
+                                        }
+                                        closeRelationEditor();
+                                    }}
+                                    className="px-4 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-500 transition-colors hover:text-zinc-200"
+                                >
+                                    Clear
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={applyRelationDraft}
+                                    className="rounded-xl bg-primary px-5 py-2 text-[10px] font-black uppercase tracking-widest text-black transition-colors hover:bg-[#E6E600]"
+                                >
+                                    Save Relation
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );

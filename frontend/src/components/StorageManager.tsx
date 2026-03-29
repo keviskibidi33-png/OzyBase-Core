@@ -14,6 +14,9 @@ import {
     LayoutGrid,
     List
 } from 'lucide-react';
+import { BrandedToast } from './OverlayPrimitives';
+
+const DEFAULT_RLS_RULE = "auth.uid() = owner_id";
 
 const StorageManager = () => {
     const [viewMode, setViewMode] = useState('grid');
@@ -22,6 +25,15 @@ const StorageManager = () => {
     const [selectedBucket, setSelectedBucket] = useState('default');
     const [loading, setLoading] = useState(true);
     const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+    const [isCreateBucketOpen, setIsCreateBucketOpen] = useState(false);
+    const [isSavingBucket, setIsSavingBucket] = useState(false);
+    const [bucketForm, setBucketForm] = useState({
+        name: '',
+        isPublic: false,
+        isRLS: false,
+        rlsRule: DEFAULT_RLS_RULE,
+    });
+    const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
     const fetchBuckets = useCallback(async () => {
         try {
@@ -71,17 +83,12 @@ const StorageManager = () => {
     }, [fetchFiles]);
 
     const createBucket = async () => {
-        const name = prompt("Enter bucket name:");
-        if (!name) return;
-        const isPublic = confirm("Make bucket public?");
-        const isRLS = confirm("Enable Row Level Security (RLS)?");
-
-        let rlsRule = "auth.uid() = owner_id";
-        if (isRLS) {
-            const ruleInput = prompt("Enter RLS Rule (default: auth.uid() = owner_id)\nOptions: auth.uid() = owner_id, auth.role() = 'admin', true, false", rlsRule);
-            if (ruleInput) rlsRule = ruleInput;
+        if (!bucketForm.name.trim()) {
+            setToast({ message: 'Bucket name is required', type: 'error' });
+            return;
         }
 
+        setIsSavingBucket(true);
         try {
             const token = localStorage.getItem('ozy_token');
             const res = await fetch('/api/files/buckets', {
@@ -91,18 +98,26 @@ const StorageManager = () => {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    name,
-                    public: isPublic,
-                    rls_enabled: isRLS,
-                    rls_rule: rlsRule
+                    name: bucketForm.name.trim(),
+                    public: bucketForm.isPublic,
+                    rls_enabled: bucketForm.isRLS,
+                    rls_rule: bucketForm.isRLS ? bucketForm.rlsRule || DEFAULT_RLS_RULE : DEFAULT_RLS_RULE
                 })
             });
 
             if (res.ok) {
+                setIsCreateBucketOpen(false);
+                setBucketForm({ name: '', isPublic: false, isRLS: false, rlsRule: DEFAULT_RLS_RULE });
                 await fetchBuckets();
+                setToast({ message: 'Bucket created', type: 'success' });
+            } else {
+                setToast({ message: 'Failed to create bucket', type: 'error' });
             }
         } catch (error) {
             console.error('Failed to create bucket:', error);
+            setToast({ message: 'Failed to create bucket', type: 'error' });
+        } finally {
+            setIsSavingBucket(false);
         }
     };
 
@@ -126,11 +141,14 @@ const StorageManager = () => {
 
             if (res.ok) {
                 await fetchFiles();
+                setToast({ message: 'File uploaded', type: 'success' });
             } else {
                 console.error('Failed to upload file');
+                setToast({ message: 'Failed to upload file', type: 'error' });
             }
         } catch (error) {
             console.error('Upload error:', error);
+            setToast({ message: 'Upload failed', type: 'error' });
         } finally {
             setLoading(false);
         }
@@ -155,7 +173,9 @@ const StorageManager = () => {
                 <div className="flex items-center justify-between mb-8">
                     <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Buckets</h3>
                     <button
-                        onClick={createBucket}
+                        onClick={() => setIsCreateBucketOpen(true)}
+                        aria-label="Create bucket"
+                        title="Create bucket"
                         className="text-zinc-600 hover:text-primary"
                     >
                         <Plus size={14} />
@@ -200,6 +220,7 @@ const StorageManager = () => {
                         <div className="flex items-center gap-4">
                             <button
                                 onClick={fetchFiles}
+                                aria-label="Refresh files"
                                 className="p-3 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-500 hover:text-white transition-all"
                             >
                                 <Settings size={18} />
@@ -317,6 +338,92 @@ const StorageManager = () => {
                     )}
                 </div>
             </div>
+
+            {isCreateBucketOpen && (
+                <div className="fixed inset-0 z-[70] flex items-center justify-center p-6">
+                    <div className="absolute inset-0 ozy-overlay-backdrop backdrop-blur-md" onClick={() => setIsCreateBucketOpen(false)} />
+                    <div className="ozy-dialog-panel relative w-full max-w-lg overflow-hidden">
+                        <div className="flex items-center justify-between border-b border-[#2e2e2e] bg-[#171717] px-8 py-6">
+                            <div>
+                                <h3 className="text-xl font-black uppercase tracking-tight text-white">Create Bucket</h3>
+                                <p className="mt-1 text-[10px] font-black uppercase tracking-widest text-zinc-500">Provision a new storage namespace</p>
+                            </div>
+                            <button onClick={() => setIsCreateBucketOpen(false)} className="text-zinc-500 transition-colors hover:text-white">
+                                <Plus className="rotate-45" size={18} />
+                            </button>
+                        </div>
+                        <div className="space-y-5 p-8">
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Bucket Name</label>
+                                <input
+                                    autoFocus
+                                    type="text"
+                                    value={bucketForm.name}
+                                    onChange={(event) => setBucketForm((current) => ({ ...current, name: event.target.value }))}
+                                    placeholder="e.g. customer-assets"
+                                    className="w-full rounded-xl border border-zinc-800 bg-[#0c0c0c] px-4 py-3 text-sm text-white focus:border-primary/50 focus:outline-none"
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setBucketForm((current) => ({ ...current, isPublic: !current.isPublic }))}
+                                    className={`rounded-2xl border px-4 py-4 text-left transition-all ${bucketForm.isPublic ? 'border-primary/30 bg-primary/10 text-primary' : 'border-zinc-800 bg-zinc-900/40 text-zinc-400'}`}
+                                >
+                                    <p className="text-[10px] font-black uppercase tracking-widest">Public Access</p>
+                                    <p className="mt-2 text-[11px] leading-relaxed text-white/80">Allow direct reads without signing URLs.</p>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setBucketForm((current) => ({ ...current, isRLS: !current.isRLS }))}
+                                    className={`rounded-2xl border px-4 py-4 text-left transition-all ${bucketForm.isRLS ? 'border-primary/30 bg-primary/10 text-primary' : 'border-zinc-800 bg-zinc-900/40 text-zinc-400'}`}
+                                >
+                                    <p className="text-[10px] font-black uppercase tracking-widest">RLS Policy</p>
+                                    <p className="mt-2 text-[11px] leading-relaxed text-white/80">Restrict uploads and reads with SQL policy checks.</p>
+                                </button>
+                            </div>
+
+                            {bucketForm.isRLS && (
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">RLS Rule</label>
+                                    <textarea
+                                        value={bucketForm.rlsRule}
+                                        onChange={(event) => setBucketForm((current) => ({ ...current, rlsRule: event.target.value }))}
+                                        className="min-h-[120px] w-full rounded-2xl border border-zinc-800 bg-[#0c0c0c] px-4 py-3 font-mono text-xs text-zinc-200 focus:border-primary/50 focus:outline-none"
+                                    />
+                                    <p className="text-[10px] text-zinc-600">Examples: `auth.uid() = owner_id`, `auth.role() = 'admin'`, `true`, `false`.</p>
+                                </div>
+                            )}
+                        </div>
+                        <div className="flex items-center justify-end gap-3 border-t border-[#2e2e2e] bg-[#111111]/85 px-8 py-5">
+                            <button
+                                type="button"
+                                onClick={() => setIsCreateBucketOpen(false)}
+                                className="px-5 py-2.5 text-[10px] font-black uppercase tracking-widest text-zinc-500 transition-colors hover:text-white"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => void createBucket()}
+                                disabled={isSavingBucket}
+                                className="rounded-xl bg-primary px-6 py-2.5 text-[10px] font-black uppercase tracking-widest text-black transition-all hover:bg-[#E6E600] disabled:opacity-60"
+                            >
+                                {isSavingBucket ? 'Creating...' : 'Create Bucket'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {toast ? (
+                <BrandedToast
+                    tone={toast.type === 'success' ? 'success' : 'error'}
+                    message={toast.message}
+                    onClose={() => setToast(null)}
+                />
+            ) : null}
         </div>
     );
 };

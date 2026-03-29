@@ -383,8 +383,9 @@ const WorkspaceManager = ({ onWorkspaceChange, onViewSelect, view = 'wm_overview
 
             {/* Create Modal */}
             {showCreateModal && (
-                <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[1000] flex items-center justify-center p-6 animate-in fade-in duration-300">
-                    <div className="max-w-md w-full bg-[#111111] border border-[#2e2e2e] rounded-3xl p-8 shadow-[0_0_100px_rgba(0,0,0,0.8)] animate-in zoom-in-95 duration-300">
+                <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6">
+                    <div className="absolute inset-0 ozy-overlay-backdrop backdrop-blur-md" onClick={() => setShowCreateModal(false)} />
+                    <div className="ozy-dialog-panel max-w-md w-full p-8">
                         <h2 className="text-2xl font-black text-white italic uppercase tracking-tighter mb-2">Initialize New Project</h2>
                         <p className="text-zinc-500 text-[10px] font-black uppercase tracking-widest mb-8">Isolated environment creation</p>
 

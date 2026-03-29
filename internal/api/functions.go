@@ -95,6 +95,10 @@ func decodeWASMModuleBase64(raw string) ([]byte, error) {
 	return decoded, nil
 }
 
+func wrapFunctionScript(script string) string {
+	return "(function(){\n" + script + "\n})()"
+}
+
 func (h *FunctionsHandler) invokeJavaScript(c echo.Context, script string) (any, error) {
 	vm := goja.New()
 
@@ -128,7 +132,7 @@ func (h *FunctionsHandler) invokeJavaScript(c echo.Context, script string) (any,
 		"log": func(args ...any) {},
 	})
 
-	value, err := vm.RunString(script)
+	value, err := vm.RunString(wrapFunctionScript(script))
 	if err != nil {
 		return nil, errors.New("execution error: " + err.Error())
 	}

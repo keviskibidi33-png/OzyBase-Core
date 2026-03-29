@@ -9,8 +9,10 @@ import {
     ExternalLink,
     Code,
     Cpu,
-    Globe
+    Globe,
+    X
 } from 'lucide-react';
+import { BrandedToast } from './OverlayPrimitives';
 
 interface EdgeFunctionRecord {
     id: string;
@@ -45,6 +47,8 @@ const EdgeFunctions: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [showModal, setShowModal] = useState(false);
     const [currentFn, setCurrentFn] = useState<EdgeFunctionDraft>({ name: '', script: DEFAULT_FUNCTION_SCRIPT });
+    const [invokeOutput, setInvokeOutput] = useState<{ name: string; result: string; isError: boolean } | null>(null);
+    const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
     useEffect(() => {
         fetchFunctions();
@@ -80,9 +84,13 @@ const EdgeFunctions: React.FC = () => {
             if (res.ok) {
                 setShowModal(false);
                 await fetchFunctions();
+                setToast({ message: currentFn.id ? 'Function updated' : 'Function deployed', type: 'success' });
+            } else {
+                setToast({ message: 'Failed to save function', type: 'error' });
             }
         } catch (error) {
             console.error('Save failed:', error);
+            setToast({ message: 'Save failed', type: 'error' });
         }
     };
 
@@ -94,9 +102,17 @@ const EdgeFunctions: React.FC = () => {
                 body: JSON.stringify({ test: true })
             });
             const data = await res.json();
-            alert("Result: " + JSON.stringify(data.result, null, 2));
+            setInvokeOutput({
+                name,
+                result: JSON.stringify(data.result ?? data, null, 2),
+                isError: !res.ok,
+            });
         } catch (error: unknown) {
-            alert("Invoke failed: " + getErrorMessage(error));
+            setInvokeOutput({
+                name,
+                result: getErrorMessage(error),
+                isError: true,
+            });
         }
     };
 
@@ -210,12 +226,14 @@ const EdgeFunctions: React.FC = () => {
                                             <div className="flex items-center justify-end gap-2">
                                                 <button
                                                     onClick={() => invokeFunction(fn.name)}
+                                                    aria-label={`Invoke ${fn.name}`}
                                                     className="p-2.5 rounded-xl bg-primary/10 text-primary border border-primary/20 hover:bg-primary hover:text-black transition-all"
                                                 >
                                                     <Play size={14} fill="currentColor" />
                                                 </button>
                                                 <button
                                                     onClick={() => { setCurrentFn(fn); setShowModal(true); }}
+                                                    aria-label={`Edit ${fn.name}`}
                                                     className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-500 hover:text-white transition-all"
                                                 >
                                                     <MoreVertical size={14} />
@@ -232,8 +250,9 @@ const EdgeFunctions: React.FC = () => {
 
             {/* Modal */}
             {showModal && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-6 animate-in fade-in duration-300">
-                    <div className="bg-[#171717] border border-[#2e2e2e] rounded-3xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden shadow-[0_0_80px_rgba(0,0,0,0.6)]">
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+                    <div className="absolute inset-0 ozy-overlay-backdrop backdrop-blur-md" onClick={() => setShowModal(false)} />
+                    <div className="ozy-dialog-panel flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden">
                         <div className="px-8 py-6 border-b border-[#2e2e2e] flex items-center justify-between bg-[#1a1a1a]">
                             <div className="flex items-center gap-4">
                                 <div className="p-3 bg-primary/10 rounded-2xl border border-primary/20">
@@ -307,6 +326,40 @@ const EdgeFunctions: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            {invokeOutput && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center p-6">
+                    <div className="absolute inset-0 ozy-overlay-backdrop backdrop-blur-md" onClick={() => setInvokeOutput(null)} />
+                    <div className="ozy-dialog-panel relative w-full max-w-3xl overflow-hidden">
+                        <div className="flex items-center justify-between border-b border-[#2e2e2e] bg-[#171717] px-6 py-4">
+                            <div>
+                                <h3 className="text-sm font-black uppercase tracking-widest text-white">
+                                    {invokeOutput.isError ? 'Invocation Failed' : 'Invocation Result'}
+                                </h3>
+                                <p className="mt-1 text-[10px] font-black uppercase tracking-widest text-zinc-500">
+                                    Function: {invokeOutput.name}
+                                </p>
+                            </div>
+                            <button onClick={() => setInvokeOutput(null)} className="text-zinc-500 transition-colors hover:text-white">
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <div className="p-6">
+                            <pre className={`max-h-[60vh] overflow-auto rounded-2xl border p-4 text-xs leading-relaxed custom-scrollbar ${invokeOutput.isError ? 'border-red-500/20 bg-red-500/6 text-red-300' : 'border-zinc-800 bg-[#0c0c0c] text-zinc-300'}`}>
+                                {invokeOutput.result}
+                            </pre>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {toast ? (
+                <BrandedToast
+                    tone={toast.type === 'success' ? 'success' : 'error'}
+                    message={toast.message}
+                    onClose={() => setToast(null)}
+                />
+            ) : null}
         </div>
     );
 };
