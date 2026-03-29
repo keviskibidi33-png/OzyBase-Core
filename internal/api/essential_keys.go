@@ -55,9 +55,9 @@ type adminVerificationClaims struct {
 func apiKeyLabel(role string) string {
 	switch role {
 	case APIKeyRoleAnon:
-		return "Anon key"
+		return "Publishable key"
 	case APIKeyRoleServiceRole:
-		return "Service role key"
+		return "Secret key"
 	default:
 		return role
 	}

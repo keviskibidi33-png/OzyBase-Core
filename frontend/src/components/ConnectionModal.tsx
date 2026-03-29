@@ -68,7 +68,7 @@ const ConnectionModal: React.FC<ConnectionModalProps> = ({
               Connect to your project
             </h2>
             <p className="text-xs text-zinc-500 mt-1">
-              Safe connection metadata only. Passwords and service-role secrets
+              Safe connection metadata only. Passwords and project secret keys
               are never exposed here.
             </p>
           </div>
@@ -230,13 +230,12 @@ const ConnectionModal: React.FC<ConnectionModalProps> = ({
                   </div>
                   <div>
                     <h3 className="text-sm font-bold text-white mb-1">
-                      Service Secrets
+                      Project Keys
                     </h3>
                     <p className="text-xs text-zinc-500 leading-relaxed">
-                      Service-role keys and raw database passwords are
-                      intentionally removed from the UI. Reveal or rotate the
-                      essential project keys from Settings after the quick admin
-                      verification step.
+                      Publishable and secret keys are managed from Settings
+                      after the quick admin verification step. Raw database
+                      passwords remain intentionally hidden from the UI.
                     </p>
                   </div>
                 </div>
