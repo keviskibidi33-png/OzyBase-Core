@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { CheckCircle2, Copy, ExternalLink, KeyRound, RefreshCw, XCircle } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
+import ModuleScrollContainer from './ModuleScrollContainer';
 
 interface ProviderInfo {
     name: string;
@@ -40,7 +41,7 @@ const AuthProvidersView: React.FC = () => {
     };
 
     return (
-        <div className="p-8 max-w-6xl mx-auto space-y-8 animate-in fade-in duration-500">
+        <ModuleScrollContainer width="6xl" innerClassName="animate-in fade-in duration-500">
             <div className="flex items-center justify-between border-b border-[#2e2e2e] pb-6">
                 <div className="flex items-center gap-4">
                     <div className="p-3 bg-primary/10 rounded-2xl border border-primary/20">
@@ -119,7 +120,7 @@ const AuthProvidersView: React.FC = () => {
                     ))}
                 </div>
             )}
-        </div>
+        </ModuleScrollContainer>
     );
 };
 

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { fetchWithAuth } from '../utils/api';
+import ModuleScrollContainer from './ModuleScrollContainer';
 
 const TwoFactorAuth = () => {
     const [isEnabled, setIsEnabled] = useState(false);
@@ -124,7 +125,7 @@ const TwoFactorAuth = () => {
     );
 
     return (
-        <div className="p-8 max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500">
+        <ModuleScrollContainer width="4xl" innerClassName="animate-in fade-in duration-500">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-[#2e2e2e] pb-6">
                 <div className="flex items-center gap-4">
@@ -317,7 +318,7 @@ const TwoFactorAuth = () => {
                     {toast.message}
                 </div>
             )}
-        </div>
+        </ModuleScrollContainer>
     );
 };
 

@@ -6,6 +6,7 @@ import {
     UserX, ServerCrash
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
+import ModuleScrollContainer from './ModuleScrollContainer';
 
 interface CountryStat {
     country: string;
@@ -110,7 +111,7 @@ const SecurityDashboard: React.FC = () => {
     );
 
     return (
-        <div className="p-8 max-w-7xl mx-auto space-y-8 animate-in fade-in duration-500 pb-20">
+        <ModuleScrollContainer width="7xl" innerClassName="animate-in fade-in duration-500 pb-20">
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
@@ -261,7 +262,7 @@ const SecurityDashboard: React.FC = () => {
                     </div>
                 </div>
             </div>
-        </div>
+        </ModuleScrollContainer>
     );
 };
 

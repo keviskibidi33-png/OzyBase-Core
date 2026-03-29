@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { CheckCircle2, Lock, Mail, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
+import ModuleScrollContainer from './ModuleScrollContainer';
 
 const SETTING_CARDS = [
     { id: 'smtp_configured', label: 'SMTP Delivery', icon: Mail, description: 'Transactional email sending for auth flows.' },
@@ -39,7 +40,7 @@ const AuthSettingsView: React.FC = () => {
     }, []);
 
     return (
-        <div className="p-8 max-w-5xl mx-auto space-y-8 animate-in fade-in duration-500">
+        <ModuleScrollContainer width="5xl" innerClassName="animate-in fade-in duration-500">
             <div className="flex items-center justify-between border-b border-[#2e2e2e] pb-6">
                 <div>
                     <h1 className="text-3xl font-black text-white uppercase tracking-tighter italic">Auth Settings</h1>
@@ -102,7 +103,7 @@ const AuthSettingsView: React.FC = () => {
                     </div>
                 </>
             )}
-        </div>
+        </ModuleScrollContainer>
     );
 };
 

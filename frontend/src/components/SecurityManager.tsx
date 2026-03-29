@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, Globe, Check, X, AlertTriangle, Loader2, Info } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
+import ModuleScrollContainer from './ModuleScrollContainer';
 
 interface GeoFencingPolicy {
     enabled: boolean;
@@ -116,7 +117,7 @@ const SecurityManager = () => {
     const geo = policies.geo_fencing;
 
     return (
-        <div className="p-8 max-w-5xl mx-auto space-y-8 animate-in fade-in duration-500">
+        <ModuleScrollContainer width="5xl" innerClassName="animate-in fade-in duration-500">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-[#2e2e2e] pb-6">
                 <div className="flex items-center gap-4">
@@ -209,7 +210,7 @@ const SecurityManager = () => {
                     {toast.message}
                 </div>
             )}
-        </div>
+        </ModuleScrollContainer>
     );
 };
 

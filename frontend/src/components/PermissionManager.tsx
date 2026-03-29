@@ -6,6 +6,7 @@ import {
     Eye, Plus, Edit3, Trash2
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
+import ModuleScrollContainer from './ModuleScrollContainer';
 
 type RuleKey = 'list_rule' | 'create_rule' | 'update_rule' | 'delete_rule';
 
@@ -84,7 +85,7 @@ const PermissionManager = () => {
     const roles = ['public', 'auth', 'admin', 'editor', 'manager'];
 
     return (
-        <div className="p-8 max-w-6xl mx-auto space-y-8 animate-in fade-in duration-500">
+        <ModuleScrollContainer width="6xl" innerClassName="animate-in fade-in duration-500">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-[#2e2e2e] pb-6">
                 <div className="flex items-center gap-4">
@@ -172,7 +173,7 @@ const PermissionManager = () => {
                     {toast.message}
                 </div>
             )}
-        </div>
+        </ModuleScrollContainer>
     );
 };
 
