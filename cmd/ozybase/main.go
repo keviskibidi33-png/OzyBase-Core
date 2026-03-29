@@ -149,6 +149,12 @@ func run() error {
 
 	// Initialize Server Components
 	h := api.NewHandler(db, broker, dispatcher, mailSvc, storageSvc, ps, migrator, applier, auditService)
+	if err := api.EnsureEssentialAPIKeys(ctx, db, api.EssentialAPIKeyBootstrap{
+		AnonKey:        cfg.AnonKey,
+		ServiceRoleKey: cfg.ServiceRoleKey,
+	}); err != nil {
+		return fmt.Errorf("failed to ensure essential api keys: %w", err)
+	}
 
 	// Start Log Export Worker
 	go h.StartLogExporter(context.Background())
@@ -373,14 +379,8 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 	e.Use(api.SecurityHeadersDefault())
 	e.Use(middleware.BodyLimit(cfg.BodyLimit))
 	e.Use(api.PrometheusMiddleware()) // 📊 Stats
-	e.Use(api.APIKeyMiddleware(h.DB, api.StaticAPIKeys{
-		AnonKey:                cfg.AnonKey,
-		ServiceRoleKey:         cfg.ServiceRoleKey,
-		PreviousAnonKey:        cfg.PreviousAnonKey,
-		PreviousServiceRoleKey: cfg.PreviousServiceRoleKey,
-		StaticGraceUntil:       cfg.StaticKeyGraceUntil,
-	})) // 🔐 API Key Auth (Enterprise Phase 1)
-	e.Use(api.RLSMiddleware(h.DB)) // 🛡️ RLS Context Injection
+	e.Use(api.APIKeyMiddleware(h.DB)) // 🔐 API Key Auth (Enterprise Phase 1)
+	e.Use(api.RLSMiddleware(h.DB))    // 🛡️ RLS Context Injection
 	e.Use(api.AdminAuditMiddleware(h))
 	// #nosec G101 -- CSRF token lookup/cookie fields are static identifiers, not credentials.
 	e.Use(middleware.CSRFWithConfig(middleware.CSRFConfig{
@@ -452,6 +452,10 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		keysGroup := apiGroup.Group("/project/keys", authRequired, adminOnly)
 		keysGroup.GET("", h.ListAPIKeys)
 		keysGroup.GET("/events", h.ListAPIKeyEvents)
+		keysGroup.GET("/essential", h.ListEssentialAPIKeys)
+		keysGroup.POST("/essential/verify", h.VerifyEssentialAPIKeyAccess)
+		keysGroup.POST("/essential/:role/reveal", h.RevealEssentialAPIKey)
+		keysGroup.POST("/essential/:role/rotate", h.RotateEssentialAPIKey)
 		keysGroup.POST("", h.CreateAPIKey)
 		keysGroup.DELETE("/:id", h.DeleteAPIKey)
 		keysGroup.PATCH("/:id/toggle", h.ToggleAPIKey)

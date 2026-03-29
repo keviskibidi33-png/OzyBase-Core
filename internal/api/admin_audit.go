@@ -29,6 +29,10 @@ type adminAuditDescriptor struct {
 var adminAuditDescriptors = map[string]adminAuditDescriptor{
 	"GET /api/project/keys":                            {Action: "api_key_list"},
 	"GET /api/project/keys/events":                     {Action: "api_key_events_list"},
+	"GET /api/project/keys/essential":                  {Action: "api_key_essential_list"},
+	"POST /api/project/keys/essential/verify":          {Action: "api_key_essential_verify"},
+	"POST /api/project/keys/essential/:role/reveal":    {Action: "api_key_essential_reveal", TargetParam: "role"},
+	"POST /api/project/keys/essential/:role/rotate":    {Action: "api_key_essential_rotate", TargetParam: "role"},
 	"POST /api/project/keys":                           {Action: "api_key_create"},
 	"DELETE /api/project/keys/:id":                     {Action: "api_key_delete", TargetParam: "id"},
 	"PATCH /api/project/keys/:id/toggle":               {Action: "api_key_toggle", TargetParam: "id"},

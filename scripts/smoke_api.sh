@@ -82,6 +82,32 @@ call_api() {
   done
 }
 
+call_api_with_apikey() {
+  local method="$1"
+  local path="$2"
+  local body="${3:-}"
+  local api_key="${4:-}"
+
+  local args=(
+    -sS
+    -D "$TMP_HEADERS"
+    -o "$TMP_BODY"
+    -w "%{http_code}"
+    --connect-timeout "$SMOKE_CURL_CONNECT_TIMEOUT"
+    --max-time "$SMOKE_CURL_TIMEOUT"
+    -X "$method"
+    "${BASE_URL}${path}"
+  )
+  if [[ -n "$body" ]]; then
+    args+=(-H "Content-Type: application/json" -d "$body")
+  fi
+  if [[ -n "$api_key" ]]; then
+    args+=(-H "apikey: ${api_key}")
+  fi
+
+  curl "${args[@]}"
+}
+
 fetch_headers() {
   local path="$1"
   local token="${2:-}"
@@ -455,26 +481,50 @@ if str(result.get("mode", "")).strip().lower() != "deterministic":
     raise SystemExit("mcp nlq tool did not return deterministic mode")
 PY
 
-echo "[smoke] api key lifecycle (create + rotate + events)"
-key_name="ci_smoke_key_$(date +%s)"
-create_key_payload="$(printf '{"name":"%s","role":"service_role","expires_in_days":30}' "$key_name")"
-status_code="$(call_api POST /api/project/keys "$create_key_payload" "$TOKEN")"
-require_status "$status_code" "201"
-API_KEY_ID="$(json_read id)"
-if [[ -z "$API_KEY_ID" ]]; then
-  echo "API key creation response missing id" >&2
+echo "[smoke] api key lifecycle (essential verify + reveal + rotate)"
+status_code="$(call_api GET /api/project/keys/essential "" "$TOKEN")"
+require_status "$status_code" "200"
+
+verify_key_payload="$(printf '{"password":"%s"}' "$ADMIN_PASSWORD")"
+status_code="$(call_api POST /api/project/keys/essential/verify "$verify_key_payload" "$TOKEN")"
+require_status "$status_code" "200"
+KEY_VERIFICATION_TOKEN="$(json_read verification_token)"
+if [[ -z "$KEY_VERIFICATION_TOKEN" ]]; then
+  echo "Essential key verify response missing verification_token" >&2
   cat "$TMP_BODY" >&2
   exit 1
 fi
 
-status_code="$(call_api POST "/api/project/keys/${API_KEY_ID}/rotate" '{"grace_minutes":1,"reason":"ci smoke validation"}' "$TOKEN")"
+reveal_service_role_payload="$(printf '{"verification_token":"%s"}' "$KEY_VERIFICATION_TOKEN")"
+status_code="$(call_api POST /api/project/keys/essential/service_role/reveal "$reveal_service_role_payload" "$TOKEN")"
 require_status "$status_code" "200"
-ROTATED_KEY_ID="$(json_read new_id)"
-if [[ -z "$ROTATED_KEY_ID" ]]; then
-  echo "API key rotation response missing new_id" >&2
+ORIGINAL_SERVICE_ROLE_KEY="$(json_read key)"
+if [[ -z "$ORIGINAL_SERVICE_ROLE_KEY" ]]; then
+  echo "Essential key reveal response missing key" >&2
   cat "$TMP_BODY" >&2
   exit 1
 fi
+
+rotate_service_role_payload="$(printf '{"verification_token":"%s","reason":"ci smoke validation"}' "$KEY_VERIFICATION_TOKEN")"
+status_code="$(call_api POST /api/project/keys/essential/service_role/rotate "$rotate_service_role_payload" "$TOKEN")"
+require_status "$status_code" "200"
+ROTATED_KEY_ID="$(json_read id)"
+ROTATED_SERVICE_ROLE_KEY="$(json_read key)"
+if [[ -z "$ROTATED_KEY_ID" || -z "$ROTATED_SERVICE_ROLE_KEY" ]]; then
+  echo "Essential key rotation response missing id or key" >&2
+  cat "$TMP_BODY" >&2
+  exit 1
+fi
+
+status_code="$(call_api_with_apikey GET /api/project/mcp/tools "" "$ORIGINAL_SERVICE_ROLE_KEY")"
+if [[ "$status_code" != "401" ]]; then
+  echo "Previous service_role key should be rejected after rotation; got status ${status_code}" >&2
+  cat "$TMP_BODY" >&2
+  exit 1
+fi
+
+status_code="$(call_api_with_apikey GET /api/project/mcp/tools "" "$ROTATED_SERVICE_ROLE_KEY")"
+require_status "$status_code" "200"
 
 status_code="$(call_api GET "/api/project/keys/events?limit=100" "" "$TOKEN")"
 require_status "$status_code" "200"
@@ -499,7 +549,7 @@ items = data.get("items") if isinstance(data, dict) else None
 if not isinstance(items, list) or not items:
     raise SystemExit("admin audit events payload missing items")
 actions = {str(item.get("action", "")).strip() for item in items if isinstance(item, dict)}
-required = {"api_key_rotate", "security_rls_closeout"}
+required = {"api_key_essential_rotate", "security_rls_closeout"}
 missing = sorted(required - actions)
 if missing:
     raise SystemExit(f"missing expected admin audit actions: {missing}")
@@ -517,24 +567,6 @@ if [[ -n "${mcp_collection_name:-}" ]]; then
   status_code="$(call_api DELETE "/api/collections/${mcp_collection_name}" "" "$TOKEN")"
   if [[ "$status_code" != "204" && "$status_code" != "200" && "$status_code" != "404" ]]; then
     echo "MCP collection cleanup failed with status ${status_code}" >&2
-    cat "$TMP_BODY" >&2
-    exit 1
-  fi
-fi
-
-if [[ -n "${ROTATED_KEY_ID:-}" ]]; then
-  status_code="$(call_api DELETE "/api/project/keys/${ROTATED_KEY_ID}" "" "$TOKEN")"
-  if [[ "$status_code" != "200" && "$status_code" != "204" && "$status_code" != "404" ]]; then
-    echo "Rotated API key cleanup failed with status ${status_code}" >&2
-    cat "$TMP_BODY" >&2
-    exit 1
-  fi
-fi
-
-if [[ -n "${API_KEY_ID:-}" ]]; then
-  status_code="$(call_api DELETE "/api/project/keys/${API_KEY_ID}" "" "$TOKEN")"
-  if [[ "$status_code" != "200" && "$status_code" != "204" && "$status_code" != "404" ]]; then
-    echo "Original API key cleanup failed with status ${status_code}" >&2
     cat "$TMP_BODY" >&2
     exit 1
   fi

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -51,8 +50,6 @@ const (
 	APIKeyRoleAnon        = "anon"
 	APIKeyRoleServiceRole = "service_role"
 )
-
-var apiKeyNamePattern = regexp.MustCompile(`^[a-zA-Z0-9 _.-]{3,64}$`)
 
 func defaultAPIKeyGraceMinutes() int {
 	raw := strings.TrimSpace(os.Getenv("API_KEY_ROTATION_GRACE_MINUTES"))
@@ -204,95 +201,19 @@ func (h *Handler) ListAPIKeyEvents(c echo.Context) error {
 }
 
 func (h *Handler) CreateAPIKey(c echo.Context) error {
-	var req struct {
-		Name          string `json:"name"`
-		Role          string `json:"role"` // 'anon' or 'service_role'
-		ExpiresInDays *int   `json:"expires_in_days,omitempty"`
-	}
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
-	}
-	req.Name = strings.TrimSpace(req.Name)
-	req.Role = strings.ToLower(strings.TrimSpace(req.Role))
-	if req.Name == "" || !apiKeyNamePattern.MatchString(req.Name) {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid key name"})
-	}
-	if req.Role != APIKeyRoleAnon && req.Role != APIKeyRoleServiceRole {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "role must be 'anon' or 'service_role'"})
-	}
-	defaultDays := 90
-	if req.Role == APIKeyRoleAnon {
-		defaultDays = 30
-	}
-	expiresInDays := defaultDays
-	if req.ExpiresInDays != nil {
-		if *req.ExpiresInDays < 1 || *req.ExpiresInDays > 365 {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "expires_in_days must be between 1 and 365"})
-		}
-		expiresInDays = *req.ExpiresInDays
-	}
-	expiresAt := time.Now().UTC().Add(time.Duration(expiresInDays) * 24 * time.Hour)
-
-	rawKey, err := GenerateRandomKey()
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to generate key"})
-	}
-
-	// Format: ozy_prefix_secret
-	prefix := "ozy_" + rawKey[:4]
-	fullKey := fmt.Sprintf("%s_%s", prefix, rawKey)
-
-	// Hash for storage (we use SHA256 for fast lookup, then bcrypt for final verification if needed,
-	// but usually sha256 + prefix is enough for API keys if stored securely)
-	hash := sha256.Sum256([]byte(fullKey))
-	keyHash := hex.EncodeToString(hash[:])
-
-	workspaceID, _ := c.Get("workspace_id").(string)
-	var workspaceIDVal any
-	if strings.TrimSpace(workspaceID) != "" {
-		workspaceIDVal = workspaceID
-	}
-	actorUserID := actorUserIDFromContext(c)
-	var actorUserIDVal any
-	if actorUserID != nil {
-		actorUserIDVal = *actorUserID
-	}
-
-	var id string
-	keyGroupID := uuid.NewString()
-	err = h.DB.Pool.QueryRow(c.Request().Context(), `
-		INSERT INTO _v_api_keys (name, key_hash, prefix, role, workspace_id, expires_at, created_by_user_id, key_group_id, key_version)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1)
-		RETURNING id
-	`, req.Name, keyHash, prefix, req.Role, workspaceIDVal, expiresAt, actorUserIDVal, keyGroupID).Scan(&id)
-
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-	}
-
-	h.logAPIKeyEvent(c.Request().Context(), &id, &workspaceID, "create", actorUserID, map[string]any{
-		"name":            req.Name,
-		"role":            req.Role,
-		"prefix":          prefix,
-		"expires_at":      expiresAt.Format(time.RFC3339),
-		"expires_in_days": expiresInDays,
-	})
-
-	return c.JSON(http.StatusCreated, map[string]any{
-		"id":              id,
-		"key":             fullKey,
-		"name":            req.Name,
-		"role":            req.Role,
-		"key_group_id":    keyGroupID,
-		"key_version":     1,
-		"expires_at":      expiresAt,
-		"expires_in_days": expiresInDays,
-		"warning":         "Copy this key now, it will not be shown again!",
+	return c.JSON(http.StatusForbidden, map[string]string{
+		"error": "manual api key creation is disabled; use the essential key rotation flow instead",
 	})
 }
 
 func (h *Handler) DeleteAPIKey(c echo.Context) error {
 	id := c.Param("id")
+	var managedKind string
+	if err := h.DB.Pool.QueryRow(c.Request().Context(), `SELECT COALESCE(managed_kind, $2) FROM _v_api_keys WHERE id = $1`, id, apiKeyManagedKindCustom).Scan(&managedKind); err == nil {
+		if managedKind == apiKeyManagedKindEssential {
+			return c.JSON(http.StatusForbidden, map[string]string{"error": "essential api keys cannot be deleted"})
+		}
+	}
 	var deletedID, deletedName, deletedPrefix string
 	var workspaceID *string
 	err := h.DB.Pool.QueryRow(c.Request().Context(), `
@@ -323,6 +244,12 @@ func (h *Handler) ToggleAPIKey(c echo.Context) error {
 	}
 	if err := c.Bind(&req); err != nil {
 		return err
+	}
+	var managedKind string
+	if err := h.DB.Pool.QueryRow(c.Request().Context(), `SELECT COALESCE(managed_kind, $2) FROM _v_api_keys WHERE id = $1`, id, apiKeyManagedKindCustom).Scan(&managedKind); err == nil {
+		if managedKind == apiKeyManagedKindEssential {
+			return c.JSON(http.StatusForbidden, map[string]string{"error": "essential api keys cannot be toggled"})
+		}
 	}
 
 	var updatedID, updatedName, updatedPrefix string
@@ -384,20 +311,23 @@ func (h *Handler) RotateAPIKey(c echo.Context) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var currentName, role, currentPrefix, keyGroupID, rotatedToID string
+	var currentName, role, currentPrefix, keyGroupID, rotatedToID, managedKind string
 	var currentVersion int
 	var isActive bool
 	var revokedAt *time.Time
 	var workspaceID *string
 	var expiresAt *time.Time
 	err = tx.QueryRow(ctx, `
-		SELECT name, role, prefix, workspace_id, expires_at, COALESCE(key_group_id::text, ''), key_version, COALESCE(rotated_to_key_id::text, ''), is_active, revoked_at
+		SELECT name, role, prefix, workspace_id, expires_at, COALESCE(key_group_id::text, ''), key_version, COALESCE(rotated_to_key_id::text, ''), is_active, revoked_at, COALESCE(managed_kind, $2)
 		FROM _v_api_keys
 		WHERE id = $1
 		FOR UPDATE
-	`, keyID).Scan(&currentName, &role, &currentPrefix, &workspaceID, &expiresAt, &keyGroupID, &currentVersion, &rotatedToID, &isActive, &revokedAt)
+	`, keyID, apiKeyManagedKindCustom).Scan(&currentName, &role, &currentPrefix, &workspaceID, &expiresAt, &keyGroupID, &currentVersion, &rotatedToID, &isActive, &revokedAt, &managedKind)
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "api key not found"})
+	}
+	if managedKind == apiKeyManagedKindEssential {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "use the dedicated essential key rotation endpoint for this key"})
 	}
 	if !isActive {
 		return c.JSON(http.StatusConflict, map[string]string{"error": "cannot rotate an inactive key"})

@@ -4,6 +4,7 @@ param(
   [string]$EmbeddedPort = "5543",
   [string[]]$Specs = @(
     "tests/smoke-critical.spec.js",
+    "tests/essential-keys-mcp.spec.js",
     "tests/auth-scroll-audit.spec.js",
     "tests/production-qa-smoke.spec.js"
   ),

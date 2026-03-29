@@ -389,8 +389,14 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 		`ALTER TABLE _v_api_keys ADD COLUMN IF NOT EXISTS grace_until TIMESTAMPTZ`,
 		`ALTER TABLE _v_api_keys ADD COLUMN IF NOT EXISTS valid_after TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
 		`ALTER TABLE _v_api_keys ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ`,
+		`ALTER TABLE _v_api_keys ADD COLUMN IF NOT EXISTS managed_kind VARCHAR(20) NOT NULL DEFAULT 'custom'`,
+		`ALTER TABLE _v_api_keys ADD COLUMN IF NOT EXISTS secret_ciphertext TEXT`,
+		`UPDATE _v_api_keys SET managed_kind = 'custom' WHERE managed_kind IS NULL OR managed_kind = ''`,
+		`ALTER TABLE _v_api_keys DROP CONSTRAINT IF EXISTS _v_api_keys_managed_kind_check`,
+		`ALTER TABLE _v_api_keys ADD CONSTRAINT _v_api_keys_managed_kind_check CHECK (managed_kind IN ('custom', 'essential'))`,
 		`CREATE INDEX IF NOT EXISTS idx_api_keys_group_version ON _v_api_keys(key_group_id, key_version DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_api_keys_auth_lookup ON _v_api_keys(key_hash, is_active, valid_after, expires_at, grace_until, revoked_at)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_active_essential_role ON _v_api_keys(role) WHERE managed_kind = 'essential' AND is_active = TRUE AND revoked_at IS NULL`,
 
 		// Workspaces (Enterprise Phase 2)
 		`CREATE TABLE IF NOT EXISTS _v_workspaces (
