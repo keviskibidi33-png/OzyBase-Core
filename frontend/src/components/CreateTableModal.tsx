@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { X, Check, Plus, Trash2, Shield, Zap, Info, Link as LinkIcon, Settings, FileUp, FileText } from 'lucide-react';
+import { X, Check, Plus, Trash2, Shield, Info, Link as LinkIcon, Settings, FileUp, FileText } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
 
 const MODAL_ENTER_MS = 200;
@@ -105,6 +105,40 @@ const normalizeIdentifier = (value: unknown): string => {
     return cleaned.slice(0, 63);
 };
 
+const inferPolicyOwnerField = (policies: RlsPolicies): string => {
+    const candidateRules = Object.values(policies);
+    for (const rule of candidateRules) {
+        const normalizedRule = String(rule || '').toLowerCase().trim();
+        const directMatch = normalizedRule.match(/([a-z_][a-z0-9_]*)\s*=\s*auth\.uid\(\)/);
+        if (directMatch) return directMatch[1];
+        const reverseMatch = normalizedRule.match(/auth\.uid\(\)\s*=\s*([a-z_][a-z0-9_]*)/);
+        if (reverseMatch) return reverseMatch[1];
+    }
+    return '';
+};
+
+const hasColumnNamed = (columns: ColumnDraft[], fieldName: string): boolean => (
+    columns.some((column) => normalizeIdentifier(column.name) === normalizeIdentifier(fieldName))
+);
+
+const ensurePolicyOwnerColumn = (columns: ColumnDraft[], fieldName: string): ColumnDraft[] => {
+    const normalizedFieldName = normalizeIdentifier(fieldName);
+    if (!normalizedFieldName || hasColumnNamed(columns, normalizedFieldName)) {
+        return columns;
+    }
+
+    const ownerColumn = createColumn({ name: normalizedFieldName, type: 'uuid' });
+    const createdAtIndex = columns.findIndex((column) => normalizeIdentifier(column.name) === 'created_at');
+    if (createdAtIndex >= 0) {
+        return [
+            ...columns.slice(0, createdAtIndex),
+            ownerColumn,
+            ...columns.slice(createdAtIndex)
+        ];
+    }
+    return [...columns, ownerColumn];
+};
+
 const buildUniqueIdentifiers = (values: Array<string | undefined>, fallbackPrefix: string): string[] => {
     const used = new Map<string, number>();
     return values.map((value: any, index: any) => {
@@ -140,10 +174,11 @@ const CreateTableModal: React.FC<CreateTableModalProps> = ({ isOpen, onClose, on
     const [relationEditorIndex, setRelationEditorIndex] = useState<number | null>(null);
     const [relationDraft, setRelationDraft] = useState('');
     const normalizedTableName = useMemo(() => normalizeIdentifier(name), [name]);
-    const usesUserIDInPolicies = useMemo(
-        () => Object.values(rlsPolicies).some((rule: any) => String(rule || '').includes('user_id')),
+    const policyOwnerField = useMemo(
+        () => inferPolicyOwnerField(rlsPolicies),
         [rlsPolicies]
     );
+    const requiresPolicyOwnerColumn = isRLSEnabled && policyOwnerField !== '';
 
     const handleRlsPresetChange = (presetKey: string) => {
         setRlsPreset(presetKey);
@@ -156,6 +191,11 @@ const CreateTableModal: React.FC<CreateTableModalProps> = ({ isOpen, onClose, on
         setRlsPreset('custom');
         setRlsPolicies((prev: any) => ({ ...prev, [action]: value }));
     };
+
+    React.useEffect(() => {
+        if (!requiresPolicyOwnerColumn) return;
+        setColumns((prev: any) => ensurePolicyOwnerColumn(prev, policyOwnerField));
+    }, [policyOwnerField, requiresPolicyOwnerColumn]);
 
     React.useEffect(() => {
         const fetchTables = async () => {
@@ -356,11 +396,22 @@ const CreateTableModal: React.FC<CreateTableModalProps> = ({ isOpen, onClose, on
     };
 
     const handleRemoveColumn = (index: number) => {
+        const currentColumn = columns[index];
+        if (currentColumn && requiresPolicyOwnerColumn && normalizeIdentifier(currentColumn.name) === policyOwnerField) {
+            return;
+        }
         setColumns((prev: any) => prev.filter((_: any, i: any) => i !== index));
     };
 
     const handleColumnChange = (index: number, field: keyof ColumnDraft, value: ColumnDraft[keyof ColumnDraft]) => {
-        setColumns((prev: any) => prev.map((col: any, i: any) => (i === index ? { ...col, [field]: value } : col)));
+        setColumns((prev: any) => prev.map((col: any, i: any) => {
+            if (i !== index) return col;
+            const isLockedPolicyColumn = requiresPolicyOwnerColumn && normalizeIdentifier(col.name) === policyOwnerField;
+            if (isLockedPolicyColumn && (field === 'name' || field === 'type')) {
+                return col;
+            }
+            return { ...col, [field]: value };
+        }));
     };
 
     const openRelationEditor = (index: number) => {
@@ -392,9 +443,9 @@ const CreateTableModal: React.FC<CreateTableModalProps> = ({ isOpen, onClose, on
             return;
         }
 
-        const hasUserIDColumn = columns.some((c: any) => normalizeIdentifier(c.name) === 'user_id');
-        if (isRLSEnabled && usesUserIDInPolicies && !hasUserIDColumn) {
-            setError('RLS rule requires a user_id column. Add user_id or choose a different policy preset.');
+        const hasPolicyOwnerColumn = !requiresPolicyOwnerColumn || hasColumnNamed(columns, policyOwnerField);
+        if (!hasPolicyOwnerColumn) {
+            setError(`RLS policy requires a ${policyOwnerField} column. Add ${policyOwnerField} or choose a different policy preset.`);
             setLoading(false);
             return;
         }
@@ -503,7 +554,7 @@ const CreateTableModal: React.FC<CreateTableModalProps> = ({ isOpen, onClose, on
                                 value={name}
                                 onChange={(e: any) => setName(e.target.value)}
                                 className="w-full bg-[#0c0c0c] border border-[#2e2e2e] rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-primary/50 transition-colors"
-                                placeholder="Mapeo de links"
+                                placeholder="e.g. invoices"
                             />
                             <p className="text-[11px] text-zinc-500">
                                 Technical name: <span className="font-mono text-zinc-300">{normalizedTableName || 'invalid_name'}</span>
@@ -578,6 +629,15 @@ const CreateTableModal: React.FC<CreateTableModalProps> = ({ isOpen, onClose, on
                                     <p className="text-[11px] text-zinc-500">
                                         Use SQL boolean expressions, e.g. <span className="font-mono">user_id = auth.uid()</span> or <span className="font-mono">true</span>.
                                     </p>
+
+                                    {requiresPolicyOwnerColumn && (
+                                        <div className="flex items-start gap-2 rounded border border-zinc-800 bg-[#0c0c0c] px-3 py-2">
+                                            <Shield size={12} className="text-primary mt-0.5 shrink-0" />
+                                            <p className="text-[11px] text-zinc-500 leading-relaxed">
+                                                The <span className="font-mono text-zinc-300">{policyOwnerField}</span> column is locked while the current RLS policy depends on it.
+                                            </p>
+                                        </div>
+                                    )}
 
                                     <button className="text-xs text-zinc-300 border border-zinc-700 rounded px-2 py-1 flex items-center gap-2 hover:bg-zinc-800 transition-colors">
                                         <FileText size={12} /> Documentation
@@ -662,11 +722,16 @@ const CreateTableModal: React.FC<CreateTableModalProps> = ({ isOpen, onClose, on
                                         </div>
                                     </div>
                                     <div className="col-span-3 relative">
+                                        {requiresPolicyOwnerColumn && normalizeIdentifier(col.name) === policyOwnerField && (
+                                            <span className="absolute right-0 top-0 rounded bg-primary/10 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest text-primary">
+                                                policy
+                                            </span>
+                                        )}
                                         <input
                                             type="text"
                                             value={col.name}
                                             onChange={(e: any) => handleColumnChange(idx, 'name', e.target.value)}
-                                            disabled={col.isSystem}
+                                            disabled={col.isSystem || (requiresPolicyOwnerColumn && normalizeIdentifier(col.name) === policyOwnerField)}
                                             className={`w-full bg-transparent text-xs text-white focus:outline-none ${col.isSystem ? 'opacity-50 cursor-not-allowed' : ''}`}
                                             placeholder="column_name"
                                         />
@@ -676,7 +741,7 @@ const CreateTableModal: React.FC<CreateTableModalProps> = ({ isOpen, onClose, on
                                         <select
                                             value={col.type}
                                             onChange={(e: any) => handleColumnChange(idx, 'type', e.target.value)}
-                                            disabled={col.isSystem}
+                                            disabled={col.isSystem || (requiresPolicyOwnerColumn && normalizeIdentifier(col.name) === policyOwnerField)}
                                             className={`w-full bg-[#111111] border border-[#2e2e2e] rounded px-1 py-1 text-[10px] text-zinc-300 focus:outline-none ${col.isSystem ? 'opacity-50' : ''}`}
                                         >
                                             <option value="uuid">uuid</option>
@@ -735,8 +800,9 @@ const CreateTableModal: React.FC<CreateTableModalProps> = ({ isOpen, onClose, on
                                         {!col.isSystem && (
                                             <button 
                                                 onClick={() => handleRemoveColumn(idx)} 
-                                                className="text-zinc-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 mr-1"
-                                                title="Remove Column"
+                                                className="text-zinc-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 mr-1 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-zinc-600"
+                                                title={requiresPolicyOwnerColumn && normalizeIdentifier(col.name) === policyOwnerField ? 'Required by current RLS policy' : 'Remove Column'}
+                                                disabled={requiresPolicyOwnerColumn && normalizeIdentifier(col.name) === policyOwnerField}
                                             >
                                                 <Trash2 size={12} />
                                             </button>
@@ -746,7 +812,7 @@ const CreateTableModal: React.FC<CreateTableModalProps> = ({ isOpen, onClose, on
                                             className={`cursor-pointer hover:text-primary transition-colors ${col.references ? 'text-primary' : 'text-zinc-700'}`}
                                             title={col.references ? `Ref: ${col.references}` : 'Add Relation'}
                                             onClick={() => {
-                                                if (col.isSystem) return;
+                                                if (col.isSystem || (requiresPolicyOwnerColumn && normalizeIdentifier(col.name) === policyOwnerField)) return;
                                                 openRelationEditor(idx);
                                             }}
                                         >

@@ -250,7 +250,7 @@ func normalizeEssentialRole(raw string) (string, error) {
 }
 
 func projectAPIBaseURL(c echo.Context) string {
-	return projectConnectionFromConfig(c).APIURL
+	return resolveProjectAPIURL(c)
 }
 
 func buildMCPConfigPayload(c echo.Context, serviceRoleKey string) map[string]any {

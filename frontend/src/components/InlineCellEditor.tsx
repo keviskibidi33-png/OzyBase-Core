@@ -17,6 +17,85 @@ interface InlineCellEditorProps {
     isEditing: boolean;
 }
 
+const normalizeColumnType = (type?: string | null): string => String(type || 'text').toLowerCase();
+
+const isDateOnlyType = (type: string): boolean => normalizeColumnType(type) === 'date';
+
+const isTimeOnlyType = (type: string): boolean => {
+    const normalized = normalizeColumnType(type);
+    return normalized === 'time' || normalized === 'timetz';
+};
+
+const isDateTimeType = (type: string): boolean => {
+    const normalized = normalizeColumnType(type);
+    return normalized.includes('timestamp') || normalized === 'datetime';
+};
+
+const formatUUIDDisplayValue = (value: unknown): string => {
+    if (typeof value === 'string') return value;
+
+    const byteValues = value instanceof Uint8Array
+        ? Array.from(value)
+        : Array.isArray(value) && value.length === 16 && value.every((item) => typeof item === 'number')
+            ? value
+            : null;
+
+    if (!byteValues) {
+        return String(value ?? '');
+    }
+
+    const hex = byteValues.map((item) => item.toString(16).padStart(2, '0')).join('');
+    return [
+        hex.slice(0, 8),
+        hex.slice(8, 12),
+        hex.slice(12, 16),
+        hex.slice(16, 20),
+        hex.slice(20)
+    ].join('-');
+};
+
+const formatTemporalDisplayValue = (value: unknown, type: string): string => {
+    if (value == null || value === '') return '-';
+
+    if (isDateOnlyType(type)) {
+        return String(value).split('T')[0];
+    }
+
+    if (isTimeOnlyType(type)) {
+        const match = String(value).match(/^(\d{2}:\d{2}(?::\d{2})?)/);
+        return match ? match[1] : String(value);
+    }
+
+    const date = new Date(String(value));
+    if (Number.isNaN(date.getTime())) {
+        return String(value);
+    }
+    return date.toLocaleString();
+};
+
+const getTemporalInputType = (type: string): 'date' | 'time' | 'datetime-local' => {
+    if (isDateOnlyType(type)) return 'date';
+    if (isTimeOnlyType(type)) return 'time';
+    return 'datetime-local';
+};
+
+const getTemporalInputValue = (value: unknown, type: string): string => {
+    if (value == null || value === '') return '';
+
+    if (isDateOnlyType(type)) {
+        return String(value).split('T')[0];
+    }
+
+    if (isTimeOnlyType(type)) {
+        const match = String(value).match(/^(\d{2}:\d{2})/);
+        return match ? match[1] : '';
+    }
+
+    const date = new Date(String(value));
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toISOString().slice(0, 16);
+};
+
 const InlineCellEditor = ({
     value,
     columnName,
@@ -33,7 +112,7 @@ const InlineCellEditor = ({
     const inputRef = useRef<HTMLInputElement | null>(null);
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-    const type = (columnType || 'text').toLowerCase();
+    const type = normalizeColumnType(columnType);
 
     useEffect(() => {
         setEditValue(value);
@@ -101,13 +180,21 @@ const InlineCellEditor = ({
     if (type.includes('uuid') && columnName === 'id') {
             return (
                 <span className="font-mono text-[11px] text-zinc-500 select-all cursor-text">
-                    {String(value ?? '')}
+                    {formatUUIDDisplayValue(value)}
                 </span>
             );
         }
 
     // Non-editing display mode
     if (!isEditing) {
+        if (type.includes('uuid')) {
+            return (
+                <span className="font-mono text-[11px] text-zinc-500 select-all cursor-text">
+                    {formatUUIDDisplayValue(value)}
+                </span>
+            );
+        }
+
         // Boolean display
         if (type.includes('bool')) {
             return (
@@ -140,7 +227,7 @@ const InlineCellEditor = ({
         if (type.includes('time') || type.includes('date')) {
             return (
                 <span className="font-mono text-[10px] text-zinc-500">
-                    {value ? new Date(String(value)).toLocaleString() : '-'}
+                    {formatTemporalDisplayValue(value, type)}
                 </span>
             );
         }
@@ -198,8 +285,8 @@ const InlineCellEditor = ({
                 <Calendar size={12} className="text-zinc-600 shrink-0" />
                 <input
                     ref={inputRef}
-                    type="datetime-local"
-                    value={editValue ? new Date(String(editValue)).toISOString().slice(0, 16) : ''}
+                    type={getTemporalInputType(type)}
+                    value={getTemporalInputValue(editValue, type)}
                     onChange={(e: any) => setEditValue(e.target.value)}
                     onKeyDown={handleKeyDown}
                     onBlur={handleBlur}

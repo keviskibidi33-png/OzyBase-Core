@@ -40,6 +40,24 @@ func (h *Handler) extractRlsOwnerInfo(c echo.Context) (string, string) {
 	return "", ""
 }
 
+func applyOwnerFieldDefault(data map[string]any, ownerField, ownerID string) map[string]any {
+	if strings.TrimSpace(ownerField) == "" || strings.TrimSpace(ownerID) == "" {
+		return data
+	}
+
+	currentValue, hasOwnerValue := data[ownerField]
+	if hasOwnerValue && strings.TrimSpace(fmt.Sprint(currentValue)) != "" {
+		return data
+	}
+
+	next := make(map[string]any, len(data)+1)
+	for key, value := range data {
+		next[key] = value
+	}
+	next[ownerField] = ownerID
+	return next
+}
+
 // CreateRecord handles POST /api/collections/:name/records
 func (h *Handler) CreateRecord(c echo.Context) error {
 	collectionName := c.Param("name")
@@ -66,6 +84,11 @@ func (h *Handler) CreateRecord(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
 	defer cancel()
 
+	ownerField, ownerID := h.extractRlsOwnerInfo(c)
+	if ownerField != "" && ownerID != "" && h.DB.HasColumn(ctx, collectionName, ownerField) {
+		data = applyOwnerFieldDefault(data, ownerField, ownerID)
+	}
+
 	// Insert the record
 	id, err := h.DB.InsertRecord(ctx, collectionName, data)
 	if err != nil {
@@ -75,7 +98,6 @@ func (h *Handler) CreateRecord(c echo.Context) error {
 	}
 
 	// Fetch the complete record to return
-	ownerField, ownerID := h.extractRlsOwnerInfo(c)
 	record, err := h.DB.GetRecord(ctx, collectionName, id, ownerField, ownerID)
 	if err != nil {
 		// Return at least the ID if fetch fails
@@ -325,6 +347,13 @@ func (h *Handler) ImportRecords(c echo.Context) error {
 
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 30*time.Second)
 	defer cancel()
+
+	ownerField, ownerID := h.extractRlsOwnerInfo(c)
+	if ownerField != "" && ownerID != "" && h.DB.HasColumn(ctx, collectionName, ownerField) {
+		for index, record := range records {
+			records[index] = applyOwnerFieldDefault(record, ownerField, ownerID)
+		}
+	}
 
 	if err := h.DB.BulkInsertRecord(ctx, collectionName, records); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})

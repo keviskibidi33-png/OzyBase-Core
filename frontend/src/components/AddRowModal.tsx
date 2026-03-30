@@ -60,6 +60,103 @@ const toDateTimeLocalValue = (value: unknown): string => {
     return date.toISOString().slice(0, 16);
 };
 
+const normalizeColumnType = (type: string): string => String(type || '').toLowerCase();
+
+const isBooleanType = (type: string): boolean => normalizeColumnType(type).includes('bool');
+
+const isNumericType = (type: string): boolean => {
+    const normalized = normalizeColumnType(type);
+    return ['int', 'num', 'float', 'double', 'decimal', 'real', 'serial'].some((token) => normalized.includes(token));
+};
+
+const isJSONType = (type: string): boolean => {
+    const normalized = normalizeColumnType(type);
+    return normalized.includes('json');
+};
+
+const isDateType = (type: string): boolean => {
+    const normalized = normalizeColumnType(type);
+    return normalized === 'date';
+};
+
+const isTimeType = (type: string): boolean => {
+    const normalized = normalizeColumnType(type);
+    return normalized === 'time' || normalized === 'timetz';
+};
+
+const isDateTimeType = (type: string): boolean => {
+    const normalized = normalizeColumnType(type);
+    return normalized === 'datetime' || normalized.includes('timestamp');
+};
+
+const toTemporalInputType = (type: string): 'date' | 'time' | 'datetime-local' => {
+    if (isDateType(type)) return 'date';
+    if (isTimeType(type)) return 'time';
+    return 'datetime-local';
+};
+
+const toTemporalInputValue = (value: unknown, type: string): string => {
+    if (value == null || value === '') return '';
+
+    if (isDateType(type)) {
+        const date = new Date(String(value));
+        if (!Number.isNaN(date.getTime())) return date.toISOString().slice(0, 10);
+        return String(value).slice(0, 10);
+    }
+
+    if (isTimeType(type)) {
+        const match = String(value).match(/^(\d{2}:\d{2})/);
+        return match ? match[1] : '';
+    }
+
+    return toDateTimeLocalValue(value);
+};
+
+const coerceValueForColumn = (column: RowSchemaColumn, value: unknown): unknown => {
+    const normalizedType = normalizeColumnType(column.type);
+    const stringValue = typeof value === 'string' ? value.trim() : value;
+    const isBlank = stringValue === '' || stringValue == null;
+
+    if (isBlank) {
+        if (normalizedType.includes('text') || normalizedType.includes('char')) {
+            return '';
+        }
+        return null;
+    }
+
+    if (isBooleanType(normalizedType)) {
+        return toBooleanValue(value);
+    }
+
+    if (isNumericType(normalizedType)) {
+        const numericValue = Number(value);
+        if (Number.isNaN(numericValue)) {
+            throw new Error(`Invalid numeric value for ${column.name}`);
+        }
+        return numericValue;
+    }
+
+    if (isJSONType(normalizedType) && typeof value === 'string') {
+        try {
+            return JSON.parse(value);
+        } catch (error) {
+            throw new Error(`Invalid JSON value for ${column.name}`);
+        }
+    }
+
+    return value;
+};
+
+const buildRowPayload = (schema: RowSchemaColumn[], formData: RowData): RowData => {
+    return schema.reduce<RowData>((payload, column) => {
+        if (!Object.prototype.hasOwnProperty.call(formData, column.name)) {
+            return payload;
+        }
+        payload[column.name] = coerceValueForColumn(column, formData[column.name]);
+        return payload;
+    }, {});
+};
+
 const AddRowModal: React.FC<AddRowModalProps> = ({ isOpen, onClose, schema, tableName, onRecordAdded, initialData }: any) => {
     const [shouldRender, setShouldRender] = React.useState(isOpen);
     const [isVisible, setIsVisible] = React.useState(false);
@@ -132,7 +229,7 @@ const AddRowModal: React.FC<AddRowModalProps> = ({ isOpen, onClose, schema, tabl
         const val = formData[name];
         const boolValue = toBooleanValue(val);
 
-        if (type === 'boolean' || type === 'bool') {
+        if (isBooleanType(type)) {
             return (
                 <div className="flex items-center gap-3">
                     <button
@@ -147,19 +244,19 @@ const AddRowModal: React.FC<AddRowModalProps> = ({ isOpen, onClose, schema, tabl
             );
         }
 
-        if (type === 'datetime') {
+        if (isDateType(type) || isTimeType(type) || isDateTimeType(type)) {
             return (
                 <input
-                    type="datetime-local"
+                    type={toTemporalInputType(type)}
                     required={required}
-                    value={toDateTimeLocalValue(val)}
+                    value={toTemporalInputValue(val, type)}
                     className="w-full bg-[#111111] border border-[#2e2e2e] rounded-md px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-primary/50"
                     onChange={(e: any) => handleInputChange(name, e.target.value)}
                 />
             );
         }
 
-        if (type === 'number') {
+        if (isNumericType(type)) {
             return (
                 <input
                     type="number"
@@ -168,6 +265,19 @@ const AddRowModal: React.FC<AddRowModalProps> = ({ isOpen, onClose, schema, tabl
                     className="w-full bg-[#111111] border border-[#2e2e2e] rounded-md px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-primary/50"
                     onChange={(e: any) => handleInputChange(name, e.target.value)}
                     placeholder="Enter number..."
+                />
+            );
+        }
+
+        if (isJSONType(type)) {
+            return (
+                <textarea
+                    value={toInputValue(val)}
+                    required={required}
+                    rows={5}
+                    className="w-full resize-y bg-[#111111] border border-[#2e2e2e] rounded-md px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-primary/50 placeholder:text-zinc-700"
+                    onChange={(e: any) => handleInputChange(name, e.target.value)}
+                    placeholder='{"key":"value"}'
                 />
             );
         }
@@ -198,10 +308,11 @@ const AddRowModal: React.FC<AddRowModalProps> = ({ isOpen, onClose, schema, tabl
             const url = isEdit
                 ? `/api/tables/${tableName}/rows/${encodeURIComponent(String(rowId))}`
                 : `/api/tables/${tableName}/rows`;
+            const payload = buildRowPayload(schema, formData);
 
             const res = await fetchWithAuth(url, {
                 method: isEdit ? 'PATCH' : 'POST',
-                body: JSON.stringify(formData),
+                body: JSON.stringify(payload),
             });
 
             if (!res.ok) {
