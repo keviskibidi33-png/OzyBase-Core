@@ -51,12 +51,15 @@ const WorkspaceSwitcher = ({ onWorkspaceChange, onViewSelect, isExpanded = false
                     if (!storedId || storedId !== active.id) {
                         localStorage.setItem('ozy_workspace_id', active.id);
                     }
+                    if (workspaceId !== active.id) {
+                        onWorkspaceChange?.(active.id);
+                    }
                 }
             }
         } catch (err) {
             console.error("Failed to load workspaces", err);
         }
-    }, []);
+    }, [onWorkspaceChange, workspaceId]);
 
     useEffect(() => {
         const init = async () => {
@@ -219,6 +222,10 @@ const WorkspaceSwitcher = ({ onWorkspaceChange, onViewSelect, isExpanded = false
                         <button 
                             onClick={() => {
                                 setIsOpen(false);
+                                if (activeWorkspace) {
+                                    localStorage.setItem('ozy_workspace_id', activeWorkspace.id);
+                                    onWorkspaceChange?.(activeWorkspace.id);
+                                }
                                 if (onViewSelect) onViewSelect('workspace_settings');
                             }}
                             className="w-full flex items-center gap-3 px-3 py-2.5 text-[10px] font-black text-zinc-500 hover:text-white hover:bg-zinc-900/50 rounded-xl transition-all uppercase tracking-widest group"

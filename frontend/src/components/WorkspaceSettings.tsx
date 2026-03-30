@@ -25,6 +25,11 @@ interface WorkspaceMember {
     role: 'owner' | 'admin' | 'member' | 'viewer' | string;
 }
 
+interface WorkspaceFeedback {
+    tone: 'success' | 'error';
+    message: string;
+}
+
 interface WorkspaceSettingsProps {
     workspaceId?: string | number | null;
     view?: 'ws_general' | 'ws_members' | 'ws_danger' | string;
@@ -62,6 +67,22 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
     const [saving, setSaving] = useState(false);
     const [name, setName] = useState('');
     const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+    const [feedback, setFeedback] = useState<WorkspaceFeedback | null>(null);
+
+    const readErrorMessage = async (response: Response, fallback: string) => {
+        try {
+            const data: unknown = await response.json();
+            if (typeof data === 'object' && data !== null && 'error' in data && typeof (data as { error?: unknown }).error === 'string') {
+                const message = (data as { error: string }).error.trim();
+                if (message) {
+                    return message;
+                }
+            }
+        } catch {
+            // Ignore parse failures and fall back to a generic message.
+        }
+        return fallback;
+    };
 
     const fetchData = React.useCallback(async () => {
         if (!workspaceId) {
@@ -109,11 +130,15 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name, config: workspace.config ?? {} })
             });
-            if (res.ok) {
-                fetchData();
+            if (!res.ok) {
+                setFeedback({ tone: 'error', message: await readErrorMessage(res, 'Unable to update project settings.') });
+                return;
             }
+            setFeedback({ tone: 'success', message: 'Project settings updated.' });
+            fetchData();
         } catch (err: unknown) {
             console.error(err);
+            setFeedback({ tone: 'error', message: 'Unable to update project settings.' });
         } finally {
             setSaving(false);
         }
@@ -124,11 +149,15 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
             const res = await fetchWithAuth(`/api/workspaces/${workspaceId}/members/${userId}`, {
                 method: 'DELETE'
             });
-            if (res.ok) {
-                fetchData();
+            if (!res.ok) {
+                setFeedback({ tone: 'error', message: await readErrorMessage(res, 'Unable to remove workspace member.') });
+                return;
             }
+            setFeedback({ tone: 'success', message: 'Workspace member removed.' });
+            fetchData();
         } catch (err: unknown) {
             console.error(err);
+            setFeedback({ tone: 'error', message: 'Unable to remove workspace member.' });
         }
     };
 
@@ -146,12 +175,16 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
-            if (res.ok) {
-                setInviteEmail('');
-                fetchData();
+            if (!res.ok) {
+                setFeedback({ tone: 'error', message: await readErrorMessage(res, 'Unable to update workspace members.') });
+                return;
             }
+            setInviteEmail('');
+            setFeedback({ tone: 'success', message: 'Workspace member updated.' });
+            fetchData();
         } catch (err: unknown) {
             console.error(err);
+            setFeedback({ tone: 'error', message: 'Unable to update workspace members.' });
         }
     };
 
@@ -164,7 +197,7 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
                 method: 'DELETE'
             });
             if (!res.ok) {
-                throw new Error('failed to delete workspace');
+                throw new Error(await readErrorMessage(res, 'Unable to delete workspace.'));
             }
 
             const activeWorkspaceId = localStorage.getItem('ozy_workspace_id');
@@ -176,6 +209,7 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
             onViewSelect?.('workspaces');
         } catch (err: unknown) {
             console.error(err);
+            setFeedback({ tone: 'error', message: err instanceof Error ? err.message : 'Unable to delete workspace.' });
         } finally {
             setSaving(false);
         }
@@ -204,6 +238,16 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
                     <h1 className="text-3xl font-black text-white uppercase italic tracking-tighter mb-2">Project Settings</h1>
                     <p className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.3em]">Configure {workspace?.name} core parameters</p>
                 </div>
+
+                {feedback && (
+                    <div className={`mb-8 rounded-2xl border px-5 py-4 text-sm font-bold ${
+                        feedback.tone === 'success'
+                            ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
+                            : 'border-red-500/20 bg-red-500/10 text-red-300'
+                    }`}>
+                        {feedback.message}
+                    </div>
+                )}
 
                 <div className="grid grid-cols-1 gap-12">
                     {/* General Settings */}

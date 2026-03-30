@@ -2,11 +2,13 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/Xangel0s/OzyBase/internal/data"
+	"github.com/jackc/pgx/v5"
 )
 
 type WorkspaceService struct {
@@ -166,7 +168,10 @@ func (s *WorkspaceService) IsMember(ctx context.Context, workspaceID, userID str
 	`, workspaceID, userID).Scan(&role)
 
 	if err != nil {
-		return false, "", nil
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, "", nil
+		}
+		return false, "", fmt.Errorf("lookup workspace membership: %w", err)
 	}
 	return true, role, nil
 }

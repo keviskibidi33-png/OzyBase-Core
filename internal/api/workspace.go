@@ -21,6 +21,30 @@ func NewWorkspaceHandler(service *core.WorkspaceService, mailer mailer.Mailer) *
 	return &WorkspaceHandler{service: service, mailer: mailer}
 }
 
+func workspaceActorID(c echo.Context) (string, bool) {
+	userID, ok := c.Get("user_id").(string)
+	if !ok || strings.TrimSpace(userID) == "" {
+		return "", false
+	}
+	return userID, true
+}
+
+func (h *WorkspaceHandler) requireWorkspaceRole(c echo.Context, workspaceID string) (string, bool, error) {
+	userID, ok := workspaceActorID(c)
+	if !ok {
+		return "", false, c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+	}
+
+	isMember, role, err := h.service.IsMember(c.Request().Context(), workspaceID, userID)
+	if err != nil {
+		return "", false, c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	if !isMember {
+		return "", false, c.JSON(http.StatusForbidden, map[string]string{"error": "workspace access denied"})
+	}
+	return role, true, nil
+}
+
 func (h *WorkspaceHandler) Create(c echo.Context) error {
 	userID := c.Get("user_id").(string)
 	var req struct {
@@ -53,6 +77,14 @@ func (h *WorkspaceHandler) List(c echo.Context) error {
 
 func (h *WorkspaceHandler) Update(c echo.Context) error {
 	id := c.Param("id")
+	role, ok, err := h.requireWorkspaceRole(c, id)
+	if err != nil || !ok {
+		return err
+	}
+	if !canManageWorkspaceSettings(role) {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "workspace settings require admin or owner access"})
+	}
+
 	var req struct {
 		Name   string                 `json:"name"`
 		Config map[string]interface{} `json:"config"`
@@ -70,6 +102,14 @@ func (h *WorkspaceHandler) Update(c echo.Context) error {
 
 func (h *WorkspaceHandler) Delete(c echo.Context) error {
 	id := c.Param("id")
+	role, ok, err := h.requireWorkspaceRole(c, id)
+	if err != nil || !ok {
+		return err
+	}
+	if !canDeleteWorkspace(role) {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "workspace deletion requires owner access"})
+	}
+
 	if err := h.service.DeleteWorkspace(c.Request().Context(), id); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
@@ -78,6 +118,14 @@ func (h *WorkspaceHandler) Delete(c echo.Context) error {
 
 func (h *WorkspaceHandler) ListMembers(c echo.Context) error {
 	id := c.Param("id")
+	role, ok, err := h.requireWorkspaceRole(c, id)
+	if err != nil || !ok {
+		return err
+	}
+	if !canViewWorkspaceMembers(role) {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "workspace members are not visible for this role"})
+	}
+
 	members, err := h.service.GetWorkspaceMembers(c.Request().Context(), id)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -87,6 +135,18 @@ func (h *WorkspaceHandler) ListMembers(c echo.Context) error {
 
 func (h *WorkspaceHandler) AddMember(c echo.Context) error {
 	id := c.Param("id")
+	actorUserID, ok := workspaceActorID(c)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+	}
+	actorRole, isAuthorized, err := h.requireWorkspaceRole(c, id)
+	if err != nil || !isAuthorized {
+		return err
+	}
+	if !canManageWorkspaceSettings(actorRole) {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "workspace membership changes require admin or owner access"})
+	}
+
 	var req struct {
 		UserID string `json:"user_id"`
 		Email  string `json:"email"`
@@ -102,6 +162,14 @@ func (h *WorkspaceHandler) AddMember(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "user_id or email is required"})
 	}
 
+	req.Role = normalizeWorkspaceRole(req.Role)
+	if !isManagedWorkspaceRole(req.Role) {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "role must be admin, member, or viewer"})
+	}
+	if !canAssignWorkspaceRole(actorRole, req.Role) {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "your workspace role cannot assign that target role"})
+	}
+
 	if targetUserID == "" {
 		if _, err := mail.ParseAddress(targetEmail); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid email"})
@@ -113,6 +181,23 @@ func (h *WorkspaceHandler) AddMember(c echo.Context) error {
 			WHERE LOWER(email) = $1
 		`, targetEmail).Scan(&targetUserID); err != nil {
 			return c.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
+		}
+	}
+
+	if targetUserID == actorUserID && normalizeWorkspaceRole(actorRole) == workspaceRoleAdmin {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "admins cannot change their own workspace role"})
+	}
+
+	targetIsMember, targetRole, err := h.service.IsMember(c.Request().Context(), id, targetUserID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	if targetIsMember {
+		if normalizeWorkspaceRole(targetRole) == workspaceRoleOwner {
+			return c.JSON(http.StatusConflict, map[string]string{"error": "workspace owner cannot be changed from member settings"})
+		}
+		if !canManageWorkspaceMember(actorRole, targetRole) {
+			return c.JSON(http.StatusForbidden, map[string]string{"error": "your workspace role cannot manage that member"})
 		}
 	}
 
@@ -152,6 +237,35 @@ func (h *WorkspaceHandler) AddMember(c echo.Context) error {
 func (h *WorkspaceHandler) RemoveMember(c echo.Context) error {
 	id := c.Param("id")
 	userId := c.Param("userId")
+	actorUserID, ok := workspaceActorID(c)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+	}
+	actorRole, isAuthorized, err := h.requireWorkspaceRole(c, id)
+	if err != nil || !isAuthorized {
+		return err
+	}
+	if !canManageWorkspaceSettings(actorRole) {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "workspace membership changes require admin or owner access"})
+	}
+
+	targetIsMember, targetRole, err := h.service.IsMember(c.Request().Context(), id, userId)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	if !targetIsMember {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "workspace member not found"})
+	}
+	if normalizeWorkspaceRole(targetRole) == workspaceRoleOwner {
+		return c.JSON(http.StatusConflict, map[string]string{"error": "workspace owner cannot be removed"})
+	}
+	if actorUserID == userId && normalizeWorkspaceRole(actorRole) == workspaceRoleAdmin {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "admins cannot remove themselves from the workspace"})
+	}
+	if !canManageWorkspaceMember(actorRole, targetRole) {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "your workspace role cannot manage that member"})
+	}
+
 	if err := h.service.RemoveWorkspaceMember(c.Request().Context(), id, userId); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}

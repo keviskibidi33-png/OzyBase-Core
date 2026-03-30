@@ -87,6 +87,13 @@ const Integrations: React.FC<IntegrationsProps> = ({ page = 'wrappers' }) => {
         setForm({ ...EMPTY[type], ...seed });
     };
 
+    const addModalTypeForPage = () => {
+        if (page === 'vault') return 'secret' as const;
+        if (page === 'wrappers') return 'wrapper' as const;
+        if (page === 'cron') return 'cron' as const;
+        return 'webhook' as const;
+    };
+
     const closeModal = () => {
         setModal(null);
         setForm(EMPTY.webhook);
@@ -298,7 +305,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ page = 'wrappers' }) => {
                         <div><h1 className="text-3xl font-black text-white uppercase tracking-tighter italic">Integrations</h1><p className="text-zinc-500 text-[10px] font-black uppercase tracking-widest mt-1">Extensions, wrappers and runtime utilities</p></div>
                     </div>
                     <div className="flex gap-3">
-                        {(page === 'wrappers' || page === 'webhooks' || page === 'cron' || page === 'vault') && <button onClick={() => openModal(page === 'vault' ? 'secret' : page === 'wrappers' ? 'wrapper' : 'webhook')} className="flex items-center gap-2 bg-primary text-black px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest"><Plus size={14} />Add</button>}
+                        {(page === 'wrappers' || page === 'webhooks' || page === 'cron' || page === 'vault') && <button onClick={() => openModal(addModalTypeForPage())} className="flex items-center gap-2 bg-primary text-black px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest"><Plus size={14} />Add</button>}
                         <button onClick={() => void load()} className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 text-zinc-300 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest"><RefreshCw size={14} />Refresh</button>
                     </div>
                 </div>
