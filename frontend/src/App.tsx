@@ -127,6 +127,11 @@ function App() {
         }
     }, []);
 
+    const handleOpenSqlEditor = useCallback((tableName: string | null) => {
+        setSelectedTable(tableName);
+        setSelectedView('sql');
+    }, []);
+
     if (checkingSystem) {
         return <div className="h-screen w-screen flex items-center justify-center bg-black text-white">Loading OzyBase...</div>;
     }
@@ -151,13 +156,20 @@ function App() {
 
         switch (viewMeta.component) {
             case 'TableEditor':
-                return <TableEditor tableName={selectedView === 'table' ? selectedTable : null} onTableSelect={handleTableSelect} allTables={tables} />;
+                return (
+                    <TableEditor
+                        tableName={selectedView === 'table' ? selectedTable : null}
+                        onTableSelect={handleTableSelect}
+                        onOpenSqlEditor={handleOpenSqlEditor}
+                        allTables={tables}
+                    />
+                );
             case 'SchemaVisualizer':
                 return <SchemaVisualizer viewMode={selectedTable === '__visualizer_system__' ? 'system' : 'user'} />;
             case 'Overview':
                 return <Overview onTableSelect={handleTableSelect} onViewSelect={setSelectedView} />;
             case 'SqlTerminal':
-                return <SqlTerminal onSchemaChange={loadTables} />;
+                return <SqlTerminal onSchemaChange={loadTables} initialTableName={selectedTable} />;
             case 'AuthManager':
                 return <AuthManager view={String(props.view || 'users')} onViewSelect={setSelectedView} />;
             case 'AuthProvidersView':

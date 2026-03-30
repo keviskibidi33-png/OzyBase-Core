@@ -564,6 +564,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.POST("/project/vector/search", h.SearchVectorItems, authRequired, adminOnly)
 		apiGroup.POST("/project/nlq/translate", h.TranslateNLQ, authRequired, adminOnly)
 		apiGroup.POST("/project/nlq/query", h.ExecuteNLQ, authRequired, adminOnly)
+		apiGroup.POST("/project/mcp", h.HandleMCPRPC, authRequired, adminOnly)
 		apiGroup.GET("/project/mcp/tools", h.GetMCPTools, authRequired, adminOnly)
 		apiGroup.POST("/project/mcp/invoke", h.InvokeMCPTool, authRequired, adminOnly)
 		apiGroup.GET("/project/security/policies", h.GetSecurityPolicies, authRequired)

@@ -1,6 +1,14 @@
 package api
 
-import "testing"
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/labstack/echo/v4"
+)
 
 func TestNormalizeACLRule(t *testing.T) {
 	allowed := map[string]struct{}{
@@ -89,4 +97,65 @@ func TestMCPParseSchema(t *testing.T) {
 			t.Fatalf("expected validation error for invalid identifier")
 		}
 	})
+}
+
+func TestHandleMCPRPCInitialize(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/api/project/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	h := &Handler{}
+	if err := h.HandleMCPRPC(c); err != nil {
+		t.Fatalf("HandleMCPRPC returned error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload["jsonrpc"] != "2.0" {
+		t.Fatalf("expected jsonrpc 2.0, got %v", payload["jsonrpc"])
+	}
+	result, ok := payload["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected result object, got %T", payload["result"])
+	}
+	serverInfo, ok := result["serverInfo"].(map[string]any)
+	if !ok || serverInfo["name"] != "OzyBase" {
+		t.Fatalf("expected OzyBase serverInfo, got %+v", result["serverInfo"])
+	}
+}
+
+func TestHandleMCPRPCToolsList(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/api/project/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	h := &Handler{}
+	if err := h.HandleMCPRPC(c); err != nil {
+		t.Fatalf("HandleMCPRPC returned error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	result, ok := payload["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected result object, got %T", payload["result"])
+	}
+	tools, ok := result["tools"].([]any)
+	if !ok || len(tools) == 0 {
+		t.Fatalf("expected non-empty tool list, got %+v", result["tools"])
+	}
 }

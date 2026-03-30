@@ -52,6 +52,7 @@ var adminAuditDescriptors = map[string]adminAuditDescriptor{
 	"POST /api/project/vector/search":                  {Action: "vector_search"},
 	"POST /api/project/nlq/translate":                  {Action: "nlq_translate"},
 	"POST /api/project/nlq/query":                      {Action: "nlq_query"},
+	"POST /api/project/mcp":                            {Action: "mcp_rpc"},
 	"GET /api/project/mcp/tools":                       {Action: "mcp_tools_read"},
 	"POST /api/project/mcp/invoke":                     {Action: "mcp_invoke"},
 	"GET /api/project/realtime/status":                 {Action: "realtime_status_read"},

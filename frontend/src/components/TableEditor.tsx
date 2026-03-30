@@ -27,7 +27,6 @@ import {
     Lock,
     GripVertical,
     Wifi,
-    Settings,
     SlidersHorizontal,
     CheckSquare
 } from 'lucide-react';
@@ -53,6 +52,7 @@ function useDebounce(value: any, delay: any) {
 
 // localStorage key for column widths
 const getStorageKey = (tableName: any) => `ozybase_column_widths_${tableName}`;
+const getHiddenColumnsStorageKey = (tableName: any) => `ozybase_hidden_columns_${tableName}`;
 
 // Default column widths by type
 const getDefaultWidth = (colName: any, colType: any) => {
@@ -110,16 +110,18 @@ const SkeletonRow = ({ columns, getColumnWidth, rowHeight, showSelection = true,
 interface TableEditorProps {
     tableName: string | null;
     onTableSelect: (tableName: string) => void;
+    onOpenSqlEditor?: (tableName: string | null) => void;
     allTables?: any[];
 }
 
-const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, allTables = [] }: any) => {
+const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onOpenSqlEditor, allTables = [] }: any) => {
     const [data, setData] = useState<any[]>([]);
     const [schema, setSchema] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<any>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isColumnModalOpen, setIsColumnModalOpen] = useState(false);
+    const [isColumnsPanelOpen, setIsColumnsPanelOpen] = useState(false);
     const [isInsertDropdownOpen, setIsInsertDropdownOpen] = useState(false);
     const [isTableSwitcherOpen, setIsTableSwitcherOpen] = useState(false);
     const [editingRow, setEditingRow] = useState<any>(null);
@@ -142,6 +144,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
     const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
     const [isCsvImportOpen, setIsCsvImportOpen] = useState(false);
     const [csvImport, setCsvImport] = useState<any>(null);
+    const [columnSearchTerm, setColumnSearchTerm] = useState('');
 
     // Pagination State
     const [pageSize, setPageSize] = useState(100);
@@ -150,6 +153,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
 
     // --- NEW: Column Widths & Inline Editing State ---
     const [columnWidths, setColumnWidths] = useState<Record<string, any>>({});
+    const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
     const [editingCell, setEditingCell] = useState<any>(null); // { rowId, colName }
     const [resizingColumn, setResizingColumn] = useState<any>(null);
     const resizeStartX = useRef(0);
@@ -183,6 +187,30 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
     const saveColumnWidths = useCallback((widths: Record<string, any>) => {
         if (tableName) {
             localStorage.setItem(getStorageKey(tableName), JSON.stringify(widths));
+        }
+    }, [tableName]);
+
+    const saveHiddenColumns = useCallback((nextHiddenColumns: string[]) => {
+        if (tableName) {
+            localStorage.setItem(getHiddenColumnsStorageKey(tableName), JSON.stringify(nextHiddenColumns));
+        }
+    }, [tableName]);
+
+    useEffect(() => {
+        if (!tableName) {
+            setHiddenColumns([]);
+            return;
+        }
+        const saved = localStorage.getItem(getHiddenColumnsStorageKey(tableName));
+        if (!saved) {
+            setHiddenColumns([]);
+            return;
+        }
+        try {
+            const parsed = JSON.parse(saved);
+            setHiddenColumns(Array.isArray(parsed) ? parsed.filter((value: any) => typeof value === 'string') : []);
+        } catch {
+            setHiddenColumns([]);
         }
     }, [tableName]);
 
@@ -297,6 +325,8 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
         if (tableName) {
             fetchViews();
             setEditingCell(null); // Clear editing state when table changes
+            setIsColumnsPanelOpen(false);
+            setColumnSearchTerm('');
         }
     }, [tableName, fetchViews]);
 
@@ -882,6 +912,41 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
         ...schema,
         ...(createdAtEnabled ? [{ name: 'created_at', type: 'datetime' }] : [])
     ], [createdAtEnabled, rowIdentityEnabled, schema]);
+    const hiddenColumnSet = useMemo(() => new Set(hiddenColumns), [hiddenColumns]);
+    const visibleColumns = useMemo(() => standardColumns.filter((col: any) => {
+        if (rowIdentityEnabled && col.name === 'id') {
+            return true;
+        }
+        return !hiddenColumnSet.has(col.name);
+    }), [hiddenColumnSet, rowIdentityEnabled, standardColumns]);
+    const visibleColumnCount = visibleColumns.length;
+    const totalColumnCount = standardColumns.length;
+    const filteredColumnOptions = useMemo(() => {
+        const needle = columnSearchTerm.trim().toLowerCase();
+        if (!needle) {
+            return standardColumns;
+        }
+        return standardColumns.filter((col: any) => {
+            const haystack = `${col.name} ${col.type || ''}`.toLowerCase();
+            return haystack.includes(needle);
+        });
+    }, [columnSearchTerm, standardColumns]);
+
+    useEffect(() => {
+        const allowed = new Set(standardColumns.map((col: any) => col.name));
+        setHiddenColumns((prev: any) => {
+            const next = prev.filter((name: string) => {
+                if (rowIdentityEnabled && name === 'id') {
+                    return false;
+                }
+                return allowed.has(name);
+            });
+            if (next.length !== prev.length) {
+                saveHiddenColumns(next);
+            }
+            return next;
+        });
+    }, [rowIdentityEnabled, saveHiddenColumns, standardColumns]);
 
     // Get column width with fallback to default
     const getColumnWidth = useCallback((colName: string, colType: string) => {
@@ -890,12 +955,56 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
 
     // Calculate total table width
     const totalWidth = useMemo(() => 
-        standardColumns.reduce((acc: any, col: any) => acc + getColumnWidth(col.name, col.type), 0) + selectionColumnWidth + actionsColumnWidth, 
-    [actionsColumnWidth, getColumnWidth, selectionColumnWidth, standardColumns]);
+        visibleColumns.reduce((acc: any, col: any) => acc + getColumnWidth(col.name, col.type), 0) + selectionColumnWidth + actionsColumnWidth, 
+    [actionsColumnWidth, getColumnWidth, selectionColumnWidth, visibleColumns]);
     const currentTableLabel = currentTableMeta?.display_name || tableName;
     const readOnlyCompatibilityMessage = !rowIdentityEnabled
         ? 'This SQL table does not expose an id primary key, so Table Editor is running in read-only mode. Use SQL Editor for writes until the table has a standard row identity.'
         : null;
+    const hiddenColumnCount = Math.max(0, totalColumnCount - visibleColumnCount);
+
+    const resetColumnLayout = useCallback(() => {
+        setColumnWidths({});
+        if (tableName) {
+            localStorage.removeItem(getStorageKey(tableName));
+        }
+    }, [tableName]);
+
+    const showAllColumns = useCallback(() => {
+        setHiddenColumns([]);
+        saveHiddenColumns([]);
+    }, [saveHiddenColumns]);
+
+    const toggleColumnVisibility = useCallback((columnName: string) => {
+        if (rowIdentityEnabled && columnName === 'id') {
+            return;
+        }
+        setHiddenColumns((prev: any) => {
+            const nextSet = new Set(prev);
+            if (nextSet.has(columnName)) {
+                nextSet.delete(columnName);
+            } else {
+                const currentlyVisible = standardColumns.filter((col: any) => {
+                    if (rowIdentityEnabled && col.name === 'id') {
+                        return false;
+                    }
+                    return !nextSet.has(col.name);
+                }).length;
+                if (currentlyVisible <= 1) {
+                    setAlertMessage({
+                        title: 'Keep One Column Visible',
+                        message: 'Table Editor needs at least one visible data column. Use SQL Editor for schema-wide inspection if you want a raw query view.',
+                        type: 'info'
+                    });
+                    return prev;
+                }
+                nextSet.add(columnName);
+            }
+            const next = Array.from(nextSet) as string[];
+            saveHiddenColumns(next);
+            return next;
+        });
+    }, [rowIdentityEnabled, saveHiddenColumns, standardColumns]);
 
     return (
         <div className="flex flex-col h-full w-full max-w-full overflow-hidden text-zinc-400 font-sans animate-in fade-in duration-500">
@@ -1188,13 +1297,120 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                         <ArrowUpDown size={14} />
                         Sort
                     </button>
-                    <button
-                        onClick={() => setIsColumnModalOpen(true)}
-                        className="flex items-center gap-2 px-3 py-1.5 bg-[#111111] border border-[#2e2e2e] rounded-lg hover:border-zinc-500 transition-all text-[10px] font-black uppercase tracking-widest text-zinc-300 shrink-0"
-                    >
-                        <Columns3 size={14} />
-                        Columns
-                    </button>
+                    <div className="relative">
+                        <button
+                            onClick={() => setIsColumnsPanelOpen(!isColumnsPanelOpen)}
+                            className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg transition-all text-[10px] font-black uppercase tracking-widest shrink-0 ${
+                                isColumnsPanelOpen
+                                    ? 'bg-primary/10 border-primary/30 text-primary'
+                                    : 'bg-[#111111] border-[#2e2e2e] text-zinc-300 hover:border-zinc-500'
+                            }`}
+                        >
+                            <Columns3 size={14} />
+                            Columns
+                            <span className="rounded-full bg-black/30 px-1.5 py-0.5 text-[9px] tracking-[0.15em]">
+                                {visibleColumnCount}/{totalColumnCount}
+                            </span>
+                        </button>
+
+                        {isColumnsPanelOpen && (
+                            <>
+                                <div
+                                    className="fixed inset-0 z-40 outline-none"
+                                    onClick={() => setIsColumnsPanelOpen(false)}
+                                />
+                                <div className="absolute top-full left-0 mt-2 z-50 w-[320px] overflow-hidden ozy-floating-panel">
+                                    <div className="border-b border-[#2e2e2e] px-4 py-3">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div>
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Visible Columns</p>
+                                                <p className="mt-1 text-[11px] text-zinc-400">
+                                                    {visibleColumnCount} of {totalColumnCount} visible
+                                                    {hiddenColumnCount > 0 ? ` · ${hiddenColumnCount} hidden` : ''}
+                                                </p>
+                                            </div>
+                                            <button
+                                                onClick={() => {
+                                                    setIsColumnsPanelOpen(false);
+                                                    setIsColumnModalOpen(true);
+                                                }}
+                                                className="rounded-lg border border-[#2e2e2e] px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-zinc-300 hover:border-primary/30 hover:text-primary transition-colors"
+                                            >
+                                                Add Column
+                                            </button>
+                                        </div>
+                                        <div className="relative mt-3">
+                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600" size={13} />
+                                            <input
+                                                type="text"
+                                                value={columnSearchTerm}
+                                                onChange={(e: any) => setColumnSearchTerm(e.target.value)}
+                                                placeholder="Find column..."
+                                                className="w-full rounded-lg border border-[#2e2e2e] bg-[#101010] py-2 pl-8 pr-3 text-[11px] text-zinc-200 placeholder:text-zinc-700 focus:border-primary/30 focus:outline-none"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2 border-b border-[#2e2e2e] px-4 py-3 text-[10px] font-black uppercase tracking-widest">
+                                        <button
+                                            onClick={showAllColumns}
+                                            className="rounded-lg border border-[#2e2e2e] px-3 py-1.5 text-zinc-300 hover:text-white hover:border-zinc-500 transition-colors"
+                                        >
+                                            Show All
+                                        </button>
+                                        <button
+                                            onClick={resetColumnLayout}
+                                            className="rounded-lg border border-[#2e2e2e] px-3 py-1.5 text-zinc-500 hover:text-zinc-200 hover:border-zinc-500 transition-colors"
+                                        >
+                                            Reset Widths
+                                        </button>
+                                    </div>
+
+                                    <div className="max-h-80 overflow-y-auto custom-scrollbar p-2">
+                                        {filteredColumnOptions.length === 0 ? (
+                                            <div className="px-3 py-6 text-center text-[11px] text-zinc-600">
+                                                No columns match this filter.
+                                            </div>
+                                        ) : (
+                                            filteredColumnOptions.map((col: any) => {
+                                                const isPinnedIdentityColumn = rowIdentityEnabled && col.name === 'id';
+                                                const checked = isPinnedIdentityColumn || !hiddenColumnSet.has(col.name);
+
+                                                return (
+                                                    <label
+                                                        key={col.name}
+                                                        className={`flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2 transition-colors ${
+                                                            checked ? 'bg-[#141414] text-zinc-200' : 'text-zinc-500 hover:bg-[#121212] hover:text-zinc-300'
+                                                        }`}
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={checked}
+                                                            disabled={isPinnedIdentityColumn}
+                                                            onChange={() => toggleColumnVisibility(col.name)}
+                                                            className="rounded border-border bg-transparent accent-primary"
+                                                        />
+                                                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                                                            {getTypeIcon(col.type)}
+                                                            <div className="min-w-0">
+                                                                <div className="truncate text-[11px] font-bold">{col.name}</div>
+                                                                <div className="truncate text-[9px] uppercase tracking-widest text-zinc-600">{col.type || 'text'}</div>
+                                                            </div>
+                                                        </div>
+                                                        {isPinnedIdentityColumn && (
+                                                            <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-1 text-[8px] font-black uppercase tracking-[0.2em] text-primary">
+                                                                Pinned
+                                                            </span>
+                                                        )}
+                                                    </label>
+                                                );
+                                            })
+                                        )}
+                                    </div>
+                                </div>
+                            </>
+                        )}
+                    </div>
 
                     <div className="h-4 w-[1px] bg-[#2e2e2e] mx-2" />
                     
@@ -1239,6 +1455,33 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
             {readOnlyCompatibilityMessage && (
                 <div className="border-b border-amber-500/20 bg-amber-500/5 px-4 py-3 text-[10px] font-bold tracking-wide text-amber-200 sm:px-6">
                     {readOnlyCompatibilityMessage}
+                </div>
+            )}
+
+            {(hiddenColumnCount > 0 || filters.length > 0 || sorts.length > 0 || selectedCount > 0) && (
+                <div className="border-b border-[#2e2e2e] bg-[#121212] px-4 py-2 sm:px-6">
+                    <div className="flex flex-wrap items-center gap-2 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">
+                        {hiddenColumnCount > 0 && (
+                            <span className="rounded-full border border-[#2e2e2e] bg-[#171717] px-3 py-1 text-zinc-300">
+                                {hiddenColumnCount} hidden columns
+                            </span>
+                        )}
+                        {filters.length > 0 && (
+                            <span className="rounded-full border border-[#2e2e2e] bg-[#171717] px-3 py-1 text-zinc-300">
+                                {filters.length} active filters
+                            </span>
+                        )}
+                        {sorts.length > 0 && (
+                            <span className="rounded-full border border-[#2e2e2e] bg-[#171717] px-3 py-1 text-zinc-300">
+                                {sorts.length} active sorts
+                            </span>
+                        )}
+                        {selectedCount > 0 && (
+                            <span className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-primary">
+                                {selectedCount} selected rows
+                            </span>
+                        )}
+                    </div>
                 </div>
             )}
 
@@ -1433,7 +1676,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                         )}
 
                         {/* Dynamic columns */}
-                        {standardColumns.map((col: any) => {
+                        {visibleColumns.map((col: any) => {
                             const width = getColumnWidth(col.name, col.type);
                             const isResizingColumn = resizingColumn === col.name;
                             const isPinnedIdentityColumn = rowIdentityEnabled && col.name === 'id';
@@ -1480,7 +1723,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                                 {[...Array(10)].map((_: any, i: any) => (
                                     <SkeletonRow
                                         key={i}
-                                        columns={standardColumns}
+                                        columns={visibleColumns}
                                         getColumnWidth={getColumnWidth}
                                         rowHeight={ROW_HEIGHT}
                                         showSelection={rowIdentityEnabled}
@@ -1540,7 +1783,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                                             )}
 
                                             {/* Data cells */}
-                                            {standardColumns.map((col: any) => {
+                                            {visibleColumns.map((col: any) => {
                                                 const val = row[col.name];
                                                 const width = getColumnWidth(col.name, col.type);
                                                 const isCellEditing = isEditing && editingCell?.colName === col.name;
@@ -1667,7 +1910,11 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                 </div>
 
                 <div className="flex items-center gap-4 text-zinc-600">
-                    <button className="flex items-center gap-1.5 hover:text-zinc-200 uppercase transition-colors">
+                    <button
+                        onClick={() => onOpenSqlEditor?.(tableName)}
+                        disabled={!tableName}
+                        className="flex items-center gap-1.5 hover:text-zinc-200 uppercase transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
                         <Code2 size={12} /> SQL
                     </button>
                     <button

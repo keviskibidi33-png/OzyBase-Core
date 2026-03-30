@@ -26,6 +26,25 @@ type MCPInvokeRequest struct {
 	Arguments map[string]any `json:"arguments"`
 }
 
+type MCPRPCRequest struct {
+	JSONRPC string         `json:"jsonrpc"`
+	ID      any            `json:"id,omitempty"`
+	Method  string         `json:"method"`
+	Params  map[string]any `json:"params,omitempty"`
+}
+
+type MCPRPCResponse struct {
+	JSONRPC string         `json:"jsonrpc"`
+	ID      any            `json:"id,omitempty"`
+	Result  any            `json:"result,omitempty"`
+	Error   *MCPRPCError   `json:"error,omitempty"`
+}
+
+type MCPRPCError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
 func buildMCPTools() []MCPTool {
 	return []MCPTool{
 		{
@@ -110,6 +129,44 @@ func buildMCPTools() []MCPTool {
 			},
 		},
 	}
+}
+
+func standardizeMCPInputSchema(schema map[string]any) map[string]any {
+	if len(schema) == 0 {
+		return map[string]any{
+			"type":                 "object",
+			"properties":           map[string]any{},
+			"additionalProperties": false,
+		}
+	}
+
+	normalized := map[string]any{}
+	for key, value := range schema {
+		normalized[key] = value
+	}
+	if _, ok := normalized["type"]; !ok {
+		normalized["type"] = "object"
+	}
+	if _, ok := normalized["properties"]; !ok {
+		normalized["properties"] = map[string]any{}
+	}
+	if _, ok := normalized["additionalProperties"]; !ok {
+		normalized["additionalProperties"] = false
+	}
+	return normalized
+}
+
+func buildStandardMCPTools() []map[string]any {
+	tools := buildMCPTools()
+	out := make([]map[string]any, 0, len(tools))
+	for _, tool := range tools {
+		out = append(out, map[string]any{
+			"name":        tool.Name,
+			"description": tool.Description,
+			"inputSchema": standardizeMCPInputSchema(tool.InputSchema),
+		})
+	}
+	return out
 }
 
 func mcpStringArg(args map[string]any, key string) string {
@@ -413,6 +470,85 @@ func (h *Handler) mcpCollections(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
+func (h *Handler) executeMCPTool(ctx context.Context, tool string, arguments map[string]any) (any, int, bool, error) {
+	switch tool {
+	case "system.health":
+		return h.mcpHealth(ctx), http.StatusOK, true, nil
+	case "collections.list":
+		items, err := h.mcpCollections(ctx)
+		if err != nil {
+			return nil, http.StatusInternalServerError, true, err
+		}
+		return map[string]any{"items": items, "count": len(items)}, http.StatusOK, true, nil
+	case "collections.create":
+		result, err := h.mcpCreateCollection(ctx, arguments)
+		if err != nil {
+			return nil, http.StatusBadRequest, true, err
+		}
+		return result, http.StatusOK, true, nil
+	case "vector.status":
+		result, err := h.collectVectorStatus(ctx)
+		if err != nil {
+			return nil, http.StatusInternalServerError, true, err
+		}
+		return result, http.StatusOK, true, nil
+	case "nlq.translate":
+		nlqReq := NLQTranslateRequest{
+			Query: mcpStringArg(arguments, "query"),
+			Table: mcpStringArg(arguments, "table"),
+			Limit: mcpIntArg(arguments, "limit"),
+		}
+		result, err := h.translateNLQ(ctx, nlqReq)
+		if err != nil {
+			return nil, http.StatusBadRequest, true, err
+		}
+		return result, http.StatusOK, true, nil
+	case "nlq.query":
+		nlqReq := NLQTranslateRequest{
+			Query: mcpStringArg(arguments, "query"),
+			Table: mcpStringArg(arguments, "table"),
+			Limit: mcpIntArg(arguments, "limit"),
+		}
+		result, err := h.runNLQ(ctx, nlqReq)
+		if err != nil {
+			return nil, http.StatusBadRequest, true, err
+		}
+		return result, http.StatusOK, true, nil
+	default:
+		return nil, http.StatusNotFound, false, errors.New("unknown MCP tool")
+	}
+}
+
+func newMCPRPCResponse(id any, result any) MCPRPCResponse {
+	return MCPRPCResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Result:  result,
+	}
+}
+
+func newMCPRPCError(id any, code int, message string) MCPRPCResponse {
+	return MCPRPCResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error: &MCPRPCError{
+			Code:    code,
+			Message: message,
+		},
+	}
+}
+
+func encodeMCPToolContent(result any) string {
+	if result == nil {
+		return "{}"
+	}
+	payload, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("%v", result)
+	}
+	return string(payload)
+}
+
 // GetMCPTools handles GET /api/project/mcp/tools
 func (h *Handler) GetMCPTools(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]any{
@@ -438,69 +574,106 @@ func (h *Handler) InvokeMCPTool(c echo.Context) error {
 	if req.Arguments == nil {
 		req.Arguments = map[string]any{}
 	}
-
-	switch req.Tool {
-	case "system.health":
-		return c.JSON(http.StatusOK, map[string]any{
-			"tool":   req.Tool,
-			"result": h.mcpHealth(ctx),
-		})
-	case "collections.list":
-		items, err := h.mcpCollections(ctx)
-		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		}
-		return c.JSON(http.StatusOK, map[string]any{
-			"tool":   req.Tool,
-			"result": map[string]any{"items": items, "count": len(items)},
-		})
-	case "collections.create":
-		result, err := h.mcpCreateCollection(ctx, req.Arguments)
-		if err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-		}
-		return c.JSON(http.StatusOK, map[string]any{
-			"tool":   req.Tool,
-			"result": result,
-		})
-	case "vector.status":
-		result, err := h.collectVectorStatus(ctx)
-		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		}
-		return c.JSON(http.StatusOK, map[string]any{
-			"tool":   req.Tool,
-			"result": result,
-		})
-	case "nlq.translate":
-		nlqReq := NLQTranslateRequest{
-			Query: mcpStringArg(req.Arguments, "query"),
-			Table: mcpStringArg(req.Arguments, "table"),
-			Limit: mcpIntArg(req.Arguments, "limit"),
-		}
-		result, err := h.translateNLQ(ctx, nlqReq)
-		if err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-		}
-		return c.JSON(http.StatusOK, map[string]any{
-			"tool":   req.Tool,
-			"result": result,
-		})
-	case "nlq.query":
-		nlqReq := NLQTranslateRequest{
-			Query: mcpStringArg(req.Arguments, "query"),
-			Table: mcpStringArg(req.Arguments, "table"),
-			Limit: mcpIntArg(req.Arguments, "limit"),
-		}
-		result, err := h.runNLQ(ctx, nlqReq)
-		if err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-		}
-		return c.JSON(http.StatusOK, map[string]any{
-			"tool":   req.Tool,
-			"result": result,
-		})
-	default:
+	result, status, found, err := h.executeMCPTool(ctx, req.Tool, req.Arguments)
+	if !found {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "unknown MCP tool"})
+	}
+	if err != nil {
+		return c.JSON(status, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]any{
+		"tool":   req.Tool,
+		"result": result,
+	})
+}
+
+// HandleMCPRPC exposes a standard JSON-RPC MCP endpoint for editor integrations.
+func (h *Handler) HandleMCPRPC(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 12*time.Second)
+	defer cancel()
+
+	var req MCPRPCRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, newMCPRPCError(nil, -32700, "invalid JSON payload"))
+	}
+	if strings.TrimSpace(req.Method) == "" {
+		return c.JSON(http.StatusBadRequest, newMCPRPCError(req.ID, -32600, "method is required"))
+	}
+
+	method := strings.TrimSpace(req.Method)
+	params := req.Params
+	if params == nil {
+		params = map[string]any{}
+	}
+
+	if strings.HasPrefix(method, "notifications/") {
+		return c.NoContent(http.StatusAccepted)
+	}
+
+	switch method {
+	case "initialize":
+		protocolVersion := mcpStringArg(params, "protocolVersion")
+		if protocolVersion == "" {
+			protocolVersion = "2025-06-18"
+		}
+		return c.JSON(http.StatusOK, newMCPRPCResponse(req.ID, map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities": map[string]any{
+				"tools": map[string]any{
+					"listChanged": false,
+				},
+			},
+			"serverInfo": map[string]any{
+				"name":    "OzyBase",
+				"version": "2026.03",
+			},
+			"instructions": "Use tools/list and tools/call to access the OzyBase MCP runtime.",
+		}))
+	case "ping":
+		return c.JSON(http.StatusOK, newMCPRPCResponse(req.ID, map[string]any{}))
+	case "tools/list":
+		return c.JSON(http.StatusOK, newMCPRPCResponse(req.ID, map[string]any{
+			"tools": buildStandardMCPTools(),
+		}))
+	case "tools/call":
+		toolName := mcpStringArg(params, "name")
+		if toolName == "" {
+			return c.JSON(http.StatusBadRequest, newMCPRPCError(req.ID, -32602, "tool name is required"))
+		}
+
+		rawArgs, ok := params["arguments"]
+		if !ok || rawArgs == nil {
+			rawArgs = map[string]any{}
+		}
+		args, ok := rawArgs.(map[string]any)
+		if !ok {
+			return c.JSON(http.StatusBadRequest, newMCPRPCError(req.ID, -32602, "tool arguments must be an object"))
+		}
+
+		result, _, found, err := h.executeMCPTool(ctx, toolName, args)
+		if !found {
+			return c.JSON(http.StatusNotFound, newMCPRPCError(req.ID, -32601, "unknown MCP tool"))
+		}
+		if err != nil {
+			return c.JSON(http.StatusOK, newMCPRPCResponse(req.ID, map[string]any{
+				"content": []map[string]any{
+					{"type": "text", "text": err.Error()},
+				},
+				"structuredContent": map[string]any{
+					"tool":  toolName,
+					"error": err.Error(),
+				},
+				"isError": true,
+			}))
+		}
+
+		return c.JSON(http.StatusOK, newMCPRPCResponse(req.ID, map[string]any{
+			"content": []map[string]any{
+				{"type": "text", "text": encodeMCPToolContent(result)},
+			},
+			"structuredContent": result,
+		}))
+	default:
+		return c.JSON(http.StatusNotFound, newMCPRPCError(req.ID, -32601, "method not found"))
 	}
 }

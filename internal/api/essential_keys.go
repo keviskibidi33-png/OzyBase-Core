@@ -255,15 +255,37 @@ func projectAPIBaseURL(c echo.Context) string {
 
 func buildMCPConfigPayload(c echo.Context, serviceRoleKey string) map[string]any {
 	baseURL := projectAPIBaseURL(c)
+	serverURL := strings.TrimRight(baseURL, "/") + "/api/project/mcp"
 	toolsURL := strings.TrimRight(baseURL, "/") + "/api/project/mcp/tools"
 	invokeURL := strings.TrimRight(baseURL, "/") + "/api/project/mcp/invoke"
+	vscodeConfig := map[string]any{
+		"servers": map[string]any{
+			"ozybase": map[string]any{
+				"type": "http",
+				"url":  serverURL,
+				"headers": map[string]any{
+					"apikey": serviceRoleKey,
+				},
+			},
+		},
+	}
+	vscodeConfigJSON, _ := json.MarshalIndent(vscodeConfig, "", "  ")
 
 	return map[string]any{
 		"runtime":      "native",
+		"transport":    "jsonrpc-http",
+		"server_url":   serverURL,
 		"tools_url":    toolsURL,
 		"invoke_url":   invokeURL,
 		"auth_header":  "apikey",
 		"tool_count":   len(buildMCPTools()),
+		"sample_server": fmt.Sprintf(
+			"curl -s %q -H %q -H %q -d %q",
+			serverURL,
+			"apikey: "+serviceRoleKey,
+			"Content-Type: application/json",
+			`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
+		),
 		"sample_tools": fmt.Sprintf("curl -s %q -H %q", toolsURL, "apikey: "+serviceRoleKey),
 		"sample_invoke": fmt.Sprintf(
 			"curl -s %q -H %q -H %q -d %q",
@@ -272,6 +294,7 @@ func buildMCPConfigPayload(c echo.Context, serviceRoleKey string) map[string]any
 			"Content-Type: application/json",
 			`{"tool":"system.health","arguments":{}}`,
 		),
+		"vscode_config": string(vscodeConfigJSON),
 	}
 }
 

@@ -44,6 +44,7 @@ OzyBase is a high-performance, single-binary BaaS for authentication, dynamic co
 Current runtime is ready to integrate with AI editors/agents through native MCP endpoints.
 MCP in OzyBase is implemented as a native HTTP runtime inside the API service (shared auth, audit, and DB pool), not as a separate stdio daemon process.
 
+- Standard MCP JSON-RPC endpoint: `POST /api/project/mcp`
 - MCP tools catalog: `GET /api/project/mcp/tools`
 - MCP tool invoke: `POST /api/project/mcp/invoke`
 - MCP collection creation tool: `collections.create` (via `/api/project/mcp/invoke`)
@@ -61,7 +62,10 @@ Enterprise release gate:
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate_enterprise.ps1
 ```
 
-If your editor requires standard MCP transport (`tools/list`, `tools/call` over stdio/websocket), use a thin adapter that maps to `/api/project/mcp/tools` and `/api/project/mcp/invoke`.
+VS Code setup:
+- Open `Settings > API Keys > MCP Gateway` in OzyBase and reveal the active secret key.
+- Copy the generated `.vscode/mcp.json` snippet or see `docs/MCP_VSCODE.md`.
+- Use the secret key in the `apikey` header.
 
 Quick verification:
 

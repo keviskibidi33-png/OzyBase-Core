@@ -36,12 +36,16 @@ interface EssentialKeysResponse {
 
 interface MCPConfig {
   runtime: string;
+  transport?: string;
+  server_url?: string;
   tools_url: string;
   invoke_url: string;
   auth_header: string;
   tool_count: number;
+  sample_server?: string;
   sample_tools: string;
   sample_invoke: string;
+  vscode_config?: string;
 }
 
 interface RevealedKeyPayload {
@@ -721,7 +725,35 @@ const EssentialApiKeysPanel: React.FC = () => {
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div className="bg-[#0d0d0d] border border-[#2e2e2e] rounded-2xl p-5">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2">
+                    VS Code MCP Server
+                  </p>
+                  <code className="text-xs text-white break-all">
+                    {serviceRoleMCP.server_url || serviceRoleMCP.invoke_url}
+                  </code>
+                  <p className="mt-3 text-[11px] leading-relaxed text-zinc-500">
+                    Use this remote HTTP endpoint in VS Code MCP settings with
+                    the secret key in the <code>apikey</code> header.
+                  </p>
+                  <button
+                    onClick={() =>
+                      void copyValue(
+                        serviceRoleMCP.server_url || serviceRoleMCP.invoke_url,
+                        "mcp-server-url",
+                      )
+                    }
+                    className="mt-4 px-4 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-[10px] font-black uppercase tracking-widest text-zinc-300 hover:text-white transition-all flex items-center gap-2"
+                  >
+                    {copiedKey === "mcp-server-url" ? (
+                      <Check size={12} />
+                    ) : (
+                      <Copy size={12} />
+                    )}
+                    Copy URL
+                  </button>
+                </div>
                 <div className="bg-[#0d0d0d] border border-[#2e2e2e] rounded-2xl p-5">
                   <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2">
                     Tools Endpoint
@@ -767,6 +799,64 @@ const EssentialApiKeysPanel: React.FC = () => {
               </div>
 
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                {serviceRoleMCP.vscode_config && (
+                  <div className="bg-[#0d0d0d] border border-[#2e2e2e] rounded-2xl p-5 space-y-3 xl:col-span-2">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">
+                          VS Code `mcp.json`
+                        </p>
+                        <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
+                          Paste this into <code>.vscode/mcp.json</code> or your
+                          user MCP config in VS Code.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() =>
+                          void copyValue(
+                            serviceRoleMCP.vscode_config || "",
+                            "mcp-vscode-config",
+                          )
+                        }
+                        className="px-4 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-[10px] font-black uppercase tracking-widest text-zinc-300 hover:text-white transition-all flex items-center gap-2"
+                      >
+                        {copiedKey === "mcp-vscode-config" ? (
+                          <Check size={12} />
+                        ) : (
+                          <Copy size={12} />
+                        )}
+                        Copy Config
+                      </button>
+                    </div>
+                    <code className="block text-xs text-white whitespace-pre-wrap break-all">
+                      {serviceRoleMCP.vscode_config}
+                    </code>
+                  </div>
+                )}
+                <div className="bg-[#0d0d0d] border border-[#2e2e2e] rounded-2xl p-5 space-y-3">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">
+                    JSON-RPC Discovery
+                  </p>
+                  <code className="block text-xs text-white whitespace-pre-wrap break-all">
+                    {serviceRoleMCP.sample_server || serviceRoleMCP.sample_tools}
+                  </code>
+                  <button
+                    onClick={() =>
+                      void copyValue(
+                        serviceRoleMCP.sample_server || serviceRoleMCP.sample_tools,
+                        "mcp-sample-server",
+                      )
+                    }
+                    className="px-4 py-2 rounded-xl bg-primary text-black text-[10px] font-black uppercase tracking-widest flex items-center gap-2"
+                  >
+                    {copiedKey === "mcp-sample-server" ? (
+                      <Check size={12} />
+                    ) : (
+                      <Copy size={12} />
+                    )}
+                    Copy Command
+                  </button>
+                </div>
                 <div className="bg-[#0d0d0d] border border-[#2e2e2e] rounded-2xl p-5 space-y-3">
                   <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">
                     Discovery Command

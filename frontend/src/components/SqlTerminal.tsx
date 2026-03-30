@@ -64,8 +64,10 @@ type SQLResultsState = {
 
 const quoteIdentifier = (identifier: string) => `"${String(identifier || '').replace(/"/g, '""')}"`;
 
-const buildDefaultSQLQuery = (tables: string[]) => {
-    const preferredTable = tables[0];
+const buildDefaultSQLQuery = (tables: string[], preferredTableName?: string | null) => {
+    const preferredTable = preferredTableName && tables.includes(preferredTableName)
+        ? preferredTableName
+        : tables[0];
     if (!preferredTable) {
         return DEFAULT_SQL_FALLBACK_QUERY;
     }
@@ -153,9 +155,10 @@ const BarChart = ({ data, columns }: any) => {
 
 interface SqlTerminalProps {
     onSchemaChange?: () => void;
+    initialTableName?: string | null;
 }
 
-const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange }) => {
+const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange, initialTableName }) => {
     const [query, setQuery] = useState(DEFAULT_SQL_FALLBACK_QUERY);
     const [results, setResults] = useState<SQLResultsState | null>(null);
     const [loading, setLoading] = useState(false);
@@ -307,7 +310,7 @@ const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange }) => {
 
     useEffect(() => {
         if (queryTouched) return;
-        const nextDefaultQuery = buildDefaultSQLQuery(catalog.userTables);
+        const nextDefaultQuery = buildDefaultSQLQuery(catalog.userTables, initialTableName);
         setQuery((prev) => {
             const trimmed = prev.trim();
             if (
@@ -319,7 +322,7 @@ const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange }) => {
             }
             return prev;
         });
-    }, [catalog.userTables, queryTouched]);
+    }, [catalog.userTables, initialTableName, queryTouched]);
 
     const updateQuery = useCallback((nextQuery: string) => {
         setQueryTouched(true);
@@ -840,6 +843,14 @@ const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange }) => {
                             <Database size={12} className="text-primary" />
                             <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Production DB</span>
                         </div>
+                        {initialTableName && (
+                            <div className="flex items-center gap-2 px-3 py-1 bg-primary/10 border border-primary/20 rounded-lg">
+                                <Table size={12} className="text-primary" />
+                                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-primary">
+                                    Context: {initialTableName}
+                                </span>
+                            </div>
+                        )}
                         <button
                             onClick={() => { void runQuery(); }}
                             disabled={loading}
