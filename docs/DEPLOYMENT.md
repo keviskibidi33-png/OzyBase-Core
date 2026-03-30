@@ -77,7 +77,7 @@ Recommended for production:
 Profile mapping:
 - `self_host`: local binary, self-managed VM, or bundled docker stack
 - `install_to_play`: Coolify or low-friction docker install
-- `azure_cloud`: Azure Container Apps + Flexible Server + Key Vault
+- `custom`: private cloud or internal platform profile maintained outside this public repo
 
 See `docs/DEPLOYMENT_PROFILES.md` for the branch and file map.
 
@@ -230,14 +230,12 @@ Confirm:
 - Keep DB backups automated and run `bash scripts/disaster_drill.sh` regularly.
 - Monitor 4xx/5xx trends and auth failures.
 
-## 8.1 Azure Production Path
-For Azure Container Apps or another stateless cloud runtime:
-- Use external PostgreSQL, not the embedded database.
-- Set `JWT_SECRET`, `ANON_KEY`, and `SERVICE_ROLE_KEY` explicitly from a secret manager.
-- Set `DB_POOLER_URL` when fronting PostgreSQL with PgBouncer/Supavisor.
-- Use real `SITE_URL` and `APP_DOMAIN` values over HTTPS.
-- Configure SMTP for verification, reset, and workspace invites.
-- See [Azure Production Guide](./AZURE_PRODUCTION.md).
+## 8.1 Private Cloud Path
+Cloud-specific IaC and managed-platform deployment assets are intentionally maintained outside this public repo.
+Use a private operations repository for Azure or other managed runtimes, and keep the public repo focused on:
+- `self-host`
+- `install-to-play`
+- runtime-level cloud compatibility (`DATABASE_URL`, `DB_POOLER_URL`, HTTPS, SMTP, secret management)
 
 ## 9. Common Production Mistakes
 - Committing `.env` or secrets files.

@@ -16,7 +16,6 @@ import {
     Plus,
     RefreshCcw,
     Sparkles,
-    ChevronDown,
     Table,
     Activity,
     BookMarked,
@@ -24,12 +23,10 @@ import {
     MessageSquare,
     Zap,
     LogOut,
-    FileCode,
-    FileText,
-    Clock,
     Filter
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
+import SqlResultsHeader from './sql-terminal/SqlResultsHeader';
 import { useRef, useEffect, useCallback, lazy, Suspense } from 'react';
 import loader from '@monaco-editor/loader';
 import * as monaco from 'monaco-editor';
@@ -756,6 +753,23 @@ const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange, initialTableN
         setTimeout(() => setToast(null), 3000);
     };
 
+    const applyVisualizeTimeRange = useCallback((minutes: number) => {
+        setTimeRange(minutes);
+        setShowTimeMenu(false);
+        const timeFilter = `WHERE created_at > NOW() - INTERVAL '${minutes} minutes'`;
+        if (query.toLowerCase().includes('where')) {
+            showToast(`Add "AND created_at > NOW() - INTERVAL '${minutes} minutes'" to your query`, 'info');
+            return;
+        }
+        if (query.toLowerCase().includes('from')) {
+            const parts = query.split(/LIMIT|GROUP BY|ORDER BY/i);
+            const base = parts[0].trim();
+            const suffix = query.substring(base.length);
+            updateQuery(`${base} ${timeFilter} ${suffix.trim()};`.replace(/;;$/, ';'));
+            showToast(`Applied ${minutes}m filter`, 'success');
+        }
+    }, [query, updateQuery]);
+
     const handleClearSelection = () => {
         setSelectedRows(new Set());
         showToast('Selection cleared', 'info');
@@ -1024,159 +1038,22 @@ const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange, initialTableN
                     style={{ height: `${panelHeight}px` }}
                     className="border-t border-[#2e2e2e] bg-[#1a1a1a] flex flex-col"
                 >
-                    <div className="h-10 border-b border-[#2e2e2e] flex items-center justify-between px-6 bg-[#111111] sticky top-0 z-50">
-                        <div className="flex items-center gap-4">
-                            <button
-                                onClick={() => setActiveTab('results')}
-                                className={`text-[10px] font-black uppercase tracking-widest transition-all px-4 h-full border-b-2 flex items-center gap-2
-                                    ${activeTab === 'results' ? 'text-primary border-primary' : 'text-zinc-500 border-transparent hover:text-zinc-300'}`}
-                            >
-                                <Table size={12} />
-                                Query Results
-                            </button>
-                            <button
-                                onClick={() => setActiveTab('explain')}
-                                className={`text-[10px] font-black uppercase tracking-widest transition-all px-4 h-full border-b-2 flex items-center gap-2
-                                    ${activeTab === 'explain' ? 'text-primary border-primary' : 'text-zinc-500 border-transparent hover:text-zinc-300'}`}
-                            >
-                                < Zap size={12} />
-                                Explain Plan
-                            </button>
-                            <button
-                                onClick={() => setActiveTab('visualize')}
-                                className={`text-[10px] font-black uppercase tracking-widest transition-all px-4 h-full border-b-2 flex items-center gap-2
-                                    ${activeTab === 'visualize' ? 'text-primary border-primary' : 'text-zinc-500 border-transparent hover:text-zinc-300'}`}
-                            >
-                                <Activity size={12} />
-                                Visualize
-                            </button>
-
-                            {results && activeTab === 'results' && (
-                                <div className="flex items-center gap-4 border-l border-zinc-800 pl-4 h-full">
-                                    <span className="text-[9px] font-bold text-green-500 uppercase tracking-widest flex items-center gap-1.5 font-mono">
-                                        <CheckCircle2 size={10} />
-                                        {results.message}
-                                    </span>
-                                    <span className="text-[9px] font-bold text-zinc-600 tracking-widest font-mono">CMD: {results.command}</span>
-                                    <span className="text-[9px] font-bold text-zinc-600 tracking-widest font-mono">
-                                        {results.hasResultSet ? `ROWS: ${results.rowCount}` : `AFFECTED: ${results.rowsAffected}`}
-                                    </span>
-                                    {results.truncated && (
-                                        <span className="text-[9px] font-bold text-amber-300 uppercase tracking-widest font-mono">
-                                            PREVIEW CAP: {results.resultLimit}
-                                        </span>
-                                    )}
-                                    <span className="text-[9px] font-bold text-zinc-600 tracking-widest font-mono">EXEC: {results?.executionTime || '0ms'}</span>
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="flex items-center gap-4">
-                            {activeTab === 'results' && hasTabularResults && (
-                                <div className="relative hidden xl:block">
-                                    <Search size={12} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600" />
-                                    <input
-                                        type="text"
-                                        value={resultSearchTerm}
-                                        onChange={(e: any) => setResultSearchTerm(e.target.value)}
-                                        placeholder="Filter preview rows..."
-                                        className="w-56 rounded-lg border border-[#2e2e2e] bg-[#0c0c0c] py-1.5 pl-8 pr-3 text-[10px] font-bold tracking-[0.1em] text-zinc-200 placeholder:text-zinc-600 focus:border-primary/30 focus:outline-none"
-                                    />
-                                </div>
-                            )}
-                            {activeTab === 'visualize' && results && (
-                                <div className="relative">
-                                    <button
-                                        onClick={(e: any) => {
-                                            e.stopPropagation();
-                                            setShowTimeMenu((prev: any) => !prev);
-                                        }}
-                                        className="flex items-center gap-2 text-[9px] font-bold text-zinc-500 hover:text-white uppercase tracking-widest transition-colors border-r border-[#2e2e2e] pr-4"
-                                    >
-                                        <Clock size={12} />
-                                        Last {timeRange} mins
-                                        <ChevronDown size={10} className={`transition-transform ${showTimeMenu ? 'rotate-180' : ''}`} />
-                                    </button>
-
-                                    {showTimeMenu && (
-                                        <div
-                                            className="absolute right-0 mt-3 w-52 bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] z-[100] py-2 animate-in fade-in slide-in-from-top-2 duration-200"
-                                            onClick={(e: any) => e.stopPropagation()}
-                                        >
-                                            {[60, 120, 160, 200].map((mins: any) => (
-                                                <button
-                                                    key={mins}
-                                                    onClick={(e: any) => {
-                                                        e.stopPropagation();
-                                                        setTimeRange(mins);
-                                                        setShowTimeMenu(false);
-                                                        const timeFilter = `WHERE created_at > NOW() - INTERVAL '${mins} minutes'`;
-                                                        if (query.toLowerCase().includes('where')) {
-                                                            showToast(`Add "AND created_at > NOW() - INTERVAL '${mins} minutes'" to your query`, 'info');
-                                                        } else if (query.toLowerCase().includes('from')) {
-                                                            const parts = query.split(/LIMIT|GROUP BY|ORDER BY/i);
-                                                            const base = parts[0].trim();
-                                                            const suffix = query.substring(base.length);
-                                                            updateQuery(`${base} ${timeFilter} ${suffix.trim()};`.replace(/;;$/, ';'));
-                                                            showToast(`Applied ${mins}m filter`, 'success');
-                                                        }
-                                                    }}
-                                                    className={`w-full flex items-center justify-between px-4 py-2.5 text-[10px] font-black uppercase tracking-widest transition-all
-                                                        ${timeRange === mins ? 'text-primary bg-primary/10' : 'text-zinc-500 hover:text-white hover:bg-zinc-800/50'}
-                                                    `}
-                                                >
-                                                    <span>Last {mins} Minutes</span>
-                                                    {timeRange === mins && <div className="w-1.5 h-1.5 rounded-full bg-primary" />}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-
-                            <div className="relative">
-                                <button
-                                    onClick={(e: any) => {
-                                        if (!canExportResults) return;
-                                        e.stopPropagation();
-                                        setShowExportMenu(!showExportMenu);
-                                    }}
-                                    disabled={!canExportResults}
-                                    className={`flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest transition-colors ${canExportResults ? 'text-zinc-500 hover:text-white' : 'text-zinc-700 cursor-not-allowed'}`}
-                                >
-                                    <Download size={12} />
-                                    Export Data
-                                    <ChevronDown size={10} className={`transition-transform ${showExportMenu ? 'rotate-180' : ''}`} />
-                                </button>
-
-                                {showExportMenu && (
-                                    <div className="absolute right-0 mt-2 w-36 bg-[#1a1a1a] border border-[#2e2e2e] rounded-lg shadow-xl z-50 py-1 animate-in fade-in slide-in-from-top-1 duration-200">
-                                        <button
-                                            onClick={() => initiateExport('csv')}
-                                            className="w-full flex items-center gap-3 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
-                                        >
-                                            <Table size={14} className="text-zinc-500" />
-                                            CSV (Excel)
-                                        </button>
-                                        <button
-                                            onClick={() => initiateExport('json')}
-                                            className="w-full flex items-center gap-3 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
-                                        >
-                                            <FileCode size={14} className="text-zinc-500" />
-                                            JSON
-                                        </button>
-                                        <button
-                                            onClick={() => initiateExport('txt')}
-                                            className="w-full flex items-center gap-3 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
-                                        >
-                                            <FileText size={14} className="text-zinc-500" />
-                                            TXT (Tab)
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
+                    <SqlResultsHeader
+                        activeTab={activeTab}
+                        setActiveTab={setActiveTab}
+                        results={results}
+                        hasTabularResults={hasTabularResults}
+                        canExportResults={canExportResults}
+                        resultSearchTerm={resultSearchTerm}
+                        setResultSearchTerm={setResultSearchTerm}
+                        timeRange={timeRange}
+                        showTimeMenu={showTimeMenu}
+                        setShowTimeMenu={setShowTimeMenu}
+                        onApplyTimeRange={applyVisualizeTimeRange}
+                        showExportMenu={showExportMenu}
+                        setShowExportMenu={setShowExportMenu}
+                        onInitiateExport={initiateExport}
+                    />
 
                     <div className="flex-1 overflow-auto custom-scrollbar">
                         <div className="min-w-full inline-block align-middle">

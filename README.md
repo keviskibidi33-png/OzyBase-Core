@@ -189,7 +189,7 @@ DEBUG=false
 
 - Deployment Runbook: `docs/DEPLOYMENT.md`
 - Deployment Profiles: `docs/DEPLOYMENT_PROFILES.md`
-- Azure Production Guide: `docs/AZURE_PRODUCTION.md`
+- Performance Benchmarks: `docs/PERFORMANCE_BENCHMARKS.md`
 - Security Suite: `docs/SECURITY_SUITE.md`
 - Security Notifications: `docs/SECURITY_NOTIFICATIONS.md`
 - Project Status: `docs/PROJECT_STATUS_MASTER.md`

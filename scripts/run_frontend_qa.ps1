@@ -83,6 +83,13 @@ function Wait-HttpHealthy {
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $frontendDir = Join-Path $repoRoot "frontend"
+$normalizedSpecs = @($Specs | ForEach-Object {
+  $spec = $_
+  if ($spec -match '^[Ff]rontend[\\/](.+)$') {
+    $spec = $Matches[1]
+  }
+  return ($spec -replace '\\', '/')
+})
 $runId = Get-Date -Format "yyyyMMddHHmmss"
 $embeddedRootName = "ozybase-qa-embedded"
 $embeddedRoot = Join-Path $env:TEMP $embeddedRootName
@@ -130,7 +137,7 @@ try {
   Wait-HttpHealthy -Url "http://127.0.0.1:$UiPort" -Process $uiProc
 
   Write-Step "Run Playwright QA"
-  $args = @("run", "test", "--") + $Specs + @("--project=chromium", "--workers=1", "--reporter=list", "--global-timeout=$PlaywrightGlobalTimeoutMs")
+  $args = @("run", "test", "--") + $normalizedSpecs + @("--project=chromium", "--workers=1", "--reporter=list", "--global-timeout=$PlaywrightGlobalTimeoutMs")
   Push-Location $frontendDir
   try {
     & npm.cmd @args

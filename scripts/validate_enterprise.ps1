@@ -258,6 +258,7 @@ try {
   $env:CI = "1"
   $env:DEBUG = "false"
   $env:JWT_SECRET = "validation-secret-0123456789abcdef0123456789abcdef"
+  $env:OZY_SKIP_DOTENV = "true"
 
   $apiProc = Start-Process -FilePath $apiBinary -WorkingDirectory $repoRoot -PassThru -RedirectStandardOutput $apiLog -RedirectStandardError $apiErrLog
   Wait-HttpHealthy -Url "http://127.0.0.1:$ApiPort/api/health" -Process $apiProc

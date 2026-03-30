@@ -37,6 +37,9 @@ import ConfirmModal from './ConfirmModal';
 import BulkEditModal from './BulkEditModal';
 import InlineCellEditor from './InlineCellEditor';
 import CSVImportModal from './CSVImportModal';
+import TableEditorColumnsPanel from './table-editor/TableEditorColumnsPanel';
+import TableEditorFooter from './table-editor/TableEditorFooter';
+import TableEditorStateBar from './table-editor/TableEditorStateBar';
 import { fetchWithAuth } from '../utils/api';
 
 // --- Custom Hooks ---
@@ -53,6 +56,7 @@ function useDebounce(value: any, delay: any) {
 // localStorage key for column widths
 const getStorageKey = (tableName: any) => `ozybase_column_widths_${tableName}`;
 const getHiddenColumnsStorageKey = (tableName: any) => `ozybase_hidden_columns_${tableName}`;
+const getPinnedColumnsStorageKey = (tableName: any) => `ozybase_pinned_columns_${tableName}`;
 
 // Default column widths by type
 const getDefaultWidth = (colName: any, colType: any) => {
@@ -166,6 +170,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
     // --- NEW: Column Widths & Inline Editing State ---
     const [columnWidths, setColumnWidths] = useState<Record<string, any>>({});
     const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
+    const [pinnedColumns, setPinnedColumns] = useState<string[]>([]);
     const [editingCell, setEditingCell] = useState<any>(null); // { rowId, colName }
     const [resizingColumn, setResizingColumn] = useState<any>(null);
     const resizeStartX = useRef(0);
@@ -208,6 +213,12 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
         }
     }, [tableName]);
 
+    const savePinnedColumns = useCallback((nextPinnedColumns: string[]) => {
+        if (tableName) {
+            localStorage.setItem(getPinnedColumnsStorageKey(tableName), JSON.stringify(nextPinnedColumns));
+        }
+    }, [tableName]);
+
     useEffect(() => {
         if (!tableName) {
             setHiddenColumns([]);
@@ -224,7 +235,25 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
         } catch {
             setHiddenColumns([]);
         }
-    }, [tableName]);
+    }, [tableName, schema.length]);
+
+    useEffect(() => {
+        if (!tableName) {
+            setPinnedColumns([]);
+            return;
+        }
+        const saved = localStorage.getItem(getPinnedColumnsStorageKey(tableName));
+        if (!saved) {
+            setPinnedColumns([]);
+            return;
+        }
+        try {
+            const parsed = JSON.parse(saved);
+            setPinnedColumns(Array.isArray(parsed) ? parsed.filter((value: any) => typeof value === 'string') : []);
+        } catch {
+            setPinnedColumns([]);
+        }
+    }, [tableName, schema.length]);
 
     useEffect(() => {
         window.localStorage.setItem(TABLE_DENSITY_STORAGE_KEY, rowDensity);
@@ -511,13 +540,15 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
         setCurrentPage(1);
         setActiveViewId(null);
         setHiddenColumns([]);
+        setPinnedColumns([]);
         saveHiddenColumns([]);
+        savePinnedColumns([]);
         setAlertMessage({
             title: 'View Reset',
-            message: 'Search, filters, sorts, page and hidden columns were reset for this table.',
+            message: 'Search, filters, sorts, page, hidden columns and frozen columns were reset for this table.',
             type: 'success'
         });
-    }, [saveHiddenColumns]);
+    }, [saveHiddenColumns, savePinnedColumns]);
 
     useEffect(() => {
         if (!selectAllRef.current) return;
@@ -971,6 +1002,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
         ...(createdAtEnabled ? [{ name: 'created_at', type: 'datetime' }] : [])
     ], [createdAtEnabled, rowIdentityEnabled, schema]);
     const hiddenColumnSet = useMemo(() => new Set(hiddenColumns), [hiddenColumns]);
+    const pinnedColumnSet = useMemo(() => new Set(pinnedColumns), [pinnedColumns]);
     const visibleColumns = useMemo(() => standardColumns.filter((col: any) => {
         if (rowIdentityEnabled && col.name === 'id') {
             return true;
@@ -991,6 +1023,9 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
     }, [columnSearchTerm, standardColumns]);
 
     useEffect(() => {
+        if (standardColumns.length === 0) {
+            return;
+        }
         const allowed = new Set(standardColumns.map((col: any) => col.name));
         setHiddenColumns((prev: any) => {
             const next = prev.filter((name: string) => {
@@ -1006,6 +1041,26 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
         });
     }, [rowIdentityEnabled, saveHiddenColumns, standardColumns]);
 
+    useEffect(() => {
+        if (standardColumns.length === 0) {
+            return;
+        }
+        const visible = new Set(visibleColumns.map((col: any) => col.name));
+        const allowed = new Set(standardColumns.map((col: any) => col.name));
+        setPinnedColumns((prev: any) => {
+            const next = prev.filter((name: string) => {
+                if (rowIdentityEnabled && name === 'id') {
+                    return false;
+                }
+                return allowed.has(name) && visible.has(name);
+            });
+            if (next.length !== prev.length) {
+                savePinnedColumns(next);
+            }
+            return next;
+        });
+    }, [rowIdentityEnabled, savePinnedColumns, standardColumns, visibleColumns]);
+
     // Get column width with fallback to default
     const getColumnWidth = useCallback((colName: string, colType: string) => {
         return columnWidths[colName] || getDefaultWidth(colName, colType);
@@ -1020,6 +1075,28 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
         ? 'This SQL table does not expose an id primary key, so Table Editor is running in read-only mode. Use SQL Editor for writes until the table has a standard row identity.'
         : null;
     const hiddenColumnCount = Math.max(0, totalColumnCount - visibleColumnCount);
+    const hasQueryModifiers = searchTerm.trim() !== '' || filters.length > 0 || sorts.length > 0;
+    const frozenColumnNames = useMemo(() => {
+        const names = visibleColumns
+            .filter((col: any) => (rowIdentityEnabled && col.name === 'id') || pinnedColumnSet.has(col.name))
+            .map((col: any) => col.name);
+        return rowIdentityEnabled ? names.filter((name: string) => name !== 'id') : names;
+    }, [pinnedColumnSet, rowIdentityEnabled, visibleColumns]);
+    const pinnedOffsets = useMemo(() => {
+        let nextOffset = selectionColumnWidth;
+        const offsets: Record<string, number> = {};
+
+        visibleColumns.forEach((col: any) => {
+            const isPinned = (rowIdentityEnabled && col.name === 'id') || pinnedColumnSet.has(col.name);
+            if (!isPinned) {
+                return;
+            }
+            offsets[col.name] = nextOffset;
+            nextOffset += getColumnWidth(col.name, col.type);
+        });
+
+        return offsets;
+    }, [getColumnWidth, pinnedColumnSet, rowIdentityEnabled, selectionColumnWidth, visibleColumns]);
 
     useEffect(() => {
         updateHorizontalOverflow(containerRef.current);
@@ -1027,8 +1104,10 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
 
     const resetColumnLayout = useCallback(() => {
         setColumnWidths({});
+        setPinnedColumns([]);
         if (tableName) {
             localStorage.removeItem(getStorageKey(tableName));
+            localStorage.removeItem(getPinnedColumnsStorageKey(tableName));
         }
     }, [tableName]);
 
@@ -1039,6 +1118,14 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
 
     const toggleColumnVisibility = useCallback((columnName: string) => {
         if (rowIdentityEnabled && columnName === 'id') {
+            return;
+        }
+        if (pinnedColumnSet.has(columnName)) {
+            setAlertMessage({
+                title: 'Column Is Frozen',
+                message: 'Unfreeze this column before hiding it so the sticky layout stays predictable.',
+                type: 'info'
+            });
             return;
         }
         setHiddenColumns((prev: any) => {
@@ -1066,7 +1153,32 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
             saveHiddenColumns(next);
             return next;
         });
-    }, [rowIdentityEnabled, saveHiddenColumns, standardColumns]);
+    }, [pinnedColumnSet, rowIdentityEnabled, saveHiddenColumns, standardColumns]);
+
+    const togglePinnedColumn = useCallback((columnName: string) => {
+        if (rowIdentityEnabled && columnName === 'id') {
+            return;
+        }
+        setPinnedColumns((prev: any) => {
+            const nextSet = new Set(prev);
+            if (nextSet.has(columnName)) {
+                nextSet.delete(columnName);
+            } else {
+                nextSet.add(columnName);
+            }
+            const next = Array.from(nextSet) as string[];
+            savePinnedColumns(next);
+            return next;
+        });
+        setHiddenColumns((prev: any) => {
+            if (!prev.includes(columnName)) {
+                return prev;
+            }
+            const next = prev.filter((name: string) => name !== columnName);
+            saveHiddenColumns(next);
+            return next;
+        });
+    }, [rowIdentityEnabled, saveHiddenColumns, savePinnedColumns]);
 
     return (
         <div className="flex flex-col h-full w-full max-w-full overflow-hidden text-zinc-400 font-sans animate-in fade-in duration-500">
@@ -1358,6 +1470,11 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                     >
                         <ArrowUpDown size={14} />
                         Sort
+                        {sorts.length > 0 && (
+                            <span className="rounded-full border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[9px] tracking-[0.15em] text-primary">
+                                {sorts.length}
+                            </span>
+                        )}
                     </button>
                     <div className="relative">
                         <button
@@ -1374,104 +1491,28 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                                 {visibleColumnCount}/{totalColumnCount}
                             </span>
                         </button>
-
-                        {isColumnsPanelOpen && (
-                            <>
-                                <div
-                                    className="fixed inset-0 z-40 outline-none"
-                                    onClick={() => setIsColumnsPanelOpen(false)}
-                                />
-                                <div className="absolute top-full left-0 mt-2 z-50 w-[320px] overflow-hidden ozy-floating-panel">
-                                    <div className="border-b border-[#2e2e2e] px-4 py-3">
-                                        <div className="flex items-center justify-between gap-3">
-                                            <div>
-                                                <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Visible Columns</p>
-                                                <p className="mt-1 text-[11px] text-zinc-400">
-                                                    {visibleColumnCount} of {totalColumnCount} visible
-                                                    {hiddenColumnCount > 0 ? ` · ${hiddenColumnCount} hidden` : ''}
-                                                </p>
-                                            </div>
-                                            <button
-                                                onClick={() => {
-                                                    setIsColumnsPanelOpen(false);
-                                                    setIsColumnModalOpen(true);
-                                                }}
-                                                className="rounded-lg border border-[#2e2e2e] px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-zinc-300 hover:border-primary/30 hover:text-primary transition-colors"
-                                            >
-                                                Add Column
-                                            </button>
-                                        </div>
-                                        <div className="relative mt-3">
-                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600" size={13} />
-                                            <input
-                                                type="text"
-                                                value={columnSearchTerm}
-                                                onChange={(e: any) => setColumnSearchTerm(e.target.value)}
-                                                placeholder="Find column..."
-                                                className="w-full rounded-lg border border-[#2e2e2e] bg-[#101010] py-2 pl-8 pr-3 text-[11px] text-zinc-200 placeholder:text-zinc-700 focus:border-primary/30 focus:outline-none"
-                                            />
-                                        </div>
-                                    </div>
-
-                                    <div className="flex items-center gap-2 border-b border-[#2e2e2e] px-4 py-3 text-[10px] font-black uppercase tracking-widest">
-                                        <button
-                                            onClick={showAllColumns}
-                                            className="rounded-lg border border-[#2e2e2e] px-3 py-1.5 text-zinc-300 hover:text-white hover:border-zinc-500 transition-colors"
-                                        >
-                                            Show All
-                                        </button>
-                                        <button
-                                            onClick={resetColumnLayout}
-                                            className="rounded-lg border border-[#2e2e2e] px-3 py-1.5 text-zinc-500 hover:text-zinc-200 hover:border-zinc-500 transition-colors"
-                                        >
-                                            Reset Widths
-                                        </button>
-                                    </div>
-
-                                    <div className="max-h-80 overflow-y-auto custom-scrollbar p-2">
-                                        {filteredColumnOptions.length === 0 ? (
-                                            <div className="px-3 py-6 text-center text-[11px] text-zinc-600">
-                                                No columns match this filter.
-                                            </div>
-                                        ) : (
-                                            filteredColumnOptions.map((col: any) => {
-                                                const isPinnedIdentityColumn = rowIdentityEnabled && col.name === 'id';
-                                                const checked = isPinnedIdentityColumn || !hiddenColumnSet.has(col.name);
-
-                                                return (
-                                                    <label
-                                                        key={col.name}
-                                                        className={`flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2 transition-colors ${
-                                                            checked ? 'bg-[#141414] text-zinc-200' : 'text-zinc-500 hover:bg-[#121212] hover:text-zinc-300'
-                                                        }`}
-                                                    >
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={checked}
-                                                            disabled={isPinnedIdentityColumn}
-                                                            onChange={() => toggleColumnVisibility(col.name)}
-                                                            className="rounded border-border bg-transparent accent-primary"
-                                                        />
-                                                        <div className="flex min-w-0 flex-1 items-center gap-2">
-                                                            {getTypeIcon(col.type)}
-                                                            <div className="min-w-0">
-                                                                <div className="truncate text-[11px] font-bold">{col.name}</div>
-                                                                <div className="truncate text-[9px] uppercase tracking-widest text-zinc-600">{col.type || 'text'}</div>
-                                                            </div>
-                                                        </div>
-                                                        {isPinnedIdentityColumn && (
-                                                            <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-1 text-[8px] font-black uppercase tracking-[0.2em] text-primary">
-                                                                Pinned
-                                                            </span>
-                                                        )}
-                                                    </label>
-                                                );
-                                            })
-                                        )}
-                                    </div>
-                                </div>
-                            </>
-                        )}
+                        <TableEditorColumnsPanel
+                            isOpen={isColumnsPanelOpen}
+                            onClose={() => setIsColumnsPanelOpen(false)}
+                            visibleColumnCount={visibleColumnCount}
+                            totalColumnCount={totalColumnCount}
+                            hiddenColumnCount={hiddenColumnCount}
+                            columnSearchTerm={columnSearchTerm}
+                            setColumnSearchTerm={setColumnSearchTerm}
+                            filteredColumnOptions={filteredColumnOptions}
+                            rowIdentityEnabled={rowIdentityEnabled}
+                            hiddenColumnSet={hiddenColumnSet}
+                            pinnedColumnSet={pinnedColumnSet}
+                            getTypeIcon={getTypeIcon}
+                            showAllColumns={showAllColumns}
+                            resetColumnLayout={resetColumnLayout}
+                            toggleColumnVisibility={toggleColumnVisibility}
+                            togglePinnedColumn={togglePinnedColumn}
+                            openAddColumn={() => {
+                                setIsColumnsPanelOpen(false);
+                                setIsColumnModalOpen(true);
+                            }}
+                        />
                     </div>
 
                     <div className="h-4 w-[1px] bg-[#2e2e2e] mx-2" />
@@ -1520,48 +1561,16 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                 </div>
             )}
 
-            {(hiddenColumnCount > 0 || filters.length > 0 || sorts.length > 0 || selectedCount > 0 || searchTerm.trim() !== '' || !!activeViewId) && (
-                <div className="border-b border-[#2e2e2e] bg-[#121212] px-4 py-2 sm:px-6">
-                    <div className="flex flex-wrap items-center gap-2 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">
-                        {activeViewId && (
-                            <span className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-primary">
-                                saved view active
-                            </span>
-                        )}
-                        {searchTerm.trim() !== '' && (
-                            <span className="rounded-full border border-[#2e2e2e] bg-[#171717] px-3 py-1 text-zinc-300">
-                                search: {searchTerm.trim()}
-                            </span>
-                        )}
-                        {hiddenColumnCount > 0 && (
-                            <span className="rounded-full border border-[#2e2e2e] bg-[#171717] px-3 py-1 text-zinc-300">
-                                {hiddenColumnCount} hidden columns
-                            </span>
-                        )}
-                        {filters.length > 0 && (
-                            <span className="rounded-full border border-[#2e2e2e] bg-[#171717] px-3 py-1 text-zinc-300">
-                                {filters.length} active filters
-                            </span>
-                        )}
-                        {sorts.length > 0 && (
-                            <span className="rounded-full border border-[#2e2e2e] bg-[#171717] px-3 py-1 text-zinc-300">
-                                {sorts.length} active sorts
-                            </span>
-                        )}
-                        {selectedCount > 0 && (
-                            <span className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-primary">
-                                {selectedCount} selected rows
-                            </span>
-                        )}
-                        <button
-                            onClick={resetDataView}
-                            className="rounded-full border border-[#2e2e2e] bg-[#171717] px-3 py-1 text-zinc-300 transition-colors hover:text-white hover:border-zinc-500"
-                        >
-                            reset view
-                        </button>
-                    </div>
-                </div>
-            )}
+            <TableEditorStateBar
+                activeViewId={activeViewId}
+                searchTerm={searchTerm}
+                hiddenColumnCount={hiddenColumnCount}
+                pinnedColumnNames={frozenColumnNames}
+                filtersCount={filters.length}
+                sorts={sorts}
+                selectedCount={selectedCount}
+                onReset={resetDataView}
+            />
 
             {/* Filter Panel */}
             {isFilterOpen && (
@@ -1658,8 +1667,9 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                         <div className="text-[10px] text-zinc-600">No sorting applied.</div>
                     )}
                     {sorts.map((s: any) => (
-                        <div key={s.id} className="grid grid-cols-[1fr_140px_28px] gap-2 items-center">
+                        <div key={s.id} data-testid={`sort-row-${s.id}`} className="grid grid-cols-[1fr_140px_28px] gap-2 items-center">
                             <select
+                                data-testid={`sort-column-${s.id}`}
                                 value={s.column}
                                 onChange={(e: any) => {
                                     const value = e.target.value;
@@ -1673,6 +1683,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                                 ))}
                             </select>
                             <select
+                                data-testid={`sort-direction-${s.id}`}
                                 value={s.direction}
                                 onChange={(e: any) => {
                                     const value = e.target.value;
@@ -1764,15 +1775,17 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                         {visibleColumns.map((col: any) => {
                             const width = getColumnWidth(col.name, col.type);
                             const isResizingColumn = resizingColumn === col.name;
-                            const isPinnedIdentityColumn = rowIdentityEnabled && col.name === 'id';
+                            const isPinnedColumn = pinnedOffsets[col.name] !== undefined;
 
                             return (
                                 <div
                                     key={col.name}
-                                    className={`relative flex items-center shrink-0 ${isPinnedIdentityColumn ? 'sticky z-20 bg-[#111111] border-r border-[#2e2e2e]/60 shadow-[10px_0_16px_-14px_rgba(0,0,0,0.85)]' : ''}`}
+                                    data-testid={`table-header-${col.name}`}
+                                    data-column-name={col.name}
+                                    className={`relative flex items-center shrink-0 ${isPinnedColumn ? 'sticky z-20 bg-[#111111] border-r border-[#2e2e2e]/60 shadow-[10px_0_16px_-14px_rgba(0,0,0,0.85)]' : ''}`}
                                     style={{
                                         width: `${width}px`,
-                                        ...(isPinnedIdentityColumn ? { left: `${selectionColumnWidth}px` } : {})
+                                        ...(isPinnedColumn ? { left: `${pinnedOffsets[col.name]}px` } : {})
                                     }}
                                 >
                                     <div className="flex-1 px-4 py-3 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-600 overflow-hidden">
@@ -1782,6 +1795,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
 
                                     {/* Resize Handle */}
                                     <div
+                                        data-testid={`table-resize-${col.name}`}
                                         onMouseDown={(e: any) => handleResizeStart(e, col.name)}
                                         className={`absolute right-0 top-0 bottom-0 w-1 cursor-col-resize group/resize flex items-center justify-center
                                             ${isResizingColumn ? 'bg-primary' : 'hover:bg-primary/50'} transition-colors`}
@@ -1805,6 +1819,9 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                     <div className="divide-y divide-[#2e2e2e]/50 font-mono">
                         {loading && data.length === 0 ? (
                             <div className="space-y-0">
+                                <div className="border-b border-[#2e2e2e]/60 bg-[#111111] px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">
+                                    loading rows {pageStartRecord}-{Math.max(pageStartRecord, pageEndRecord)}
+                                </div>
                                 {[...Array(10)].map((_: any, i: any) => (
                                     <SkeletonRow
                                         key={i}
@@ -1829,13 +1846,40 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                             </div>
                         ) : data.length === 0 ? (
                             <div className="py-40 text-center">
-                                <div className="max-w-xs mx-auto space-y-6">
+                                <div className="max-w-sm mx-auto space-y-6">
                                     <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-[#2e2e2e] flex items-center justify-center mx-auto text-zinc-700 shadow-xl">
                                         <Database size={32} strokeWidth={1.5} />
                                     </div>
                                     <div className="space-y-2">
-                                        <h4 className="text-zinc-300 font-bold text-sm uppercase tracking-widest">No records found</h4>
-                                        <p className="text-zinc-600 text-xs tracking-tight">Try adjusting your search or add your first row.</p>
+                                        <h4 className="text-zinc-300 font-bold text-sm uppercase tracking-widest">
+                                            {hasQueryModifiers ? 'No rows match this view' : 'No records yet'}
+                                        </h4>
+                                        <p className="text-zinc-600 text-xs tracking-tight">
+                                            {hasQueryModifiers
+                                                ? 'Reset filters, search or sort rules to inspect the full dataset again.'
+                                                : 'Insert the first record or import a CSV to start shaping this table.'}
+                                        </p>
+                                    </div>
+                                    <div className="flex flex-wrap items-center justify-center gap-2">
+                                        {hasQueryModifiers && (
+                                            <button
+                                                onClick={resetDataView}
+                                                className="rounded-full border border-[#2e2e2e] bg-[#161616] px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-300 transition-colors hover:border-zinc-500 hover:text-white"
+                                            >
+                                                Reset View
+                                            </button>
+                                        )}
+                                        {rowIdentityEnabled && (
+                                            <button
+                                                onClick={() => {
+                                                    setEditingRow(null);
+                                                    setIsModalOpen(true);
+                                                }}
+                                                className="rounded-full border border-primary/20 bg-primary/10 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-primary transition-colors hover:border-primary/40 hover:bg-primary/15"
+                                            >
+                                                Insert Row
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -1873,7 +1917,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                                                 const width = getColumnWidth(col.name, col.type);
                                                 const isCellEditing = isEditing && editingCell?.colName === col.name;
                                                 const isEditable = rowIdentityEnabled && col.name !== 'id' && col.name !== 'created_at';
-                                                const isPinnedIdentityColumn = rowIdentityEnabled && col.name === 'id';
+                                                const isPinnedColumn = pinnedOffsets[col.name] !== undefined;
 
                                                 return (
                                                     <div
@@ -1882,10 +1926,10 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                                                         className={`px-4 flex items-center text-xs shrink-0 overflow-hidden
                                                             ${isEditable ? 'cursor-cell hover:bg-zinc-800/30' : 'cursor-default'}
                                                             ${isCellEditing ? 'bg-zinc-800/50 ring-1 ring-primary/30' : ''}
-                                                            ${isPinnedIdentityColumn ? 'sticky z-10 bg-[#171717] border-r border-[#2e2e2e]/40 group-hover:bg-zinc-900/30 shadow-[10px_0_16px_-14px_rgba(0,0,0,0.75)]' : ''}`}
+                                                            ${isPinnedColumn ? 'sticky z-10 bg-[#171717] border-r border-[#2e2e2e]/40 group-hover:bg-zinc-900/30 shadow-[10px_0_16px_-14px_rgba(0,0,0,0.75)]' : ''}`}
                                                         style={{
                                                             width: `${width}px`,
-                                                            ...(isPinnedIdentityColumn ? { left: `${selectionColumnWidth}px` } : {})
+                                                            ...(isPinnedColumn ? { left: `${pinnedOffsets[col.name]}px` } : {})
                                                         }}
                                                     >
                                                         <InlineCellEditor
@@ -1937,113 +1981,33 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                 </div>
             </div>
 
-            {/* Table Footer */}
-            <div className="flex flex-col gap-3 border-t border-[#2e2e2e] bg-[#111111] px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] sm:px-6 xl:flex-row xl:items-center xl:justify-between">
-                <div className="flex flex-wrap items-center gap-3 text-zinc-500">
-                    <span className="rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1 text-zinc-300">
-                        {totalRecords} rows
-                    </span>
-                    <span className="rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1 text-zinc-300">
-                        {visibleColumnCount}/{totalColumnCount} cols
-                    </span>
-                    <span className="rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1 text-zinc-300">
-                        {pageStartRecord}-{pageEndRecord}
-                    </span>
-                    <div className="flex items-center gap-1 rounded-full border border-[#2e2e2e] bg-[#161616] px-1 py-1">
-                        {Object.entries(ROW_DENSITY_OPTIONS).map(([key, option]) => (
-                            <button
-                                key={key}
-                                onClick={() => setRowDensity(key)}
-                                className={`rounded-full px-3 py-1 transition-colors ${
-                                    rowDensity === key
-                                        ? 'bg-primary/10 text-primary'
-                                        : 'text-zinc-500 hover:text-zinc-200'
-                                }`}
-                            >
-                                {option.label}
-                            </button>
-                        ))}
-                    </div>
-                    <div className="flex items-center gap-2 rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1">
-                        <div className={`h-1.5 w-1.5 rounded-full ${error ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]' : 'bg-primary shadow-[0_0_6px_rgba(254,254,0,0.4)]'}`} />
-                        <span className={error ? 'text-red-400' : 'text-zinc-300'}>
-                            {error ? 'db issue' : 'live'}
-                        </span>
-                    </div>
-                    {horizontalOverflow.canScrollRight && (
-                        <span className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-primary">
-                            scroll for more columns
-                        </span>
-                    )}
-                </div>
-
-                <div className="flex flex-wrap items-center gap-3 text-zinc-600">
-                    <label className="flex items-center gap-2 rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1.5">
-                        <span>Rows</span>
-                        <select
-                            value={pageSize}
-                            onChange={(e: any) => {
-                                setPageSize(Number(e.target.value));
-                                setCurrentPage(1);
-                            }}
-                            className="bg-transparent text-zinc-200 outline-none"
-                        >
-                            {PAGE_SIZE_OPTIONS.map((size: any) => (
-                                <option key={size} value={size} className="bg-[#111111] text-zinc-200">
-                                    {size}
-                                </option>
-                            ))}
-                        </select>
-                    </label>
-                    <div className="flex items-center gap-2 rounded-full border border-[#2e2e2e] bg-[#161616] px-2 py-1">
-                        <button
-                            disabled={currentPage === 1}
-                            onClick={() => goToPage(currentPage - 1)}
-                            className="rounded-full p-1 hover:text-primary disabled:opacity-30 transition-colors"
-                            aria-label="Previous page"
-                        >
-                            <ChevronLeft size={14} />
-                        </button>
-                        <span className="px-1 text-zinc-300">
-                            page {currentPage} / {totalPages}
-                        </span>
-                        <button
-                            disabled={currentPage >= totalPages}
-                            onClick={() => goToPage(currentPage + 1)}
-                            className="rounded-full p-1 hover:text-primary disabled:opacity-30 transition-colors"
-                            aria-label="Next page"
-                        >
-                            <ChevronRight size={14} />
-                        </button>
-                    </div>
-                    <label className="flex items-center gap-2 rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1.5">
-                        <span>Page</span>
-                        <input
-                            value={pageJumpInput}
-                            onChange={(e: any) => setPageJumpInput(e.target.value.replace(/[^\d]/g, ''))}
-                            onKeyDown={(e: any) => {
-                                if (e.key === 'Enter') {
-                                    goToPage(Number(pageJumpInput || '1'));
-                                }
-                            }}
-                            className="w-14 bg-transparent text-zinc-200 outline-none"
-                        />
-                    </label>
-                    <button
-                        onClick={() => onOpenSqlEditor?.(tableName)}
-                        disabled={!tableName}
-                        className="flex items-center gap-1.5 rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1.5 hover:text-zinc-200 uppercase transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                        <Code2 size={12} /> SQL
-                    </button>
-                    <button
-                        onClick={handleExportCSV}
-                        className="flex items-center gap-1.5 rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1.5 hover:text-zinc-200 uppercase transition-colors"
-                    >
-                        <Download size={12} /> CSV
-                    </button>
-                </div>
-            </div>
+            <TableEditorFooter
+                totalRecords={totalRecords}
+                visibleColumnCount={visibleColumnCount}
+                totalColumnCount={totalColumnCount}
+                pageStartRecord={pageStartRecord}
+                pageEndRecord={pageEndRecord}
+                rowDensity={rowDensity}
+                rowDensityOptions={ROW_DENSITY_OPTIONS}
+                setRowDensity={setRowDensity}
+                error={error}
+                horizontalOverflow={horizontalOverflow}
+                pageSize={pageSize}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                setPageSize={(nextPageSize) => {
+                    setPageSize(nextPageSize);
+                    setCurrentPage(1);
+                }}
+                currentPage={currentPage}
+                totalPages={totalPages}
+                goToPage={goToPage}
+                pageJumpInput={pageJumpInput}
+                setPageJumpInput={setPageJumpInput}
+                onOpenSqlEditor={onOpenSqlEditor}
+                tableName={tableName}
+                onExportCSV={handleExportCSV}
+                pinnedColumnNames={frozenColumnNames}
+            />
 
             <AddRowModal
                 isOpen={isModalOpen}

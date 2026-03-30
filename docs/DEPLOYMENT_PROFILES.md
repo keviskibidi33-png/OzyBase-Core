@@ -1,6 +1,6 @@
 # OzyBase Deployment Profiles
 
-This document maps the three supported release tracks to the runtime profile, branch, and deployment surface.
+This document maps the public release tracks to the runtime profile, branch, and deployment surface.
 
 ## Profiles
 
@@ -16,11 +16,11 @@ This document maps the three supported release tracks to the runtime profile, br
 - Primary path: `docker-compose.install.yml` or `docker-compose.coolify.yml`
 - Best for: Coolify, simple VPS deployments, and low-friction installs
 
-### 3. `azure-cloud`
-- Branch: `azure-cloud`
-- Runtime profile: `OZY_DEPLOYMENT_PROFILE=azure_cloud`
-- Primary path: Azure Container Apps + Azure Database for PostgreSQL Flexible Server + Key Vault
-- Best for: managed cloud production with secret rotation, pooled connections, and platform telemetry
+### 3. Private Cloud
+- Branch: not published in this repo
+- Runtime profile: `OZY_DEPLOYMENT_PROFILE=custom`
+- Primary path: private IaC/ops repository
+- Best for: managed cloud production that is maintained separately from the public codebase
 
 ## Files Per Profile
 
@@ -28,13 +28,13 @@ This document maps the three supported release tracks to the runtime profile, br
 | --- | --- |
 | `self-host` | `docker-compose.yml`, `deploy/profiles/self-host/.env.example` |
 | `install-to-play` | `docker-compose.install.yml`, `docker-compose.coolify.yml`, `deploy/profiles/install-to-play/.env.example` |
-| `azure-cloud` | `deploy/azure/main.bicep`, `deploy/azure/main.parameters.example.json`, `deploy/profiles/azure-cloud/.env.example` |
+| `private-cloud` | maintained outside this public repository |
 
 ## Branch Discipline
 
 - `main` remains the integration trunk.
-- `self-host`, `install-to-play`, and `azure-cloud` are release tracks that fast-forward from `main`.
-- Profile-specific docs, examples, and IaC live on all tracks, but each branch can pin its own defaults, examples, and release notes.
+- `self-host` and `install-to-play` are public release tracks that fast-forward from `main`.
+- Cloud-specific IaC, secrets strategy, and managed-runtime notes should live in a private ops repository.
 
 ## Runtime Signal
 

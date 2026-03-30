@@ -60,7 +60,7 @@ interface ConnectionInfo {
 const formatDeploymentProfile = (profile?: string) => {
   switch (profile) {
     case "azure_cloud":
-      return "Azure Cloud";
+      return "Private Cloud";
     case "install_to_play":
       return "Install to Play";
     case "custom":
@@ -325,8 +325,8 @@ const Settings: React.FC<SettingsProps> = ({
                   active: projectInfo?.production?.profile === "install_to_play",
                 },
                 {
-                  label: "Azure Cloud",
-                  detail: "Container Apps + Flexible Server + Key Vault + PgBouncer.",
+                  label: "Private Cloud",
+                  detail: "Managed cloud profile maintained outside this public repo.",
                   active: projectInfo?.production?.profile === "azure_cloud",
                 },
               ].map((item) => (
