@@ -420,7 +420,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 	twoFactorService := core.NewTwoFactorService(h.DB)
 	twoFactorHandler := api.NewTwoFactorHandler(twoFactorService, authService)
 	realtimeHandler := api.NewRealtimeHandler(h.Broker)
-	fileHandler := api.NewFileHandler(h.DB, "./data/storage")
+	fileHandler := api.NewFileHandler(h.DB, h.Storage, cfg.StoragePath)
 	functionsHandler := api.NewFunctionsHandler(h.DB, "./functions")
 	webhookHandler := api.NewWebhookHandler(h.DB)
 	cronHandler := api.NewCronHandler(h.DB, cronMgr)
@@ -514,11 +514,15 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.POST("/functions/:name/invoke", functionsHandler.Invoke)
 
 		// Files
-		apiGroup.POST("/files", fileHandler.Upload, authRequired)
-		apiGroup.GET("/files", fileHandler.List, authRequired)
 		apiGroup.GET("/files/buckets", fileHandler.ListBuckets, authRequired)
-		apiGroup.POST("/files/buckets", fileHandler.CreateBucket, authRequired)
-		e.Static("/api/files", "./data/storage")
+		apiGroup.GET("/files/buckets/:name", fileHandler.GetBucket, authRequired)
+		apiGroup.POST("/files/buckets", fileHandler.CreateBucket, authRequired, adminOnly)
+		apiGroup.PATCH("/files/buckets/:name", fileHandler.UpdateBucket, authRequired, adminOnly)
+		apiGroup.DELETE("/files/buckets/:name", fileHandler.DeleteBucket, authRequired, adminOnly)
+		apiGroup.POST("/files", fileHandler.Upload, authRequired)
+		apiGroup.GET("/files", fileHandler.List, authOptional)
+		apiGroup.GET("/files/:bucket/*", fileHandler.Download, authOptional)
+		apiGroup.DELETE("/files/:bucket/*", fileHandler.DeleteObject, authRequired)
 
 		// Collections
 		collectionsGroup := apiGroup.Group("/collections", authRequired)

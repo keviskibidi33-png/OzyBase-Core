@@ -1,432 +1,439 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import {
-    FolderOpen,
-    Plus,
-    Search,
-    HardDrive,
-    Shield,
+    Download,
     FileIcon,
+    FolderOpen,
+    Globe,
+    HardDrive,
     Image as ImageIcon,
-    Video,
-    Lock,
-    Settings,
-    MoreHorizontal,
     LayoutGrid,
-    List
+    List,
+    Lock,
+    Plus,
+    RefreshCw,
+    Search,
+    Settings,
+    Shield,
+    Trash2,
+    Upload,
 } from 'lucide-react';
+
+import ConfirmModal from './ConfirmModal';
 import { BrandedToast } from './OverlayPrimitives';
+import { fetchWithAuth } from '../utils/api';
+
+type ToastTone = 'success' | 'error' | 'warning' | 'info';
+type BucketDialogMode = 'create' | 'edit';
+
+interface StorageManagerProps {
+    view?: 'buckets' | 'policies' | 'usage' | 'settings';
+}
+
+interface StorageBucket {
+    id: string;
+    name: string;
+    public: boolean;
+    rls_enabled: boolean;
+    rls_rule: string;
+    created_at?: string;
+    object_count: number;
+    total_size: number;
+}
+
+interface StorageObject {
+    id: string;
+    name: string;
+    size: number;
+    content_type: string;
+    path: string;
+    download_url: string;
+    storage_key: string;
+    created_at?: string;
+}
+
+interface BucketFormState {
+    name: string;
+    isPublic: boolean;
+    isRLS: boolean;
+    rlsRule: string;
+}
 
 const DEFAULT_RLS_RULE = "auth.uid() = owner_id";
+const EMPTY_BUCKET_FORM: BucketFormState = { name: '', isPublic: false, isRLS: false, rlsRule: DEFAULT_RLS_RULE };
 
-const StorageManager = () => {
-    const [viewMode, setViewMode] = useState('grid');
-    const [files, setFiles] = useState<any[]>([]);
-    const [buckets, setBuckets] = useState<any[]>([]);
-    const [selectedBucket, setSelectedBucket] = useState('default');
-    const [loading, setLoading] = useState(true);
-    const fileInputRef = React.useRef<HTMLInputElement | null>(null);
-    const [isCreateBucketOpen, setIsCreateBucketOpen] = useState(false);
+const formatSize = (bytes: number): string => {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+    const value = bytes / 1024 ** index;
+    return `${value.toFixed(value >= 100 || index === 0 ? 0 : 1)} ${units[index]}`;
+};
+
+const formatDate = (value?: string): string => {
+    if (!value) return 'Recently';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'Recently';
+    return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(date);
+};
+
+const extractError = async (response: Response, fallback: string): Promise<string> => {
+    const payload = await response.json().catch(() => null) as { error?: string } | null;
+    return payload?.error || fallback;
+};
+
+const StorageManager = (_props: StorageManagerProps) => {
+    const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+    const [searchQuery, setSearchQuery] = useState('');
+    const deferredSearch = useDeferredValue(searchQuery);
+    const [files, setFiles] = useState<StorageObject[]>([]);
+    const [buckets, setBuckets] = useState<StorageBucket[]>([]);
+    const [selectedBucketName, setSelectedBucketName] = useState('default');
+    const [loadingBuckets, setLoadingBuckets] = useState(true);
+    const [loadingFiles, setLoadingFiles] = useState(true);
+    const [bucketDialogMode, setBucketDialogMode] = useState<BucketDialogMode | null>(null);
+    const [bucketForm, setBucketForm] = useState<BucketFormState>(EMPTY_BUCKET_FORM);
     const [isSavingBucket, setIsSavingBucket] = useState(false);
-    const [bucketForm, setBucketForm] = useState({
-        name: '',
-        isPublic: false,
-        isRLS: false,
-        rlsRule: DEFAULT_RLS_RULE,
-    });
-    const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+    const [bucketPendingDelete, setBucketPendingDelete] = useState<StorageBucket | null>(null);
+    const [filePendingDelete, setFilePendingDelete] = useState<StorageObject | null>(null);
+    const [isDeletingBucket, setIsDeletingBucket] = useState(false);
+    const [isDeletingFile, setIsDeletingFile] = useState(false);
+    const [toast, setToast] = useState<{ message: string; type: ToastTone } | null>(null);
+    const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
-    const fetchBuckets = useCallback(async () => {
-        try {
-            const token = localStorage.getItem('ozy_token');
-            const res = await fetch('/api/files/buckets', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            const data = await res.json();
-            if (Array.isArray(data)) {
-                setBuckets(data);
-                // If current selected bucket not in list (and not 'default'), select first
-                if (data.length > 0 && !data.find((b: any) => b.name === selectedBucket)) {
-                    // But we keep default if it's there
-                }
-            }
-        } catch (error) {
-            console.error('Failed to fetch buckets:', error);
-        }
-    }, [selectedBucket]);
+    const showToast = useCallback((message: string, type: ToastTone) => setToast({ message, type }), []);
 
-    const fetchFiles = useCallback(async () => {
-        setLoading(true);
+    const fetchBuckets = useCallback(async (preferredBucket?: string) => {
+        setLoadingBuckets(true);
         try {
-            const token = localStorage.getItem('ozy_token');
-            const res = await fetch(`/api/files?bucket=${selectedBucket}`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
+            const response = await fetchWithAuth('/api/files/buckets');
+            if (!response.ok) throw new Error(await extractError(response, 'Failed to load buckets'));
+            const payload = await response.json().catch(() => []) as StorageBucket[];
+            const safeBuckets = Array.isArray(payload) ? payload : [];
+            setBuckets(safeBuckets);
+            setSelectedBucketName((current) => {
+                const desired = preferredBucket ?? current;
+                return safeBuckets.some((bucket) => bucket.name === desired) ? desired : safeBuckets[0]?.name ?? 'default';
             });
-            const data = await res.json();
-            if (Array.isArray(data)) {
-                setFiles(data);
-            }
         } catch (error) {
-            console.error('Failed to fetch files:', error);
+            console.error(error);
+            showToast(error instanceof Error ? error.message : 'Failed to load buckets', 'error');
         } finally {
-            setLoading(false);
+            setLoadingBuckets(false);
         }
-    }, [selectedBucket]);
+    }, [showToast]);
 
-    useEffect(() => {
-        fetchBuckets();
-    }, [fetchBuckets]);
-
-    useEffect(() => {
-        fetchFiles();
-    }, [fetchFiles]);
-
-    const createBucket = async () => {
-        if (!bucketForm.name.trim()) {
-            setToast({ message: 'Bucket name is required', type: 'error' });
-            return;
+    const fetchFiles = useCallback(async (bucketName: string) => {
+        setLoadingFiles(true);
+        try {
+            const response = await fetchWithAuth(`/api/files?bucket=${encodeURIComponent(bucketName)}`);
+            if (!response.ok) throw new Error(await extractError(response, 'Failed to load objects'));
+            const payload = await response.json().catch(() => []) as StorageObject[];
+            setFiles(Array.isArray(payload) ? payload : []);
+        } catch (error) {
+            console.error(error);
+            setFiles([]);
+            showToast(error instanceof Error ? error.message : 'Failed to load objects', 'error');
+        } finally {
+            setLoadingFiles(false);
         }
+    }, [showToast]);
+
+    useEffect(() => { void fetchBuckets(); }, [fetchBuckets]);
+    useEffect(() => { void fetchFiles(selectedBucketName); }, [fetchFiles, selectedBucketName]);
+
+    const selectedBucket = useMemo<StorageBucket>(() => (
+        buckets.find((bucket) => bucket.name === selectedBucketName) ?? {
+            id: 'default',
+            name: selectedBucketName || 'default',
+            public: true,
+            rls_enabled: false,
+            rls_rule: 'true',
+            object_count: files.length,
+            total_size: files.reduce((sum, file) => sum + file.size, 0),
+        }
+    ), [buckets, files, selectedBucketName]);
+
+    const filteredFiles = useMemo(() => {
+        const term = deferredSearch.trim().toLowerCase();
+        if (!term) return files;
+        return files.filter((file) => file.name.toLowerCase().includes(term) || file.content_type.toLowerCase().includes(term));
+    }, [deferredSearch, files]);
+
+    const openBucketDialog = (mode: BucketDialogMode) => {
+        setBucketDialogMode(mode);
+        setBucketForm(mode === 'edit'
+            ? { name: selectedBucket.name, isPublic: selectedBucket.public, isRLS: selectedBucket.rls_enabled, rlsRule: selectedBucket.rls_rule || DEFAULT_RLS_RULE }
+            : EMPTY_BUCKET_FORM);
+    };
+
+    const closeBucketDialog = () => {
+        if (isSavingBucket) return;
+        setBucketDialogMode(null);
+        setBucketForm(EMPTY_BUCKET_FORM);
+    };
+
+    const handleBucketSave = async () => {
+        const trimmedName = bucketForm.name.trim().toLowerCase();
+        if (!trimmedName) return showToast('Bucket name is required', 'error');
 
         setIsSavingBucket(true);
         try {
-            const token = localStorage.getItem('ozy_token');
-            const res = await fetch('/api/files/buckets', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
+            const isEdit = bucketDialogMode === 'edit';
+            const response = await fetchWithAuth(isEdit
+                ? `/api/files/buckets/${encodeURIComponent(selectedBucket.name)}`
+                : '/api/files/buckets', {
+                method: isEdit ? 'PATCH' : 'POST',
                 body: JSON.stringify({
-                    name: bucketForm.name.trim(),
+                    name: trimmedName,
                     public: bucketForm.isPublic,
                     rls_enabled: bucketForm.isRLS,
-                    rls_rule: bucketForm.isRLS ? bucketForm.rlsRule || DEFAULT_RLS_RULE : DEFAULT_RLS_RULE
-                })
+                    rls_rule: bucketForm.isRLS ? bucketForm.rlsRule.trim() || DEFAULT_RLS_RULE : 'true',
+                }),
             });
-
-            if (res.ok) {
-                setIsCreateBucketOpen(false);
-                setBucketForm({ name: '', isPublic: false, isRLS: false, rlsRule: DEFAULT_RLS_RULE });
-                await fetchBuckets();
-                setToast({ message: 'Bucket created', type: 'success' });
-            } else {
-                setToast({ message: 'Failed to create bucket', type: 'error' });
-            }
+            if (!response.ok) throw new Error(await extractError(response, `Failed to ${isEdit ? 'update' : 'create'} bucket`));
+            const payload = await response.json().catch(() => null) as StorageBucket | null;
+            await fetchBuckets(payload?.name ?? (isEdit ? selectedBucket.name : trimmedName));
+            closeBucketDialog();
+            showToast(isEdit ? 'Bucket updated' : 'Bucket created', 'success');
         } catch (error) {
-            console.error('Failed to create bucket:', error);
-            setToast({ message: 'Failed to create bucket', type: 'error' });
+            console.error(error);
+            showToast(error instanceof Error ? error.message : 'Failed to save bucket', 'error');
         } finally {
             setIsSavingBucket(false);
         }
     };
 
-    const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
+    const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
         if (!file) return;
-
         const formData = new FormData();
         formData.append('file', file);
-
-        setLoading(true);
         try {
-            const token = localStorage.getItem('ozy_token');
-            const res = await fetch(`/api/files?bucket=${selectedBucket}`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                },
-                body: formData
-            });
-
-            if (res.ok) {
-                await fetchFiles();
-                setToast({ message: 'File uploaded', type: 'success' });
-            } else {
-                console.error('Failed to upload file');
-                setToast({ message: 'Failed to upload file', type: 'error' });
-            }
+            const response = await fetchWithAuth(`/api/files?bucket=${encodeURIComponent(selectedBucket.name)}`, { method: 'POST', body: formData });
+            if (!response.ok) throw new Error(await extractError(response, 'Failed to upload file'));
+            await Promise.all([fetchFiles(selectedBucket.name), fetchBuckets(selectedBucket.name)]);
+            showToast('File uploaded', 'success');
         } catch (error) {
-            console.error('Upload error:', error);
-            setToast({ message: 'Upload failed', type: 'error' });
+            console.error(error);
+            showToast(error instanceof Error ? error.message : 'Failed to upload file', 'error');
         } finally {
-            setLoading(false);
+            event.target.value = '';
         }
     };
 
-    const triggerUpload = () => {
-        fileInputRef.current?.click();
+    const handleOpenFile = async (file: StorageObject) => {
+        if (selectedBucket.public && !selectedBucket.rls_enabled) {
+            window.open(file.download_url, '_blank', 'noopener,noreferrer');
+            return;
+        }
+
+        try {
+            const response = await fetchWithAuth(file.download_url);
+            if (!response.ok) throw new Error(await extractError(response, 'Failed to open file'));
+            const blob = await response.blob();
+            const objectUrl = URL.createObjectURL(blob);
+            const popup = window.open(objectUrl, '_blank', 'noopener,noreferrer');
+            if (!popup) {
+                const anchor = document.createElement('a');
+                anchor.href = objectUrl;
+                anchor.download = file.name;
+                anchor.click();
+            }
+            window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+        } catch (error) {
+            console.error(error);
+            showToast(error instanceof Error ? error.message : 'Failed to open file', 'error');
+        }
     };
 
-    const formatSize = (bytes: any) => {
-        if (bytes === 0) return '0 Bytes';
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    const handleDeleteBucket = async () => {
+        if (!bucketPendingDelete) return;
+        setIsDeletingBucket(true);
+        try {
+            const response = await fetchWithAuth(`/api/files/buckets/${encodeURIComponent(bucketPendingDelete.name)}`, { method: 'DELETE' });
+            if (!response.ok) throw new Error(await extractError(response, 'Failed to delete bucket'));
+            setBucketPendingDelete(null);
+            await fetchBuckets('default');
+            showToast('Bucket deleted', 'success');
+        } catch (error) {
+            console.error(error);
+            showToast(error instanceof Error ? error.message : 'Failed to delete bucket', 'error');
+        } finally {
+            setIsDeletingBucket(false);
+        }
+    };
+
+    const handleDeleteFile = async () => {
+        if (!filePendingDelete) return;
+        setIsDeletingFile(true);
+        try {
+            const response = await fetchWithAuth(`/api/files/${encodeURIComponent(selectedBucket.name)}/${encodeURIComponent(filePendingDelete.storage_key)}`, { method: 'DELETE' });
+            if (!response.ok) throw new Error(await extractError(response, 'Failed to delete object'));
+            setFilePendingDelete(null);
+            await Promise.all([fetchFiles(selectedBucket.name), fetchBuckets(selectedBucket.name)]);
+            showToast('Object deleted', 'success');
+        } catch (error) {
+            console.error(error);
+            showToast(error instanceof Error ? error.message : 'Failed to delete object', 'error');
+        } finally {
+            setIsDeletingFile(false);
+        }
     };
 
     return (
-        <div className="flex h-full bg-[#171717] animate-in fade-in duration-500 overflow-hidden">
-            {/* Sidebar for Buckets */}
-            <div className="w-64 border-r border-[#2e2e2e] bg-[#0c0c0c] flex flex-col p-6">
-                <div className="flex items-center justify-between mb-8">
-                    <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Buckets</h3>
-                    <button
-                        onClick={() => setIsCreateBucketOpen(true)}
-                        aria-label="Create bucket"
-                        title="Create bucket"
-                        className="text-zinc-600 hover:text-primary"
-                    >
-                        <Plus size={14} />
+        <div className="flex h-full overflow-hidden bg-[#171717]">
+            <div className="flex w-72 flex-col border-r border-[#2e2e2e] bg-[#0c0c0c] p-6">
+                <div className="mb-8 flex items-center justify-between">
+                    <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Buckets</p>
+                        <p className="mt-2 text-xs text-zinc-600">Create, inspect and manage storage namespaces.</p>
+                    </div>
+                    <button type="button" onClick={() => openBucketDialog('create')} className="rounded-xl border border-primary/20 bg-primary/10 p-2 text-primary transition-colors hover:bg-primary/15">
+                        <Plus size={16} />
                     </button>
                 </div>
-                <div className="space-y-2">
-                    {[{ name: 'default', public: true }, ...buckets.filter((b: any) => b.name !== 'default')].map((b: any) => (
-                        <button
-                            key={b.name}
-                            onClick={() => setSelectedBucket(b.name)}
-                            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-xs font-bold transition-all ${selectedBucket === b.name
-                                ? 'bg-primary/10 text-primary border border-primary/20'
-                                : 'text-zinc-500 hover:bg-zinc-900 border border-transparent'
-                                }`}
-                        >
-                            <div className="flex items-center gap-3">
-                                <HardDrive size={16} className={selectedBucket === b.name ? 'text-primary' : 'text-zinc-700'} />
-                                {b.name}
+                <div className="space-y-2 overflow-y-auto pr-1 custom-scrollbar">
+                    {loadingBuckets ? <div className="rounded-3xl border border-[#202020] bg-[#111111] p-5 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-600">Syncing buckets...</div> : buckets.map((bucket) => (
+                        <button key={bucket.id} type="button" onClick={() => setSelectedBucketName(bucket.name)} className={`w-full rounded-[24px] border p-4 text-left transition-all ${selectedBucketName === bucket.name ? 'border-primary/20 bg-primary/10' : 'border-transparent bg-[#111111] hover:border-[#2e2e2e]'}`}>
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="flex min-w-0 items-start gap-3">
+                                    <div className={`mt-0.5 flex h-11 w-11 items-center justify-center rounded-2xl border ${selectedBucketName === bucket.name ? 'border-primary/20 bg-primary/10 text-primary' : 'border-zinc-800 bg-[#0c0c0c] text-zinc-500'}`}>
+                                        <HardDrive size={18} />
+                                    </div>
+                                    <div className="min-w-0">
+                                        <p className="truncate text-sm font-black text-white">{bucket.name}</p>
+                                        <p className="mt-1 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">{bucket.public ? 'Public' : 'Private'} · {bucket.object_count} objects</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2 text-zinc-500">{bucket.public ? <Globe size={13} /> : <Lock size={13} />}{bucket.rls_enabled ? <Shield size={13} className="text-primary" /> : null}</div>
                             </div>
-                            {b.public ? <Settings size={12} className="opacity-40" /> : <Lock size={12} className="opacity-40" />}
+                            <div className="mt-4 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-600">{formatSize(bucket.total_size)}</div>
                         </button>
                     ))}
                 </div>
             </div>
 
-            <div className="flex-1 flex flex-col overflow-hidden">
-                {/* Header Controls */}
-                <div className="px-8 py-10 border-b border-[#2e2e2e] bg-[#1a1a1a]">
-                    <div className="flex items-center justify-between mb-10">
-                        <div className="flex items-center gap-6">
-                            <div className="w-14 h-14 bg-primary/10 rounded-2xl flex items-center justify-center border border-primary/20">
-                                <FolderOpen className="text-primary" size={28} />
-                            </div>
+            <div className="flex flex-1 flex-col overflow-hidden">
+                <div className="border-b border-[#2e2e2e] bg-[#171717] px-8 py-8">
+                    <div className="flex flex-wrap items-start justify-between gap-6">
+                        <div className="flex items-start gap-5">
+                            <div className="flex h-16 w-16 items-center justify-center rounded-[24px] border border-primary/20 bg-primary/10 text-primary"><FolderOpen size={30} /></div>
                             <div>
-                                <h1 className="text-3xl font-black text-white uppercase tracking-tighter italic">Storage</h1>
-                                <p className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] mt-1 flex items-center gap-2">
-                                    <Shield size={12} className="text-primary" />
-                                    Object Storage Engine
-                                </p>
+                                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Storage Explorer</p>
+                                <h1 className="mt-2 text-3xl font-black tracking-tight text-white">{selectedBucket.name}</h1>
+                                <p className="mt-2 flex flex-wrap items-center gap-3 text-xs text-zinc-500"><span>{selectedBucket.public ? 'Public bucket' : 'Private bucket'}</span><span>•</span><span>{selectedBucket.rls_enabled ? 'RLS enabled' : 'RLS disabled'}</span><span>•</span><span>{selectedBucket.object_count} objects</span></p>
                             </div>
                         </div>
-                        <div className="flex items-center gap-4">
-                            <button
-                                onClick={fetchFiles}
-                                aria-label="Refresh files"
-                                className="p-3 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-500 hover:text-white transition-all"
-                            >
-                                <Settings size={18} />
-                            </button>
-                            <button
-                                onClick={triggerUpload}
-                                className="flex items-center gap-2 bg-primary text-black px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#E6E600] transition-all shadow-[0_0_25px_rgba(254,254,0,0.15)]"
-                            >
-                                <Plus size={16} strokeWidth={3} />
-                                Upload File
-                            </button>
-                            <input
-                                type="file"
-                                className="hidden"
-                                ref={fileInputRef}
-                                onChange={handleUpload}
-                            />
-                        </div>
-                    </div>
-
-                    <div className="flex items-center justify-between px-2">
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={() => setViewMode('grid')}
-                                className={`p-2 rounded-lg transition-all ${viewMode === 'grid' ? 'bg-primary text-black' : 'text-zinc-600 hover:text-zinc-300'}`}
-                            >
-                                <LayoutGrid size={18} />
-                            </button>
-                            <button
-                                onClick={() => setViewMode('list')}
-                                className={`p-2 rounded-lg transition-all ${viewMode === 'list' ? 'bg-primary text-black' : 'text-zinc-600 hover:text-zinc-300'}`}
-                            >
-                                <List size={18} />
-                            </button>
-                            <div className="h-4 w-[1px] bg-[#2e2e2e] mx-2" />
-                            <div className="relative">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600" size={14} />
-                                <input
-                                    type="text"
-                                    placeholder="Search files..."
-                                    className="bg-transparent border-none text-xs font-bold uppercase tracking-widest text-zinc-300 focus:outline-none w-64 placeholder:text-zinc-700"
-                                />
-                            </div>
-                        </div>
-
-                        <div className="flex items-center gap-8">
-                            <div className="text-right">
-                                <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Total Files</p>
-                                <p className="text-sm font-black text-zinc-200">{files.length} ITEMS</p>
-                            </div>
+                        <div className="flex flex-wrap items-center gap-3">
+                            <button type="button" onClick={() => { void fetchBuckets(selectedBucket.name); void fetchFiles(selectedBucket.name); }} className="inline-flex items-center gap-2 rounded-xl border border-zinc-800 px-4 py-2.5 text-[10px] font-black uppercase tracking-widest text-zinc-300 transition-colors hover:border-primary/30 hover:text-primary"><RefreshCw size={14} />Refresh</button>
+                            <button type="button" onClick={() => openBucketDialog('edit')} className="inline-flex items-center gap-2 rounded-xl border border-zinc-800 px-4 py-2.5 text-[10px] font-black uppercase tracking-widest text-zinc-300 transition-colors hover:border-primary/30 hover:text-primary"><Settings size={14} />Edit bucket</button>
+                            <button type="button" onClick={() => fileInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-[10px] font-black uppercase tracking-widest text-black transition-colors hover:bg-[#E6E600]"><Upload size={14} />Upload file</button>
+                            <input ref={fileInputRef} type="file" className="hidden" onChange={handleUpload} />
                         </div>
                     </div>
                 </div>
-
-                {/* Buckets Explorer */}
-                <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
-                    {loading ? (
-                        <div className="flex flex-col items-center justify-center h-64 gap-4">
-                            <div className="w-10 h-10 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-600">Accessing Storage Nodes...</p>
-                        </div>
-                    ) : files.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-zinc-900 rounded-3xl gap-4">
-                            <FolderOpen size={48} className="text-zinc-800" />
-                            <p className="text-[10px] font-black uppercase tracking-widest text-zinc-600">Storage is empty</p>
-                            <button
-                                onClick={triggerUpload}
-                                className="text-primary text-[10px] font-black uppercase tracking-widest hover:underline"
-                            >
-                                Click to upload
-                            </button>
-                        </div>
-                    ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                            {files.map((f: any, i: any) => (
-                                <div key={i} className="bg-[#111111] border border-[#2e2e2e] rounded-3xl p-6 shadow-2xl hover:border-primary/30 transition-all group relative overflow-hidden">
-                                    <div className="relative z-10">
-                                        <div className="flex items-start justify-between mb-6">
-                                            <div className="p-4 rounded-2xl bg-primary/10 text-primary border border-primary/20">
-                                                {f.name.match(/\.(jpg|jpeg|png|gif|svg)$/i) ? <ImageIcon size={24} /> : <FileIcon size={24} />}
-                                            </div>
-                                            <button className="text-zinc-700 hover:text-zinc-200"><MoreHorizontal size={20} /></button>
-                                        </div>
-                                        <h3 className="text-xl font-black text-white tracking-tighter italic uppercase truncate mb-1" title={f.name}>{f.name.split('_').pop()}</h3>
-                                        <div className="flex items-center gap-3 mb-6">
-                                            <span className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">{formatSize(f.size)}</span>
-                                        </div>
-
-                                        <div className="flex items-center justify-between mt-auto">
-                                            <div className="flex items-center gap-2 px-2 py-0.5 rounded-full bg-zinc-900 border border-zinc-800">
-                                                <Lock size={10} className="text-zinc-600" />
-                                                <span className="text-[8px] font-black uppercase tracking-widest text-zinc-500">
-                                                    Active
-                                                </span>
-                                            </div>
-                                            <a href={f.path} target="_blank" rel="noreferrer" className="text-[10px] font-black uppercase tracking-[0.2em] text-primary hover:underline">View Asset</a>
-                                        </div>
-                                    </div>
-                                    <div className="absolute -right-4 -bottom-4 opacity-[0.03] group-hover:opacity-[0.06] transition-opacity">
-                                        <HardDrive size={120} />
-                                    </div>
-                                </div>
-                            ))}
-
-                            <div
-                                onClick={triggerUpload}
-                                className="border-2 border-dashed border-zinc-900 rounded-3xl p-6 flex flex-col items-center justify-center gap-4 group cursor-pointer hover:border-primary/20 transition-all"
-                            >
-                                <div className="w-12 h-12 rounded-full bg-zinc-900 flex items-center justify-center text-zinc-700 group-hover:text-primary transition-colors">
-                                    <Plus size={24} />
-                                </div>
-                                <span className="text-[10px] font-black uppercase tracking-widest text-zinc-700 group-hover:text-zinc-400">Add asset</span>
+                <div className="grid flex-1 gap-8 overflow-y-auto px-8 py-8 custom-scrollbar xl:grid-cols-[1.25fr_0.75fr]">
+                    <div className="space-y-6">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-[#0c0c0c] px-3 py-2.5">
+                                <Search size={14} className="text-zinc-600" />
+                                <input type="text" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search objects..." className="w-56 bg-transparent text-xs font-bold text-zinc-100 outline-none placeholder:text-zinc-700" />
+                            </div>
+                            <div className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-[#0c0c0c] p-1">
+                                <button type="button" onClick={() => setViewMode('grid')} className={`rounded-lg p-2 transition-colors ${viewMode === 'grid' ? 'bg-primary text-black' : 'text-zinc-600 hover:text-zinc-200'}`}><LayoutGrid size={16} /></button>
+                                <button type="button" onClick={() => setViewMode('list')} className={`rounded-lg p-2 transition-colors ${viewMode === 'list' ? 'bg-primary text-black' : 'text-zinc-600 hover:text-zinc-200'}`}><List size={16} /></button>
                             </div>
                         </div>
-                    )}
+
+                        {loadingFiles ? (
+                            <div className="flex h-72 flex-col items-center justify-center gap-4 rounded-[28px] border border-[#2e2e2e] bg-[#111111]">
+                                <div className="h-10 w-10 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-600">Syncing bucket objects...</p>
+                            </div>
+                        ) : filteredFiles.length === 0 ? (
+                            <div className="flex h-72 flex-col items-center justify-center gap-4 rounded-[28px] border-2 border-dashed border-zinc-900 bg-[#111111]/70">
+                                <FolderOpen size={44} className="text-zinc-800" />
+                                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">This bucket is empty</p>
+                                <button type="button" onClick={() => fileInputRef.current?.click()} className="rounded-xl bg-primary px-5 py-2.5 text-[10px] font-black uppercase tracking-widest text-black transition-colors hover:bg-[#E6E600]">Upload object</button>
+                            </div>
+                        ) : viewMode === 'list' ? (
+                            <div className="overflow-hidden rounded-[28px] border border-[#2e2e2e] bg-[#111111]">
+                                <div className="grid grid-cols-[1.7fr_0.8fr_0.7fr_0.9fr] gap-4 border-b border-[#2e2e2e] px-6 py-4 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500"><span>Object</span><span>Type</span><span>Size</span><span>Actions</span></div>
+                                {filteredFiles.map((file) => (
+                                    <div key={file.id} className="grid grid-cols-[1.7fr_0.8fr_0.7fr_0.9fr] items-center gap-4 border-b border-[#1c1c1c] px-6 py-4 last:border-b-0">
+                                        <div className="flex min-w-0 items-center gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-primary/15 bg-primary/10 text-primary">{file.content_type.startsWith('image/') ? <ImageIcon size={18} /> : <FileIcon size={18} />}</div><div className="min-w-0"><p className="truncate text-sm font-bold text-white">{file.name}</p><p className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-600">{formatDate(file.created_at)}</p></div></div>
+                                        <span className="text-xs text-zinc-400">{file.content_type || 'binary'}</span>
+                                        <span className="text-xs font-bold text-zinc-200">{formatSize(file.size)}</span>
+                                        <div className="flex items-center gap-2">
+                                            <button type="button" onClick={() => void handleOpenFile(file)} className="rounded-xl border border-zinc-800 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-300 transition-colors hover:border-primary/30 hover:text-primary">Open</button>
+                                            <button type="button" onClick={() => setFilePendingDelete(file)} className="rounded-xl border border-red-500/20 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-red-300 transition-colors hover:bg-red-500/10">Delete</button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                                {filteredFiles.map((file) => (
+                                    <div key={file.id} className="rounded-[30px] border border-[#2e2e2e] bg-[#111111] p-6 transition-all hover:border-primary/25">
+                                        <div className="mb-6 flex items-start justify-between gap-4">
+                                            <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">{file.content_type.startsWith('image/') ? <ImageIcon size={22} /> : <FileIcon size={22} />}</div>
+                                            <div className="rounded-full border border-zinc-800 px-3 py-1 text-[9px] font-black uppercase tracking-[0.18em] text-zinc-500">{file.content_type || 'binary'}</div>
+                                        </div>
+                                        <h3 className="truncate text-lg font-black text-white">{file.name}</h3>
+                                        <p className="mt-2 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-600">{formatSize(file.size)} · {formatDate(file.created_at)}</p>
+                                        <div className="mt-8 flex items-center justify-between gap-3">
+                                            <button type="button" onClick={() => void handleOpenFile(file)} className="inline-flex items-center gap-2 rounded-xl border border-zinc-800 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-200 transition-colors hover:border-primary/30 hover:text-primary"><Download size={14} />Open</button>
+                                            <button type="button" onClick={() => setFilePendingDelete(file)} className="inline-flex items-center gap-2 rounded-xl border border-red-500/20 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-red-300 transition-colors hover:bg-red-500/10"><Trash2 size={14} />Delete</button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="space-y-6">
+                        <div className="rounded-[28px] border border-[#2e2e2e] bg-[#111111] p-7">
+                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Bucket Policies</p>
+                            <div className="mt-5 grid gap-4">
+                                <div className="rounded-3xl border border-[#2e2e2e] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Read Access</p><p className="mt-2 text-lg font-black text-white">{selectedBucket.public ? 'Public' : 'Authenticated only'}</p><p className="mt-2 text-sm text-zinc-500">{selectedBucket.public ? 'Anon reads work when RLS does not narrow access.' : 'Objects require a user session or service role key.'}</p></div>
+                                <div className="rounded-3xl border border-[#2e2e2e] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">RLS Rule</p><code className="mt-3 block overflow-x-auto rounded-2xl border border-zinc-800 bg-[#070707] px-4 py-4 text-xs text-primary">{selectedBucket.rls_enabled ? selectedBucket.rls_rule : 'true'}</code></div>
+                            </div>
+                        </div>
+                        <div className="rounded-[28px] border border-[#2e2e2e] bg-[#111111] p-7">
+                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Bucket Health</p>
+                            <div className="mt-5 space-y-4">
+                                <div className="rounded-3xl border border-[#202020] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Objects</p><p className="mt-2 text-2xl font-black text-white">{selectedBucket.object_count}</p></div>
+                                <div className="rounded-3xl border border-[#202020] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Capacity</p><p className="mt-2 text-2xl font-black text-white">{formatSize(selectedBucket.total_size)}</p></div>
+                                <div className="rounded-3xl border border-red-500/20 bg-[linear-gradient(180deg,rgba(127,29,29,0.12),rgba(17,17,17,0.92))] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-red-300/80">Danger Zone</p><p className="mt-2 text-sm text-red-100/75">Delete the entire bucket and every object inside it.</p><button type="button" onClick={() => setBucketPendingDelete(selectedBucket)} disabled={selectedBucket.name === 'default'} className="mt-4 inline-flex items-center gap-2 rounded-xl border border-red-500/30 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-red-100 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40"><Trash2 size={14} />Delete bucket</button></div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            {isCreateBucketOpen && (
+            {bucketDialogMode ? (
                 <div className="fixed inset-0 z-[70] flex items-center justify-center p-6">
-                    <div className="absolute inset-0 ozy-overlay-backdrop backdrop-blur-md" onClick={() => setIsCreateBucketOpen(false)} />
+                    <div className="absolute inset-0 ozy-overlay-backdrop backdrop-blur-md" onClick={closeBucketDialog} />
                     <div className="ozy-dialog-panel relative w-full max-w-lg overflow-hidden">
-                        <div className="flex items-center justify-between border-b border-[#2e2e2e] bg-[#171717] px-8 py-6">
-                            <div>
-                                <h3 className="text-xl font-black uppercase tracking-tight text-white">Create Bucket</h3>
-                                <p className="mt-1 text-[10px] font-black uppercase tracking-widest text-zinc-500">Provision a new storage namespace</p>
-                            </div>
-                            <button onClick={() => setIsCreateBucketOpen(false)} className="text-zinc-500 transition-colors hover:text-white">
-                                <Plus className="rotate-45" size={18} />
-                            </button>
-                        </div>
+                        <div className="flex items-center justify-between border-b border-[#2e2e2e] bg-[#171717] px-8 py-6"><div><h3 className="text-xl font-black tracking-tight text-white">{bucketDialogMode === 'create' ? 'Create bucket' : 'Edit bucket'}</h3><p className="mt-1 text-[10px] font-black uppercase tracking-widest text-zinc-500">{bucketDialogMode === 'create' ? 'Provision a new storage namespace' : 'Adjust visibility and policy enforcement'}</p></div><button type="button" onClick={closeBucketDialog} className="text-zinc-500 transition-colors hover:text-white"><Plus className="rotate-45" size={18} /></button></div>
                         <div className="space-y-5 p-8">
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Bucket Name</label>
-                                <input
-                                    autoFocus
-                                    type="text"
-                                    value={bucketForm.name}
-                                    onChange={(event) => setBucketForm((current) => ({ ...current, name: event.target.value }))}
-                                    placeholder="e.g. customer-assets"
-                                    className="w-full rounded-xl border border-zinc-800 bg-[#0c0c0c] px-4 py-3 text-sm text-white focus:border-primary/50 focus:outline-none"
-                                />
-                            </div>
-
+                            <div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Bucket Name</label><input autoFocus={bucketDialogMode === 'create'} type="text" value={bucketForm.name} onChange={(event) => setBucketForm((current) => ({ ...current, name: event.target.value }))} disabled={bucketDialogMode === 'edit'} className="w-full rounded-xl border border-zinc-800 bg-[#0c0c0c] px-4 py-3 text-sm text-white focus:border-primary/50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60" /></div>
                             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                                <button
-                                    type="button"
-                                    onClick={() => setBucketForm((current) => ({ ...current, isPublic: !current.isPublic }))}
-                                    className={`rounded-2xl border px-4 py-4 text-left transition-all ${bucketForm.isPublic ? 'border-primary/30 bg-primary/10 text-primary' : 'border-zinc-800 bg-zinc-900/40 text-zinc-400'}`}
-                                >
-                                    <p className="text-[10px] font-black uppercase tracking-widest">Public Access</p>
-                                    <p className="mt-2 text-[11px] leading-relaxed text-white/80">Allow direct reads without signing URLs.</p>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setBucketForm((current) => ({ ...current, isRLS: !current.isRLS }))}
-                                    className={`rounded-2xl border px-4 py-4 text-left transition-all ${bucketForm.isRLS ? 'border-primary/30 bg-primary/10 text-primary' : 'border-zinc-800 bg-zinc-900/40 text-zinc-400'}`}
-                                >
-                                    <p className="text-[10px] font-black uppercase tracking-widest">RLS Policy</p>
-                                    <p className="mt-2 text-[11px] leading-relaxed text-white/80">Restrict uploads and reads with SQL policy checks.</p>
-                                </button>
+                                <button type="button" onClick={() => setBucketForm((current) => ({ ...current, isPublic: !current.isPublic }))} className={`rounded-2xl border px-4 py-4 text-left transition-all ${bucketForm.isPublic ? 'border-primary/30 bg-primary/10 text-primary' : 'border-zinc-800 bg-zinc-900/40 text-zinc-400'}`}><p className="text-[10px] font-black uppercase tracking-widest">Public Access</p><p className="mt-2 text-[11px] leading-relaxed text-white/80">Allow anonymous reads when RLS does not narrow access.</p></button>
+                                <button type="button" onClick={() => setBucketForm((current) => ({ ...current, isRLS: !current.isRLS }))} className={`rounded-2xl border px-4 py-4 text-left transition-all ${bucketForm.isRLS ? 'border-primary/30 bg-primary/10 text-primary' : 'border-zinc-800 bg-zinc-900/40 text-zinc-400'}`}><p className="text-[10px] font-black uppercase tracking-widest">RLS Policy</p><p className="mt-2 text-[11px] leading-relaxed text-white/80">Filter reads and deletes with a Supabase-style rule.</p></button>
                             </div>
-
-                            {bucketForm.isRLS && (
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">RLS Rule</label>
-                                    <textarea
-                                        value={bucketForm.rlsRule}
-                                        onChange={(event) => setBucketForm((current) => ({ ...current, rlsRule: event.target.value }))}
-                                        className="min-h-[120px] w-full rounded-2xl border border-zinc-800 bg-[#0c0c0c] px-4 py-3 font-mono text-xs text-zinc-200 focus:border-primary/50 focus:outline-none"
-                                    />
-                                    <p className="text-[10px] text-zinc-600">Examples: `auth.uid() = owner_id`, `auth.role() = 'admin'`, `true`, `false`.</p>
-                                </div>
-                            )}
+                            {bucketForm.isRLS ? <textarea value={bucketForm.rlsRule} onChange={(event) => setBucketForm((current) => ({ ...current, rlsRule: event.target.value }))} className="min-h-[120px] w-full rounded-2xl border border-zinc-800 bg-[#0c0c0c] px-4 py-3 font-mono text-xs text-zinc-200 focus:border-primary/50 focus:outline-none" /> : <div className="rounded-2xl border border-zinc-800 bg-[#0c0c0c] px-4 py-4 text-[11px] leading-relaxed text-zinc-500">With RLS disabled, OzyBase uses `true` and enforces only public/private visibility plus authenticated uploads.</div>}
                         </div>
-                        <div className="flex items-center justify-end gap-3 border-t border-[#2e2e2e] bg-[#111111]/85 px-8 py-5">
-                            <button
-                                type="button"
-                                onClick={() => setIsCreateBucketOpen(false)}
-                                className="px-5 py-2.5 text-[10px] font-black uppercase tracking-widest text-zinc-500 transition-colors hover:text-white"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => void createBucket()}
-                                disabled={isSavingBucket}
-                                className="rounded-xl bg-primary px-6 py-2.5 text-[10px] font-black uppercase tracking-widest text-black transition-all hover:bg-[#E6E600] disabled:opacity-60"
-                            >
-                                {isSavingBucket ? 'Creating...' : 'Create Bucket'}
-                            </button>
-                        </div>
+                        <div className="flex items-center justify-end gap-3 border-t border-[#2e2e2e] bg-[#111111]/85 px-8 py-5"><button type="button" onClick={closeBucketDialog} className="px-5 py-2.5 text-[10px] font-black uppercase tracking-widest text-zinc-500 transition-colors hover:text-white">Cancel</button><button type="button" onClick={() => void handleBucketSave()} disabled={isSavingBucket} className="rounded-xl bg-primary px-6 py-2.5 text-[10px] font-black uppercase tracking-widest text-black transition-all hover:bg-[#E6E600] disabled:opacity-60">{isSavingBucket ? 'Saving...' : bucketDialogMode === 'create' ? 'Create bucket' : 'Save changes'}</button></div>
                     </div>
                 </div>
-            )}
-
-            {toast ? (
-                <BrandedToast
-                    tone={toast.type === 'success' ? 'success' : 'error'}
-                    message={toast.message}
-                    onClose={() => setToast(null)}
-                />
             ) : null}
+
+            <ConfirmModal isOpen={bucketPendingDelete !== null} onClose={() => !isDeletingBucket && setBucketPendingDelete(null)} onConfirm={() => handleDeleteBucket()} title="Delete Bucket" message={bucketPendingDelete ? `Delete bucket "${bucketPendingDelete.name}" and remove its ${bucketPendingDelete.object_count} stored object(s)?` : ''} confirmText={isDeletingBucket ? 'Deleting...' : 'Delete bucket'} type="danger" confirmDisabled={isDeletingBucket} closeOnConfirm={false} />
+            <ConfirmModal isOpen={filePendingDelete !== null} onClose={() => !isDeletingFile && setFilePendingDelete(null)} onConfirm={() => handleDeleteFile()} title="Delete Object" message={filePendingDelete ? `Remove "${filePendingDelete.name}" from bucket "${selectedBucket.name}"?` : ''} confirmText={isDeletingFile ? 'Deleting...' : 'Delete object'} type="danger" confirmDisabled={isDeletingFile} closeOnConfirm={false} />
+            {toast ? <BrandedToast tone={toast.type} message={toast.message} onClose={() => setToast(null)} /> : null}
         </div>
     );
 };
 
 export default StorageManager;
-

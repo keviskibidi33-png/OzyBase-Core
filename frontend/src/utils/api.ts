@@ -7,7 +7,9 @@ export const fetchWithAuth = async (url: string, options: AuthFetchOptions = {})
     const workspaceId = localStorage.getItem('ozy_workspace_id');
 
     const headers = new Headers(options.headers ?? {});
-    if (!headers.has('Content-Type')) {
+    const hasBody = options.body !== undefined && options.body !== null;
+    const isFormDataBody = typeof FormData !== 'undefined' && options.body instanceof FormData;
+    if (hasBody && !isFormDataBody && !headers.has('Content-Type')) {
         headers.set('Content-Type', 'application/json');
     }
     if (token) {
