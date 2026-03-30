@@ -70,6 +70,8 @@ const MAX_COLUMN_WIDTH = 5000;
 const DEFAULT_VIEWPORT_HEIGHT = 600;
 const VIRTUAL_OVERSCAN_ROWS = 8;
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500, 1000, 2000];
+const CHECKBOX_COLUMN_WIDTH = 40;
+const ACTIONS_COLUMN_WIDTH = 80;
 const FILTER_OPS = [
     { label: 'Equals', value: 'eq' },
     { label: 'Not equal', value: 'neq' },
@@ -851,7 +853,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
 
     // Calculate total table width
     const totalWidth = useMemo(() => 
-        standardColumns.reduce((acc: any, col: any) => acc + getColumnWidth(col.name, col.type), 0) + 40 + 80, 
+        standardColumns.reduce((acc: any, col: any) => acc + getColumnWidth(col.name, col.type), 0) + CHECKBOX_COLUMN_WIDTH + ACTIONS_COLUMN_WIDTH, 
     [standardColumns, getColumnWidth]);
 
     const currentTableMeta = useMemo(
@@ -863,16 +865,20 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
     return (
         <div className="flex flex-col h-full w-full max-w-full overflow-hidden text-zinc-400 font-sans animate-in fade-in duration-500">
             {/* Table Toolbar */}
-            <div className="h-14 flex items-center justify-between px-6 border-b border-[#2e2e2e] bg-[#1a1a1a] shrink-0">
-                <div className="flex items-center gap-4">
+            <div className="border-b border-[#2e2e2e] bg-[#1a1a1a] shrink-0 px-4 py-3 sm:px-6">
+                <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
+                    <div className="min-w-0 2xl:flex-1">
+                        <div className="overflow-x-auto custom-scrollbar pb-1">
+                            <div className="flex min-w-max items-center gap-3 pr-1">
                     {/* Table Switcher Breadcrumb */}
                     <div className="relative">
                         <button
                             onClick={() => setIsTableSwitcherOpen(!isTableSwitcherOpen)}
                             className="flex items-center gap-2 px-3 py-1.5 bg-[#111111] border border-[#2e2e2e] rounded-lg hover:border-zinc-500 transition-all group shrink-0"
+                            title={currentTableLabel || ''}
                         >
                             <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Table</span>
-                            <span className="text-[11px] font-bold text-white group-hover:text-primary transition-colors">{currentTableLabel}</span>
+                            <span className="max-w-[180px] truncate text-[11px] font-bold text-white group-hover:text-primary transition-colors">{currentTableLabel}</span>
                             <ChevronDown size={14} className={`text-zinc-600 transition-transform ${isTableSwitcherOpen ? 'rotate-180' : ''}`} />
                         </button>
 
@@ -1158,26 +1164,29 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                         <Wifi size={14} className={realtimeEnabled ? "animate-pulse" : ""} />
                         Realtime {realtimeEnabled ? 'On' : 'Off'}
                     </button>
-                </div>
+                            </div>
+                        </div>
+                    </div>
 
-                <div className="flex items-center gap-3">
-                    <div className="relative group">
+                    <div className="flex min-w-0 items-center gap-3 2xl:w-auto">
+                        <div className="relative min-w-0 flex-1 group 2xl:w-72">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600 group-focus-within:text-primary transition-colors" size={14} />
                         <input
                             type="text"
                             placeholder="Search records..."
                             value={searchTerm}
                             onChange={(e: any) => setSearchTerm(e.target.value)}
-                            className="bg-[#111111] border border-[#2e2e2e] rounded-lg pl-9 pr-4 py-1.5 text-[11px] font-bold focus:outline-none focus:border-primary/50 w-64 text-zinc-200 placeholder:text-zinc-700 transition-all focus:ring-1 focus:ring-primary/10"
+                            className="w-full bg-[#111111] border border-[#2e2e2e] rounded-lg pl-9 pr-4 py-1.5 text-[11px] font-bold focus:outline-none focus:border-primary/50 text-zinc-200 placeholder:text-zinc-700 transition-all focus:ring-1 focus:ring-primary/10"
                         />
+                        </div>
+                        <button
+                            onClick={fetchData}
+                            disabled={loading}
+                            className="shrink-0 p-2 border border-[#2e2e2e] rounded-lg hover:bg-zinc-800 transition-colors disabled:opacity-50 group"
+                        >
+                            <RefreshCw size={14} className={`${loading ? "animate-spin text-primary" : "text-zinc-500 group-hover:text-zinc-200"}`} />
+                        </button>
                     </div>
-                    <button
-                        onClick={fetchData}
-                        disabled={loading}
-                        className="p-2 border border-[#2e2e2e] rounded-lg hover:bg-zinc-800 transition-colors disabled:opacity-50 group"
-                    >
-                        <RefreshCw size={14} className={`${loading ? "animate-spin text-primary" : "text-zinc-500 group-hover:text-zinc-200"}`} />
-                    </button>
                 </div>
             </div>
 
@@ -1360,7 +1369,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                     {/* Table Header */}
                     <div className="sticky top-0 bg-[#111111] z-10 border-b border-[#2e2e2e] flex">
                         {/* Checkbox column */}
-                        <div className="w-10 px-4 py-3 flex items-center shrink-0">
+                        <div className="w-10 px-4 py-3 flex items-center shrink-0 sticky left-0 z-30 bg-[#111111] border-r border-[#2e2e2e]/60">
                             <input
                                 ref={selectAllRef}
                                 type="checkbox"
@@ -1374,12 +1383,16 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                         {standardColumns.map((col: any) => {
                             const width = getColumnWidth(col.name, col.type);
                             const isResizing = resizingColumn === col.name;
+                            const isPinnedIdentityColumn = col.name === 'id';
 
                             return (
                                 <div
                                     key={col.name}
-                                    className="relative flex items-center shrink-0"
-                                    style={{ width: `${width}px` }}
+                                    className={`relative flex items-center shrink-0 ${isPinnedIdentityColumn ? 'sticky z-20 bg-[#111111] border-r border-[#2e2e2e]/60 shadow-[10px_0_16px_-14px_rgba(0,0,0,0.85)]' : ''}`}
+                                    style={{
+                                        width: `${width}px`,
+                                        ...(isPinnedIdentityColumn ? { left: `${CHECKBOX_COLUMN_WIDTH}px` } : {})
+                                    }}
                                 >
                                     <div className="flex-1 px-4 py-3 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-600 overflow-hidden">
                                         {getTypeIcon(col.type)}
@@ -1401,7 +1414,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                         })}
 
                         {/* Actions column */}
-                        <div className="w-20 px-4 py-3 text-right text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-600 shrink-0">
+                        <div className="w-20 px-4 py-3 text-right text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-600 shrink-0 sticky right-0 z-20 bg-[#111111] border-l border-[#2e2e2e]/60 shadow-[-10px_0_16px_-14px_rgba(0,0,0,0.85)]">
                             Actions
                         </div>
                     </div>
@@ -1459,7 +1472,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                                             style={{ height: `${ROW_HEIGHT}px` }}
                                         >
                                             {/* Checkbox */}
-                                            <div className="w-10 px-4 flex items-center shrink-0">
+                                            <div className="w-10 px-4 flex items-center shrink-0 sticky left-0 z-20 bg-[#171717] border-r border-[#2e2e2e]/40 group-hover:bg-zinc-900/30">
                                                 <input
                                                     type="checkbox"
                                                     checked={selectedIds.has(String(row.id))}
@@ -1474,6 +1487,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                                                 const width = getColumnWidth(col.name, col.type);
                                                 const isCellEditing = isEditing && editingCell?.colName === col.name;
                                                 const isEditable = col.name !== 'id' && col.name !== 'created_at';
+                                                const isPinnedIdentityColumn = col.name === 'id';
 
                                                 return (
                                                     <div
@@ -1481,8 +1495,12 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                                                         onClick={() => isEditable && handleCellClick(row.id, col.name)}
                                                         className={`px-4 flex items-center text-xs shrink-0 overflow-hidden
                                                             ${isEditable ? 'cursor-cell hover:bg-zinc-800/30' : 'cursor-default'}
-                                                            ${isCellEditing ? 'bg-zinc-800/50 ring-1 ring-primary/30' : ''}`}
-                                                        style={{ width: `${width}px` }}
+                                                            ${isCellEditing ? 'bg-zinc-800/50 ring-1 ring-primary/30' : ''}
+                                                            ${isPinnedIdentityColumn ? 'sticky z-10 bg-[#171717] border-r border-[#2e2e2e]/40 group-hover:bg-zinc-900/30 shadow-[10px_0_16px_-14px_rgba(0,0,0,0.75)]' : ''}`}
+                                                        style={{
+                                                            width: `${width}px`,
+                                                            ...(isPinnedIdentityColumn ? { left: `${CHECKBOX_COLUMN_WIDTH}px` } : {})
+                                                        }}
                                                     >
                                                         <InlineCellEditor
                                                             value={val}
@@ -1499,7 +1517,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                                             })}
 
                                             {/* Actions */}
-                                            <div className="w-20 px-4 flex items-center justify-end gap-2 shrink-0">
+                                            <div className="w-20 px-4 flex items-center justify-end gap-2 shrink-0 sticky right-0 z-20 bg-[#171717] border-l border-[#2e2e2e]/40 group-hover:bg-zinc-900/30 shadow-[-10px_0_16px_-14px_rgba(0,0,0,0.75)]">
                                                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                                     <button
                                                         onClick={() => handleEditRow(row)}
