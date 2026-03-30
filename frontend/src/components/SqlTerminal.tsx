@@ -151,7 +151,11 @@ const BarChart = ({ data, columns }: any) => {
     );
 };
 
-const SqlTerminal = () => {
+interface SqlTerminalProps {
+    onSchemaChange?: () => void;
+}
+
+const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange }) => {
     const [query, setQuery] = useState(DEFAULT_SQL_FALLBACK_QUERY);
     const [results, setResults] = useState<SQLResultsState | null>(null);
     const [loading, setLoading] = useState(false);
@@ -481,6 +485,7 @@ const SqlTerminal = () => {
 
                 if (shouldRefreshCatalogAfterStatement(nextResults.statementKind)) {
                     await fetchCatalog();
+                    onSchemaChange?.();
                 }
             }
             setSelectedRows(new Set());
@@ -542,6 +547,7 @@ const SqlTerminal = () => {
             }
 
             setSyncSuccess(true);
+            onSchemaChange?.();
             setTimeout(() => setSyncSuccess(false), 3000);
         } catch (err: any) {
             setError(err.message);

@@ -184,6 +184,7 @@ DEBUG=false
 ## 📚 Documentation
 
 - Deployment Runbook: `docs/DEPLOYMENT.md`
+- Azure Production Guide: `docs/AZURE_PRODUCTION.md`
 - Security Suite: `docs/SECURITY_SUITE.md`
 - Security Notifications: `docs/SECURITY_NOTIFICATIONS.md`
 - Project Status: `docs/PROJECT_STATUS_MASTER.md`

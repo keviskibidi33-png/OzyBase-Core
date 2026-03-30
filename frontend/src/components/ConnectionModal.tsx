@@ -102,28 +102,44 @@ const ConnectionModal: React.FC<ConnectionModalProps> = ({
             </div>
           ) : activeTab === "connection" ? (
             <div className="space-y-6">
-              {[
-                ["Direct URI", connection?.direct_uri_template || "", "direct"],
-                ["Pooler URI", connection?.pooler_uri_template || "", "pooler"],
-              ].map(([label, value, key]) => (
+              {[ 
+                {
+                  label: "Direct URI",
+                  value: connection?.direct_uri_template || "",
+                  key: "direct",
+                },
+                {
+                  label: "Pooler URI",
+                  value: connection?.pooler_uri_template || "",
+                  key: "pooler",
+                  hint: connection?.pooler_uri_template
+                    ? undefined
+                    : "Configure DB_POOLER_URL when deploying behind PgBouncer, Supavisor, or Azure connection pooling.",
+                },
+              ].map((item) => (
                 <div
-                  key={key}
+                  key={item.key}
                   className="bg-[#111111] p-4 rounded-xl border border-[#2e2e2e]"
                 >
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2">
-                        {label}
+                        {item.label}
                       </p>
                       <code className="text-xs text-zinc-300 break-all">
-                        {value}
+                        {item.value || "not configured"}
                       </code>
+                      {item.hint && (
+                        <p className="text-[11px] text-zinc-500 mt-2 max-w-xl">
+                          {item.hint}
+                        </p>
+                      )}
                     </div>
                     <button
-                      onClick={() => void copyValue(value, key)}
+                      onClick={() => void copyValue(item.value, item.key)}
                       className="p-2 bg-[#1a1a1a] rounded-lg border border-[#2e2e2e] hover:border-primary/50 transition-all text-zinc-400 hover:text-white shrink-0"
                     >
-                      {copied === key ? (
+                      {copied === item.key ? (
                         <Check size={14} className="text-green-500" />
                       ) : (
                         <Copy size={14} />

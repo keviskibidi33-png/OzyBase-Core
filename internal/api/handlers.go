@@ -70,6 +70,7 @@ type Handler struct {
 	Migrations   *migrations.Generator
 	Applier      *migrations.Applier
 	StartTime    time.Time
+	Production   ProjectProductionReadiness
 
 	projectInfoCacheMu    sync.RWMutex
 	projectInfoCache      *ProjectInfo
@@ -84,7 +85,7 @@ type Handler struct {
 }
 
 // NewHandler creates a new Handler with the given dependencies
-func NewHandler(db *data.DB, broker *realtime.Broker, webhooks *realtime.WebhookDispatcher, mailSvc mailer.Mailer, storageSvc storage.Provider, ps realtime.PubSub, migrator *migrations.Generator, applier *migrations.Applier, audit *core.AuditService) *Handler {
+func NewHandler(db *data.DB, broker *realtime.Broker, webhooks *realtime.WebhookDispatcher, mailSvc mailer.Mailer, storageSvc storage.Provider, ps realtime.PubSub, migrator *migrations.Generator, applier *migrations.Applier, production ProjectProductionReadiness, audit *core.AuditService) *Handler {
 	m := &Metrics{
 		DbHistory:       make([]int, 60),
 		AuthHistory:     make([]int, 60),
@@ -109,6 +110,7 @@ func NewHandler(db *data.DB, broker *realtime.Broker, webhooks *realtime.Webhook
 		Migrations:      migrator,
 		Applier:         applier,
 		StartTime:       time.Now(),
+		Production:      production,
 		lastSIEMFlushAt: time.Now().UTC().Add(-30 * time.Second),
 	}
 	go h.StartLogCleaner(context.Background())

@@ -24,6 +24,11 @@ type Collection struct {
 	Name            string             `json:"name"`
 	DisplayName     string             `json:"display_name,omitempty"`
 	IsSystem        bool               `json:"is_system"`
+	HasID           bool               `json:"has_id"`
+	HasPrimaryID    bool               `json:"has_primary_id"`
+	HasCreatedAt    bool               `json:"has_created_at"`
+	HasUpdatedAt    bool               `json:"has_updated_at"`
+	HasDeletedAt    bool               `json:"has_deleted_at"`
 	Schema          []data.FieldSchema `json:"schema"`
 	ListRule        string             `json:"list_rule"`
 	CreateRule      string             `json:"create_rule"`
@@ -133,6 +138,241 @@ func validateRLSExpression(ctx context.Context, tx pgx.Tx, tableName, expr strin
 	validateSQL := fmt.Sprintf("EXPLAIN SELECT 1 FROM %s WHERE (%s) LIMIT 0", tableName, expression)
 	_, err := tx.Exec(ctx, validateSQL)
 	return err
+}
+
+type collectionTableCapabilities struct {
+	HasID        bool
+	HasPrimaryID bool
+	HasCreatedAt bool
+	HasUpdatedAt bool
+	HasDeletedAt bool
+}
+
+func (h *Handler) loadCollectionSchemaFromDatabase(ctx context.Context, tableName string) ([]data.FieldSchema, error) {
+	if !data.IsValidIdentifier(tableName) {
+		return nil, fmt.Errorf("invalid table name: %s", tableName)
+	}
+
+	rows, err := h.DB.Pool.Query(ctx, `
+		SELECT column_name, data_type, is_nullable
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+		  AND table_name = $1
+		ORDER BY ordinal_position
+	`, tableName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query table schema: %w", err)
+	}
+	defer rows.Close()
+
+	found := false
+	schema := make([]data.FieldSchema, 0)
+	for rows.Next() {
+		found = true
+		var colName, dataType, isNullable string
+		if err := rows.Scan(&colName, &dataType, &isNullable); err != nil {
+			return nil, fmt.Errorf("failed to scan column schema: %w", err)
+		}
+
+		if colName == "id" || colName == "created_at" || colName == "updated_at" || colName == "deleted_at" {
+			continue
+		}
+
+		schema = append(schema, data.FieldSchema{
+			Name:     colName,
+			Type:     dataType,
+			Required: isNullable == "NO",
+		})
+	}
+
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("failed to read table schema: %w", rows.Err())
+	}
+	if !found {
+		return nil, fmt.Errorf("table not found: %s", tableName)
+	}
+
+	return schema, nil
+}
+
+func (h *Handler) loadCollectionTableCapabilities(ctx context.Context) (map[string]collectionTableCapabilities, error) {
+	rows, err := h.DB.Pool.Query(ctx, `
+		SELECT
+			c.table_name,
+			BOOL_OR(c.column_name = 'id') AS has_id,
+			BOOL_OR(c.column_name = 'created_at') AS has_created_at,
+			BOOL_OR(c.column_name = 'updated_at') AS has_updated_at,
+			BOOL_OR(c.column_name = 'deleted_at') AS has_deleted_at,
+			EXISTS (
+				SELECT 1
+				FROM information_schema.table_constraints tc
+				JOIN information_schema.key_column_usage kcu
+				  ON tc.constraint_name = kcu.constraint_name
+				 AND tc.table_schema = kcu.table_schema
+				WHERE tc.table_schema = 'public'
+				  AND tc.table_name = c.table_name
+				  AND tc.constraint_type = 'PRIMARY KEY'
+				  AND kcu.column_name = 'id'
+			) AS has_primary_id
+		FROM information_schema.columns c
+		WHERE c.table_schema = 'public'
+		GROUP BY c.table_name
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect table capabilities: %w", err)
+	}
+	defer rows.Close()
+
+	caps := make(map[string]collectionTableCapabilities)
+	for rows.Next() {
+		var tableName string
+		var item collectionTableCapabilities
+		if err := rows.Scan(&tableName, &item.HasID, &item.HasCreatedAt, &item.HasUpdatedAt, &item.HasDeletedAt, &item.HasPrimaryID); err != nil {
+			return nil, fmt.Errorf("failed to scan table capabilities: %w", err)
+		}
+		caps[tableName] = item
+	}
+
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("failed to read table capabilities: %w", rows.Err())
+	}
+
+	return caps, nil
+}
+
+func applyCollectionCapabilities(col Collection, capsMap map[string]collectionTableCapabilities) Collection {
+	caps, ok := capsMap[col.Name]
+	if !ok {
+		return col
+	}
+
+	col.HasID = caps.HasID
+	col.HasPrimaryID = caps.HasPrimaryID
+	col.HasCreatedAt = caps.HasCreatedAt
+	col.HasUpdatedAt = caps.HasUpdatedAt
+	col.HasDeletedAt = caps.HasDeletedAt
+	return col
+}
+
+func (h *Handler) upsertCollectionMetadataForTable(ctx context.Context, tableName, workspaceID string) error {
+	schema, err := h.loadCollectionSchemaFromDatabase(ctx, tableName)
+	if err != nil {
+		return err
+	}
+
+	schemaJSON, err := json.Marshal(schema)
+	if err != nil {
+		return fmt.Errorf("failed to encode schema metadata: %w", err)
+	}
+
+	var workspace any
+	if strings.TrimSpace(workspaceID) != "" {
+		workspace = workspaceID
+	}
+
+	_, err = h.DB.Pool.Exec(ctx, `
+		INSERT INTO _v_collections (
+			name, display_name, schema_def, list_rule, create_rule, rls_enabled, rls_rule, realtime_enabled, workspace_id, updated_at
+		)
+		VALUES ($1, $2, $3, 'auth', 'admin', FALSE, '', FALSE, $4, NOW())
+		ON CONFLICT (name) DO UPDATE SET
+			display_name = COALESCE(NULLIF(_v_collections.display_name, ''), EXCLUDED.display_name),
+			schema_def = EXCLUDED.schema_def,
+			workspace_id = COALESCE(_v_collections.workspace_id, EXCLUDED.workspace_id),
+			updated_at = NOW()
+	`, tableName, tableName, schemaJSON, workspace)
+	if err == nil {
+		return nil
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "42703" {
+		_, err = h.DB.Pool.Exec(ctx, `
+			INSERT INTO _v_collections (
+				name, schema_def, list_rule, create_rule, rls_enabled, rls_rule, realtime_enabled, workspace_id, updated_at
+			)
+			VALUES ($1, $2, 'auth', 'admin', FALSE, '', FALSE, $3, NOW())
+			ON CONFLICT (name) DO UPDATE SET
+				schema_def = EXCLUDED.schema_def,
+				workspace_id = COALESCE(_v_collections.workspace_id, EXCLUDED.workspace_id),
+				updated_at = NOW()
+		`, tableName, schemaJSON, workspace)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to upsert collection metadata for %s: %w", tableName, err)
+	}
+	return nil
+}
+
+func (h *Handler) renameCollectionMetadataForTable(ctx context.Context, oldTableName, newTableName, workspaceID string) error {
+	if oldTableName == newTableName {
+		return h.upsertCollectionMetadataForTable(ctx, newTableName, workspaceID)
+	}
+
+	schema, err := h.loadCollectionSchemaFromDatabase(ctx, newTableName)
+	if err != nil {
+		return err
+	}
+
+	schemaJSON, err := json.Marshal(schema)
+	if err != nil {
+		return fmt.Errorf("failed to encode renamed schema metadata: %w", err)
+	}
+
+	var workspace any
+	if strings.TrimSpace(workspaceID) != "" {
+		workspace = workspaceID
+	}
+
+	tag, err := h.DB.Pool.Exec(ctx, `
+		UPDATE _v_collections
+		SET name = $2,
+			display_name = CASE
+				WHEN COALESCE(display_name, '') = '' OR display_name = name THEN $2
+				ELSE display_name
+			END,
+			schema_def = $3,
+			workspace_id = COALESCE(workspace_id, $4::uuid),
+			updated_at = NOW()
+		WHERE name = $1
+	`, oldTableName, newTableName, schemaJSON, workspace)
+	if err == nil && tag.RowsAffected() > 0 {
+		return nil
+	}
+
+	var pgErr *pgconn.PgError
+	if err != nil && !(errors.As(err, &pgErr) && pgErr.Code == "42703") {
+		return fmt.Errorf("failed to rename collection metadata from %s to %s: %w", oldTableName, newTableName, err)
+	}
+
+	if errors.As(err, &pgErr) && pgErr.Code == "42703" {
+		tag, err = h.DB.Pool.Exec(ctx, `
+			UPDATE _v_collections
+			SET name = $2,
+				schema_def = $3,
+				workspace_id = COALESCE(workspace_id, $4::uuid),
+				updated_at = NOW()
+			WHERE name = $1
+		`, oldTableName, newTableName, schemaJSON, workspace)
+		if err != nil {
+			return fmt.Errorf("failed to rename legacy collection metadata from %s to %s: %w", oldTableName, newTableName, err)
+		}
+		if tag.RowsAffected() > 0 {
+			return nil
+		}
+	}
+
+	return h.upsertCollectionMetadataForTable(ctx, newTableName, workspaceID)
+}
+
+func (h *Handler) deleteCollectionMetadataForTable(ctx context.Context, tableName string) error {
+	if !data.IsValidIdentifier(tableName) {
+		return nil
+	}
+	if _, err := h.DB.Pool.Exec(ctx, "DELETE FROM _v_collections WHERE name = $1", tableName); err != nil {
+		return fmt.Errorf("failed to delete collection metadata for %s: %w", tableName, err)
+	}
+	return nil
 }
 
 // CreateCollection handles POST /api/collections
@@ -538,6 +778,13 @@ func (h *Handler) ListCollections(c echo.Context) error {
 		}
 	}
 
+	capabilities, err := h.loadCollectionTableCapabilities(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to inspect table capabilities: " + err.Error(),
+		})
+	}
+
 	// Combine information
 	result := make([]Collection, 0, len(tables))
 	for _, tableName := range tables {
@@ -557,7 +804,7 @@ func (h *Handler) ListCollections(c echo.Context) error {
 			}
 
 			meta.IsSystem = isSystem
-			result = append(result, meta)
+			result = append(result, applyCollectionCapabilities(meta, capabilities))
 		} else {
 			// Non-managed tables: tables in the physical DB but not in _v_collections
 			// When a workspace IS selected, only show system tables (admin needs them)
@@ -565,14 +812,15 @@ func (h *Handler) ListCollections(c echo.Context) error {
 			if workspaceID != "" && !isSystem {
 				continue
 			}
-			result = append(result, Collection{
+			col := Collection{
 				Name:        tableName,
 				DisplayName: tableName,
 				IsSystem:    isSystem,
 				ListRule:    "public",
 				CreateRule:  "admin",
 				Schema:      []data.FieldSchema{},
-			})
+			}
+			result = append(result, applyCollectionCapabilities(col, capabilities))
 		}
 	}
 
@@ -688,19 +936,20 @@ func (h *Handler) GetVisualizeSchema(c echo.Context) error {
 
 // ProjectInfo represents the project information response
 type ProjectInfo struct {
-	Name             string      `json:"name"`
-	Database         string      `json:"database"`
-	APIURL           string      `json:"api_url,omitempty"`
-	TableCount       int         `json:"table_count"`
-	UserTableCount   int         `json:"user_table_count"`
-	SystemTableCount int         `json:"system_table_count"`
-	FunctionCount    int         `json:"function_count"`
-	SchemaCount      int         `json:"schema_count"`
-	DbSize           string      `json:"db_size"`
-	DbSizeBytes      int64       `json:"db_size_bytes"`
-	Version          string      `json:"version"`
-	Metrics          DbMetrics   `json:"metrics"`
-	SlowQueries      []SlowQuery `json:"slow_queries"`
+	Name             string                     `json:"name"`
+	Database         string                     `json:"database"`
+	APIURL           string                     `json:"api_url,omitempty"`
+	TableCount       int                        `json:"table_count"`
+	UserTableCount   int                        `json:"user_table_count"`
+	SystemTableCount int                        `json:"system_table_count"`
+	FunctionCount    int                        `json:"function_count"`
+	SchemaCount      int                        `json:"schema_count"`
+	DbSize           string                     `json:"db_size"`
+	DbSizeBytes      int64                      `json:"db_size_bytes"`
+	Version          string                     `json:"version"`
+	Production       ProjectProductionReadiness `json:"production"`
+	Metrics          DbMetrics                  `json:"metrics"`
+	SlowQueries      []SlowQuery                `json:"slow_queries"`
 }
 
 type DbMetrics struct {
@@ -746,6 +995,7 @@ func (h *Handler) GetProjectInfo(c echo.Context) error {
 	if err != nil {
 		info.Version = "unknown"
 	}
+	info.Production = h.Production
 
 	// Get table counts using the same logic as ListCollections
 	tables, err := h.DB.ListTables(ctx)

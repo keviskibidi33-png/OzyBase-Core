@@ -87,11 +87,13 @@ const calculateMinColumnWidth = (_columnName?: string) => {
     return 60;
 };
 
-const SkeletonRow = ({ columns, getColumnWidth, rowHeight }: any) => (
+const SkeletonRow = ({ columns, getColumnWidth, rowHeight, showSelection = true, showActions = true }: any) => (
     <div className="flex border-b border-[#2e2e2e]/50" style={{ height: `${rowHeight}px` }}>
-        <div className="w-10 px-4 flex items-center shrink-0">
-            <div className="w-4 h-4 bg-zinc-800 rounded animate-pulse" />
-        </div>
+        {showSelection && (
+            <div className="w-10 px-4 flex items-center shrink-0">
+                <div className="w-4 h-4 bg-zinc-800 rounded animate-pulse" />
+            </div>
+        )}
         {columns.map((col: any, i: any) => (
             <div
                 key={i}
@@ -101,7 +103,7 @@ const SkeletonRow = ({ columns, getColumnWidth, rowHeight }: any) => (
                 <div className="h-4 bg-zinc-800 rounded animate-pulse w-[80%]" />
             </div>
         ))}
-        <div className="w-20 px-4 flex items-center shrink-0" />
+        {showActions && <div className="w-20 px-4 flex items-center shrink-0" />}
     </div>
 );
 
@@ -386,9 +388,24 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
         setScrollTop(0);
     }, [tableName, currentPage, pageSize, debouncedSearch, filters, sorts]);
 
+    const currentTableMeta = useMemo(
+        () => allTables.find((t: any) => t.name === tableName),
+        [allTables, tableName]
+    );
+    const rowIdentityEnabled = currentTableMeta?.has_primary_id ?? true;
+    const createdAtEnabled = currentTableMeta?.has_created_at ?? true;
+    const selectionColumnWidth = rowIdentityEnabled ? CHECKBOX_COLUMN_WIDTH : 0;
+    const actionsColumnWidth = rowIdentityEnabled ? ACTIONS_COLUMN_WIDTH : 0;
+
     useEffect(() => {
         setSelectedIds(new Set());
     }, [tableName, currentPage, pageSize, debouncedSearch, filters, sorts]);
+
+    useEffect(() => {
+        if (!rowIdentityEnabled) {
+            setSelectedIds(new Set());
+        }
+    }, [rowIdentityEnabled]);
 
     const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
         setScrollTop(e.currentTarget.scrollTop);
@@ -403,10 +420,10 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
     const totalPages = Math.max(1, Math.ceil(totalRecords / pageSize));
     const pageStartRecord = totalRecords === 0 ? 0 : ((currentPage - 1) * pageSize) + 1;
     const pageEndRecord = totalRecords === 0 ? 0 : Math.min(currentPage * pageSize, totalRecords);
-    const visibleIds = useMemo(() => visibleData.map((row: any) => String(row.id)), [visibleData]);
+    const visibleIds = useMemo(() => rowIdentityEnabled ? visibleData.map((row: any) => String(row.id)) : [], [visibleData, rowIdentityEnabled]);
     const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id: any) => selectedIds.has(id));
     const someVisibleSelected = visibleIds.some((id: any) => selectedIds.has(id));
-    const selectedCount = selectedIds.size;
+    const selectedCount = rowIdentityEnabled ? selectedIds.size : 0;
 
     useEffect(() => {
         if (currentPage > totalPages) {
@@ -421,17 +438,19 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
 
     // --- Cell Editing Handlers ---
     const handleCellClick = useCallback((rowId: any, colName: any) => {
+        if (!rowIdentityEnabled) return;
         // Don't allow editing id or created_at
         if (colName === 'id' || colName === 'created_at') return;
         setEditingCell({ rowId, colName });
-    }, []);
+    }, [rowIdentityEnabled]);
 
     const handleCellSave = useCallback((rowId: any, colName: any, newValue: any) => {
+        if (!rowIdentityEnabled) return;
         setData((prev: any) => prev.map((row: any) =>
             row.id === rowId ? { ...row, [colName]: newValue } : row
         ));
         setEditingCell(null);
-    }, []);
+    }, [rowIdentityEnabled]);
 
     const handleCellCancel = useCallback(() => {
         setEditingCell(null);
@@ -466,6 +485,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
     }, [normalizeHeader]);
 
     const handleCSVImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!rowIdentityEnabled) return;
         const file = e.target.files?.[0];
         if (!file) return;
 
@@ -577,7 +597,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
             }
         };
         reader.readAsText(file);
-    }, [schema, buildInitialMapping]);
+    }, [buildInitialMapping, rowIdentityEnabled, schema]);
 
     const updateCsvImport = useCallback((nextDelimiter: string, nextUseHeaderRow: boolean, nextHeaderRowIndex: number) => {
         setCsvImport((prev: any) => {
@@ -646,6 +666,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
     }, [buildInitialMapping]);
 
     const handleCSVImportConfirm = useCallback(async (mapping: Record<number, string>) => {
+        if (!rowIdentityEnabled) return;
         if (!csvImport) return;
         const { headers, rows } = csvImport;
 
@@ -687,13 +708,15 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
         } finally {
             setLoading(false);
         }
-    }, [csvImport, tableName, fetchData]);
+    }, [csvImport, fetchData, rowIdentityEnabled, tableName]);
 
     const handleDeleteRow = useCallback((id: string | number) => {
+        if (!rowIdentityEnabled) return;
         setConfirmDeleteId(id);
-    }, []);
+    }, [rowIdentityEnabled]);
 
     const toggleSelectRow = useCallback((id: string | number) => {
+        if (!rowIdentityEnabled) return;
         const rowId = String(id);
         setSelectedIds((prev) => {
             const next = new Set<string>(prev);
@@ -704,9 +727,10 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
             }
             return next;
         });
-    }, []);
+    }, [rowIdentityEnabled]);
 
     const toggleSelectAllVisible = useCallback(() => {
+        if (!rowIdentityEnabled) return;
         setSelectedIds((prev) => {
             const next = new Set<string>(prev);
             if (allVisibleSelected) {
@@ -716,9 +740,10 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
             }
             return next;
         });
-    }, [allVisibleSelected, visibleIds]);
+    }, [allVisibleSelected, rowIdentityEnabled, visibleIds]);
 
     const confirmRowDeletion = useCallback(async () => {
+        if (!rowIdentityEnabled) return;
         const id = confirmDeleteId;
         try {
             const res = await fetchWithAuth(`/api/tables/${tableName}/rows/${id}`, {
@@ -733,12 +758,16 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
             console.error(err);
             setAlertMessage({ title: 'Error', message: 'Network error during deletion', type: 'danger' });
         }
-    }, [confirmDeleteId, tableName, fetchData]);
+    }, [confirmDeleteId, fetchData, rowIdentityEnabled, tableName]);
 
     const handleExportCSV = useCallback(() => {
         if (data.length === 0) return;
 
-        const headers = ['id', ...schema.map((c: any) => c.name), 'created_at'];
+        const headers = [
+            ...(rowIdentityEnabled ? ['id'] : []),
+            ...schema.map((c: any) => c.name),
+            ...(createdAtEnabled ? ['created_at'] : [])
+        ];
         const csvRows = [
             headers.join(','),
             ...data.map((row: any) => headers.map((h: any) => {
@@ -753,11 +782,16 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
         a.href = url;
         a.download = `${tableName}_export.csv`;
         a.click();
-    }, [data, schema, tableName]);
+    }, [createdAtEnabled, data, rowIdentityEnabled, schema, tableName]);
 
     const handleExportSelected = useCallback(() => {
+        if (!rowIdentityEnabled) return;
         if (selectedIds.size === 0) return;
-        const headers = ['id', ...schema.map((c: any) => c.name), 'created_at'];
+        const headers = [
+            'id',
+            ...schema.map((c: any) => c.name),
+            ...(createdAtEnabled ? ['created_at'] : [])
+        ];
         const selectedRows = data.filter((row: any) => selectedIds.has(String(row.id)));
         const csvRows = [
             headers.join(','),
@@ -772,9 +806,10 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
         a.href = url;
         a.download = `${tableName}_selected_export.csv`;
         a.click();
-    }, [data, schema, tableName, selectedIds]);
+    }, [createdAtEnabled, data, rowIdentityEnabled, schema, selectedIds, tableName]);
 
     const handleBulkDelete = useCallback(async () => {
+        if (!rowIdentityEnabled) return;
         if (selectedIds.size === 0) return;
         try {
             const res = await fetchWithAuth(`/api/tables/${tableName}/rows/bulk`, {
@@ -795,9 +830,10 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
             console.error(err);
             setAlertMessage({ title: 'Bulk Delete Failed', message: 'Network error during bulk delete.', type: 'danger' });
         }
-    }, [selectedIds, tableName, fetchData]);
+    }, [fetchData, rowIdentityEnabled, selectedIds, tableName]);
 
     const handleBulkUpdate = useCallback(async (payload: Record<string, any>) => {
+        if (!rowIdentityEnabled) return;
         try {
             const res = await fetchWithAuth(`/api/tables/${tableName}/rows/bulk`, {
                 method: 'POST',
@@ -818,12 +854,13 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
             console.error(err);
             setAlertMessage({ title: 'Bulk Update Failed', message: 'Network error during bulk update.', type: 'danger' });
         }
-    }, [selectedIds, tableName, fetchData]);
+    }, [fetchData, rowIdentityEnabled, selectedIds, tableName]);
 
     const handleEditRow = useCallback((row: Record<string, any>) => {
+        if (!rowIdentityEnabled) return;
         setEditingRow(row);
         setIsModalOpen(true);
-    }, []);
+    }, [rowIdentityEnabled]);
 
     const getTypeIcon = useCallback((type: string) => {
         const t = (type || 'text').toLowerCase();
@@ -841,10 +878,10 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
     }, []);
 
     const standardColumns = useMemo(() => [
-        { name: 'id', type: 'uuid' },
+        ...(rowIdentityEnabled ? [{ name: 'id', type: 'uuid' }] : []),
         ...schema,
-        { name: 'created_at', type: 'datetime' }
-    ], [schema]);
+        ...(createdAtEnabled ? [{ name: 'created_at', type: 'datetime' }] : [])
+    ], [createdAtEnabled, rowIdentityEnabled, schema]);
 
     // Get column width with fallback to default
     const getColumnWidth = useCallback((colName: string, colType: string) => {
@@ -853,14 +890,12 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
 
     // Calculate total table width
     const totalWidth = useMemo(() => 
-        standardColumns.reduce((acc: any, col: any) => acc + getColumnWidth(col.name, col.type), 0) + CHECKBOX_COLUMN_WIDTH + ACTIONS_COLUMN_WIDTH, 
-    [standardColumns, getColumnWidth]);
-
-    const currentTableMeta = useMemo(
-        () => allTables.find((t: any) => t.name === tableName),
-        [allTables, tableName]
-    );
+        standardColumns.reduce((acc: any, col: any) => acc + getColumnWidth(col.name, col.type), 0) + selectionColumnWidth + actionsColumnWidth, 
+    [actionsColumnWidth, getColumnWidth, selectionColumnWidth, standardColumns]);
     const currentTableLabel = currentTableMeta?.display_name || tableName;
+    const readOnlyCompatibilityMessage = !rowIdentityEnabled
+        ? 'This SQL table does not expose an id primary key, so Table Editor is running in read-only mode. Use SQL Editor for writes until the table has a standard row identity.'
+        : null;
 
     return (
         <div className="flex flex-col h-full w-full max-w-full overflow-hidden text-zinc-400 font-sans animate-in fade-in duration-500">
@@ -1075,8 +1110,16 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                                 <div className="absolute top-full left-0 mt-2 z-50 w-56 overflow-hidden ozy-floating-panel">
                                     <div className="p-1.5 space-y-0.5">
                                         <button
-                                            onClick={() => { setEditingRow(null); setIsModalOpen(true); setIsInsertDropdownOpen(false); }}
-                                            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-bold text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all group"
+                                            onClick={() => {
+                                                if (!rowIdentityEnabled) return;
+                                                setEditingRow(null);
+                                                setIsModalOpen(true);
+                                                setIsInsertDropdownOpen(false);
+                                            }}
+                                            disabled={!rowIdentityEnabled}
+                                            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-bold transition-all group ${
+                                                rowIdentityEnabled ? 'text-zinc-400 hover:text-white hover:bg-zinc-800' : 'text-zinc-700 cursor-not-allowed opacity-60'
+                                            }`}
                                         >
                                             <div className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0 group-hover:border-primary/50 transition-colors">
                                                 <ListPlus size={16} className="text-zinc-500 group-hover:text-primary" />
@@ -1104,7 +1147,9 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
 
                                         <div className="h-[1px] bg-[#2e2e2e] my-1 mx-2" />
 
-                                        <label className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-bold text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all group cursor-pointer">
+                                        <label className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-bold transition-all group ${
+                                            rowIdentityEnabled ? 'text-zinc-400 hover:text-white hover:bg-zinc-800 cursor-pointer' : 'text-zinc-700 cursor-not-allowed opacity-60'
+                                        }`}>
                                             <div className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0 group-hover:border-primary/50 transition-colors">
                                                 <FileUp size={16} className="text-zinc-500 group-hover:text-primary" />
                                             </div>
@@ -1117,6 +1162,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                                                 type="file"
                                                 accept=".csv"
                                                 onChange={handleCSVImport}
+                                                disabled={!rowIdentityEnabled}
                                                 className="hidden"
                                             />
                                             <ChevronRight size={14} className="ml-auto text-zinc-700" />
@@ -1189,6 +1235,12 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                     </div>
                 </div>
             </div>
+
+            {readOnlyCompatibilityMessage && (
+                <div className="border-b border-amber-500/20 bg-amber-500/5 px-4 py-3 text-[10px] font-bold tracking-wide text-amber-200 sm:px-6">
+                    {readOnlyCompatibilityMessage}
+                </div>
+            )}
 
             {/* Filter Panel */}
             {isFilterOpen && (
@@ -1323,7 +1375,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
             )}
 
             {/* Bulk Actions */}
-            {selectedCount > 0 && (
+            {rowIdentityEnabled && selectedCount > 0 && (
                 <div className="border-b border-[#2e2e2e] bg-[#0f0f0f] px-6 py-3 flex items-center justify-between text-[10px] font-black uppercase tracking-widest">
                     <div className="flex items-center gap-3 text-zinc-400">
                         <CheckSquare size={14} className="text-primary" />
@@ -1368,22 +1420,23 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                 <div style={{ minWidth: `${totalWidth}px` }}>
                     {/* Table Header */}
                     <div className="sticky top-0 bg-[#111111] z-10 border-b border-[#2e2e2e] flex">
-                        {/* Checkbox column */}
-                        <div className="w-10 px-4 py-3 flex items-center shrink-0 sticky left-0 z-30 bg-[#111111] border-r border-[#2e2e2e]/60">
-                            <input
-                                ref={selectAllRef}
-                                type="checkbox"
-                                checked={allVisibleSelected}
-                                onChange={toggleSelectAllVisible}
-                                className="rounded border-border bg-transparent accent-primary"
-                            />
-                        </div>
+                        {rowIdentityEnabled && (
+                            <div className="w-10 px-4 py-3 flex items-center shrink-0 sticky left-0 z-30 bg-[#111111] border-r border-[#2e2e2e]/60">
+                                <input
+                                    ref={selectAllRef}
+                                    type="checkbox"
+                                    checked={allVisibleSelected}
+                                    onChange={toggleSelectAllVisible}
+                                    className="rounded border-border bg-transparent accent-primary"
+                                />
+                            </div>
+                        )}
 
                         {/* Dynamic columns */}
                         {standardColumns.map((col: any) => {
                             const width = getColumnWidth(col.name, col.type);
-                            const isResizing = resizingColumn === col.name;
-                            const isPinnedIdentityColumn = col.name === 'id';
+                            const isResizingColumn = resizingColumn === col.name;
+                            const isPinnedIdentityColumn = rowIdentityEnabled && col.name === 'id';
 
                             return (
                                 <div
@@ -1391,7 +1444,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                                     className={`relative flex items-center shrink-0 ${isPinnedIdentityColumn ? 'sticky z-20 bg-[#111111] border-r border-[#2e2e2e]/60 shadow-[10px_0_16px_-14px_rgba(0,0,0,0.85)]' : ''}`}
                                     style={{
                                         width: `${width}px`,
-                                        ...(isPinnedIdentityColumn ? { left: `${CHECKBOX_COLUMN_WIDTH}px` } : {})
+                                        ...(isPinnedIdentityColumn ? { left: `${selectionColumnWidth}px` } : {})
                                     }}
                                 >
                                     <div className="flex-1 px-4 py-3 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-600 overflow-hidden">
@@ -1403,20 +1456,21 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                                     <div
                                         onMouseDown={(e: any) => handleResizeStart(e, col.name)}
                                         className={`absolute right-0 top-0 bottom-0 w-1 cursor-col-resize group/resize flex items-center justify-center
-                                            ${isResizing ? 'bg-primary' : 'hover:bg-primary/50'} transition-colors`}
+                                            ${isResizingColumn ? 'bg-primary' : 'hover:bg-primary/50'} transition-colors`}
                                     >
                                         <div className={`w-[2px] h-4 rounded-full transition-colors
-                                            ${isResizing ? 'bg-primary' : 'bg-zinc-700 group-hover/resize:bg-primary'}`}
+                                            ${isResizingColumn ? 'bg-primary' : 'bg-zinc-700 group-hover/resize:bg-primary'}`}
                                         />
                                     </div>
                                 </div>
                             );
                         })}
 
-                        {/* Actions column */}
-                        <div className="w-20 px-4 py-3 text-right text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-600 shrink-0 sticky right-0 z-20 bg-[#111111] border-l border-[#2e2e2e]/60 shadow-[-10px_0_16px_-14px_rgba(0,0,0,0.85)]">
-                            Actions
-                        </div>
+                        {rowIdentityEnabled && (
+                            <div className="w-20 px-4 py-3 text-right text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-600 shrink-0 sticky right-0 z-20 bg-[#111111] border-l border-[#2e2e2e]/60 shadow-[-10px_0_16px_-14px_rgba(0,0,0,0.85)]">
+                                Actions
+                            </div>
+                        )}
                     </div>
 
                     {/* Table Body */}
@@ -1429,6 +1483,8 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                                         columns={standardColumns}
                                         getColumnWidth={getColumnWidth}
                                         rowHeight={ROW_HEIGHT}
+                                        showSelection={rowIdentityEnabled}
+                                        showActions={rowIdentityEnabled}
                                     />
                                 ))}
                             </div>
@@ -1462,32 +1518,34 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                                     <div style={{ height: `${topPadding}px` }} />
                                 )}
 
-                                {visibleData.map((row: any) => {
+                                {visibleData.map((row: any, visibleIndex: any) => {
                                     const isEditing = editingCell?.rowId === row.id;
+                                    const rowKey = rowIdentityEnabled ? String(row.id) : `row-${startIndex + visibleIndex}`;
 
                                     return (
                                         <div
-                                            key={row.id}
+                                            key={rowKey}
                                             className="flex hover:bg-zinc-900/30 transition-colors group border-b border-[#2e2e2e]/30"
                                             style={{ height: `${ROW_HEIGHT}px` }}
                                         >
-                                            {/* Checkbox */}
-                                            <div className="w-10 px-4 flex items-center shrink-0 sticky left-0 z-20 bg-[#171717] border-r border-[#2e2e2e]/40 group-hover:bg-zinc-900/30">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={selectedIds.has(String(row.id))}
-                                                    onChange={() => toggleSelectRow(row.id)}
-                                                    className="rounded border-border bg-transparent accent-primary"
-                                                />
-                                            </div>
+                                            {rowIdentityEnabled && (
+                                                <div className="w-10 px-4 flex items-center shrink-0 sticky left-0 z-20 bg-[#171717] border-r border-[#2e2e2e]/40 group-hover:bg-zinc-900/30">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedIds.has(String(row.id))}
+                                                        onChange={() => toggleSelectRow(row.id)}
+                                                        className="rounded border-border bg-transparent accent-primary"
+                                                    />
+                                                </div>
+                                            )}
 
                                             {/* Data cells */}
                                             {standardColumns.map((col: any) => {
                                                 const val = row[col.name];
                                                 const width = getColumnWidth(col.name, col.type);
                                                 const isCellEditing = isEditing && editingCell?.colName === col.name;
-                                                const isEditable = col.name !== 'id' && col.name !== 'created_at';
-                                                const isPinnedIdentityColumn = col.name === 'id';
+                                                const isEditable = rowIdentityEnabled && col.name !== 'id' && col.name !== 'created_at';
+                                                const isPinnedIdentityColumn = rowIdentityEnabled && col.name === 'id';
 
                                                 return (
                                                     <div
@@ -1499,7 +1557,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                                                             ${isPinnedIdentityColumn ? 'sticky z-10 bg-[#171717] border-r border-[#2e2e2e]/40 group-hover:bg-zinc-900/30 shadow-[10px_0_16px_-14px_rgba(0,0,0,0.75)]' : ''}`}
                                                         style={{
                                                             width: `${width}px`,
-                                                            ...(isPinnedIdentityColumn ? { left: `${CHECKBOX_COLUMN_WIDTH}px` } : {})
+                                                            ...(isPinnedIdentityColumn ? { left: `${selectionColumnWidth}px` } : {})
                                                         }}
                                                     >
                                                         <InlineCellEditor
@@ -1516,25 +1574,26 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, all
                                                 );
                                             })}
 
-                                            {/* Actions */}
-                                            <div className="w-20 px-4 flex items-center justify-end gap-2 shrink-0 sticky right-0 z-20 bg-[#171717] border-l border-[#2e2e2e]/40 group-hover:bg-zinc-900/30 shadow-[-10px_0_16px_-14px_rgba(0,0,0,0.75)]">
-                                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <button
-                                                        onClick={() => handleEditRow(row)}
-                                                        className="p-1.5 hover:text-primary transition-colors hover:bg-zinc-800 rounded"
-                                                        title="Edit in modal"
-                                                    >
-                                                        <GripVertical size={12} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleDeleteRow(row.id)}
-                                                        className="p-1.5 hover:text-red-500 transition-colors hover:bg-zinc-800 rounded"
-                                                        title="Delete row"
-                                                    >
-                                                        <Trash2 size={12} />
-                                                    </button>
+                                            {rowIdentityEnabled && (
+                                                <div className="w-20 px-4 flex items-center justify-end gap-2 shrink-0 sticky right-0 z-20 bg-[#171717] border-l border-[#2e2e2e]/40 group-hover:bg-zinc-900/30 shadow-[-10px_0_16px_-14px_rgba(0,0,0,0.75)]">
+                                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <button
+                                                            onClick={() => handleEditRow(row)}
+                                                            className="p-1.5 hover:text-primary transition-colors hover:bg-zinc-800 rounded"
+                                                            title="Edit in modal"
+                                                        >
+                                                            <GripVertical size={12} />
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleDeleteRow(row.id)}
+                                                            className="p-1.5 hover:text-red-500 transition-colors hover:bg-zinc-800 rounded"
+                                                            title="Delete row"
+                                                        >
+                                                            <Trash2 size={12} />
+                                                        </button>
+                                                    </div>
                                                 </div>
-                                            </div>
+                                            )}
                                         </div>
                                     );
                                 })}

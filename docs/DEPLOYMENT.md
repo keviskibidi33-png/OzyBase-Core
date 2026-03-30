@@ -41,6 +41,7 @@ DB_USER=ozyuser
 DB_PASSWORD=<strong-password>
 DB_NAME=Ozydb
 DB_SSLMODE=verify-full
+DB_POOLER_URL=<recommended-pgbouncer-or-supavisor-url>
 
 # Rate limiter
 RATE_LIMIT_RPS=20
@@ -61,6 +62,14 @@ Required by compose:
 - `JWT_SECRET`
 - `SITE_URL`
 - `APP_DOMAIN`
+
+Recommended for production:
+- `DB_POOLER_URL`
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USER`
+- `SMTP_PASSWORD`
+- `SMTP_FROM`
 - `ALLOWED_ORIGINS`
 
 ## 4. Deploy
@@ -212,6 +221,15 @@ Confirm:
 - Keep DB backups automated and run `bash scripts/disaster_drill.sh` regularly.
 - Monitor 4xx/5xx trends and auth failures.
 
+## 8.1 Azure Production Path
+For Azure Container Apps or another stateless cloud runtime:
+- Use external PostgreSQL, not the embedded database.
+- Set `JWT_SECRET`, `ANON_KEY`, and `SERVICE_ROLE_KEY` explicitly from a secret manager.
+- Set `DB_POOLER_URL` when fronting PostgreSQL with PgBouncer/Supavisor.
+- Use real `SITE_URL` and `APP_DOMAIN` values over HTTPS.
+- Configure SMTP for verification, reset, and workspace invites.
+- See [Azure Production Guide](./AZURE_PRODUCTION.md).
+
 ## 9. Common Production Mistakes
 - Committing `.env` or secrets files.
 - Leaving default/weak `JWT_SECRET`.
@@ -224,6 +242,7 @@ Use `docker-compose.coolify.yml` with a managed PostgreSQL service.
 
 ### Variables to set in Coolify
 - `DATABASE_URL` (required)
+- `DB_POOLER_URL` (recommended)
 - `DEBUG=false`
 - `OZY_STRICT_SECURITY=true` (recommended in production)
 - `OZY_STORAGE_FALLBACK_LOCAL=true` (recommended, fail-open to local storage if S3 init fails)
@@ -243,6 +262,7 @@ Auto defaults in Coolify compose:
 
 ### Notes
 - Keep PostgreSQL private and use TLS in `DATABASE_URL` (`sslmode=require` or stronger).
+- Set `DB_POOLER_URL` when your managed PostgreSQL provider exposes a pooler endpoint.
 - With `OZY_STRICT_SECURITY=true`, startup fails on insecure public DB URLs or wildcard origins.
 - With `OZY_STORAGE_FALLBACK_LOCAL=true`, startup falls back to local storage if S3 is unavailable.
 - During static key rotation, previous keys are accepted only until `STATIC_KEY_GRACE_UNTIL`.

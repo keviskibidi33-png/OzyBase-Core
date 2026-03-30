@@ -148,7 +148,18 @@ func run() error {
 	applier := migrations.NewApplier(db.Pool, "./migrations")
 
 	// Initialize Server Components
-	h := api.NewHandler(db, broker, dispatcher, mailSvc, storageSvc, ps, migrator, applier, auditService)
+	h := api.NewHandler(
+		db,
+		broker,
+		dispatcher,
+		mailSvc,
+		storageSvc,
+		ps,
+		migrator,
+		applier,
+		api.BuildProjectProductionReadiness(cfg),
+		auditService,
+	)
 	if err := api.EnsureEssentialAPIKeys(ctx, db, api.EssentialAPIKeyBootstrap{
 		AnonKey:        cfg.AnonKey,
 		ServiceRoleKey: cfg.ServiceRoleKey,

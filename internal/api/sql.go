@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/Xangel0s/OzyBase/internal/data"
 	"github.com/labstack/echo/v4"
 )
 
@@ -35,6 +38,20 @@ type SQLExecuteResponse struct {
 	Message       string          `json:"message"`
 }
 
+type sqlTableMutation struct {
+	Action        string
+	TableName     string
+	PreviousTable string
+}
+
+var (
+	qualifiedSQLIdentifierPattern = `((?:"(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_]*)(?:\s*\.\s*(?:"(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_]*))?)`
+	createTableSQLPattern         = regexp.MustCompile(`(?is)^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?` + qualifiedSQLIdentifierPattern)
+	alterTableSQLPattern          = regexp.MustCompile(`(?is)^\s*ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?` + qualifiedSQLIdentifierPattern)
+	alterTableRenameSQLPattern    = regexp.MustCompile(`(?is)^\s*ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?` + qualifiedSQLIdentifierPattern + `\s+RENAME\s+TO\s+((?:"(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_]*))`)
+	dropTableSQLPattern           = regexp.MustCompile(`(?is)^\s*DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(.+?)(?:\s+CASCADE|\s+RESTRICT)?\s*$`)
+)
+
 // HandleExecuteSQL executes a raw SQL query provided by the admin
 func (h *Handler) HandleExecuteSQL(c echo.Context) error {
 	var req SQLExecuteRequest
@@ -51,6 +68,7 @@ func (h *Handler) HandleExecuteSQL(c echo.Context) error {
 	defer cancel()
 
 	statementKind := sqlStatementKind(req.Query)
+	workspaceID, _ := c.Get("workspace_id").(string)
 
 	if !sqlQueryProducesRows(req.Query) {
 		tag, err := h.DB.Pool.Exec(ctx, req.Query)
@@ -60,6 +78,7 @@ func (h *Handler) HandleExecuteSQL(c echo.Context) error {
 
 		duration := time.Since(start)
 		rowsAffected := tag.RowsAffected()
+		h.syncCollectionsAfterSQL(ctx, req.Query, workspaceID)
 
 		return c.JSON(http.StatusOK, SQLExecuteResponse{
 			Columns:       []string{},
@@ -131,6 +150,295 @@ func (h *Handler) HandleExecuteSQL(c echo.Context) error {
 		HasResultSet:  true,
 		Message:       sqlExecutionMessage(statementKind, true, rowCount, rowsAffected),
 	})
+}
+
+func (h *Handler) syncCollectionsAfterSQL(ctx context.Context, query string, workspaceID string) {
+	mutations := extractSQLTableMutations(query)
+	if len(mutations) == 0 {
+		return
+	}
+
+	for _, mutation := range mutations {
+		var err error
+		switch mutation.Action {
+		case "upsert":
+			err = h.upsertCollectionMetadataForTable(ctx, mutation.TableName, workspaceID)
+		case "rename":
+			err = h.renameCollectionMetadataForTable(ctx, mutation.PreviousTable, mutation.TableName, workspaceID)
+		case "drop":
+			err = h.deleteCollectionMetadataForTable(ctx, mutation.TableName)
+		}
+		if err != nil {
+			log.Printf("⚠️ Warning: Failed to sync SQL collection metadata for %s (%s): %v", mutation.TableName, mutation.Action, err)
+		}
+	}
+}
+
+func extractSQLTableMutations(query string) []sqlTableMutation {
+	statements := splitSQLStatements(query)
+	mutations := make([]sqlTableMutation, 0, len(statements))
+	seen := make(map[string]struct{})
+
+	appendMutation := func(item sqlTableMutation) {
+		key := strings.Join([]string{item.Action, item.PreviousTable, item.TableName}, "|")
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		mutations = append(mutations, item)
+	}
+
+	for _, statement := range statements {
+		switch {
+		case alterTableRenameSQLPattern.MatchString(statement):
+			match := alterTableRenameSQLPattern.FindStringSubmatch(statement)
+			oldTableName, okOld := normalizePublicTableIdentifier(match[1])
+			newTableName, okNew := normalizePublicTableIdentifier(match[2])
+			if okOld && okNew {
+				appendMutation(sqlTableMutation{
+					Action:        "rename",
+					TableName:     newTableName,
+					PreviousTable: oldTableName,
+				})
+			}
+		case createTableSQLPattern.MatchString(statement):
+			match := createTableSQLPattern.FindStringSubmatch(statement)
+			if tableName, ok := normalizePublicTableIdentifier(match[1]); ok {
+				appendMutation(sqlTableMutation{Action: "upsert", TableName: tableName})
+			}
+		case alterTableSQLPattern.MatchString(statement):
+			match := alterTableSQLPattern.FindStringSubmatch(statement)
+			if tableName, ok := normalizePublicTableIdentifier(match[1]); ok {
+				appendMutation(sqlTableMutation{Action: "upsert", TableName: tableName})
+			}
+		case dropTableSQLPattern.MatchString(statement):
+			match := dropTableSQLPattern.FindStringSubmatch(statement)
+			for _, rawTarget := range splitDDLTargetList(match[1]) {
+				if tableName, ok := normalizePublicTableIdentifier(rawTarget); ok {
+					appendMutation(sqlTableMutation{Action: "drop", TableName: tableName})
+				}
+			}
+		}
+	}
+
+	return mutations
+}
+
+func splitSQLStatements(raw string) []string {
+	var (
+		builder        strings.Builder
+		statements     []string
+		inSingleQuote  bool
+		inDoubleQuote  bool
+		inLineComment  bool
+		inBlockComment bool
+	)
+
+	flush := func() {
+		statement := strings.TrimSpace(builder.String())
+		if statement != "" {
+			statements = append(statements, statement)
+		}
+		builder.Reset()
+	}
+
+	for i := 0; i < len(raw); i++ {
+		ch := raw[i]
+
+		if inLineComment {
+			if ch == '\n' {
+				inLineComment = false
+				builder.WriteByte('\n')
+			}
+			continue
+		}
+		if inBlockComment {
+			if ch == '*' && i+1 < len(raw) && raw[i+1] == '/' {
+				inBlockComment = false
+				i++
+			}
+			continue
+		}
+		if inSingleQuote {
+			builder.WriteByte(ch)
+			if ch == '\'' {
+				if i+1 < len(raw) && raw[i+1] == '\'' {
+					builder.WriteByte(raw[i+1])
+					i++
+				} else {
+					inSingleQuote = false
+				}
+			}
+			continue
+		}
+		if inDoubleQuote {
+			builder.WriteByte(ch)
+			if ch == '"' {
+				if i+1 < len(raw) && raw[i+1] == '"' {
+					builder.WriteByte(raw[i+1])
+					i++
+				} else {
+					inDoubleQuote = false
+				}
+			}
+			continue
+		}
+
+		if ch == '-' && i+1 < len(raw) && raw[i+1] == '-' {
+			inLineComment = true
+			i++
+			continue
+		}
+		if ch == '/' && i+1 < len(raw) && raw[i+1] == '*' {
+			inBlockComment = true
+			i++
+			continue
+		}
+		if ch == '\'' {
+			inSingleQuote = true
+			builder.WriteByte(ch)
+			continue
+		}
+		if ch == '"' {
+			inDoubleQuote = true
+			builder.WriteByte(ch)
+			continue
+		}
+		if ch == ';' {
+			flush()
+			continue
+		}
+
+		builder.WriteByte(ch)
+	}
+
+	flush()
+	return statements
+}
+
+func splitDDLTargetList(raw string) []string {
+	items := []string{}
+	var (
+		builder       strings.Builder
+		inDoubleQuote bool
+	)
+
+	flush := func() {
+		item := strings.TrimSpace(builder.String())
+		if item != "" {
+			items = append(items, item)
+		}
+		builder.Reset()
+	}
+
+	for i := 0; i < len(raw); i++ {
+		ch := raw[i]
+		if inDoubleQuote {
+			builder.WriteByte(ch)
+			if ch == '"' {
+				if i+1 < len(raw) && raw[i+1] == '"' {
+					builder.WriteByte(raw[i+1])
+					i++
+				} else {
+					inDoubleQuote = false
+				}
+			}
+			continue
+		}
+		if ch == '"' {
+			inDoubleQuote = true
+			builder.WriteByte(ch)
+			continue
+		}
+		if ch == ',' {
+			flush()
+			continue
+		}
+		builder.WriteByte(ch)
+	}
+
+	flush()
+	return items
+}
+
+func normalizePublicTableIdentifier(raw string) (string, bool) {
+	parts := splitQualifiedIdentifier(raw)
+	if len(parts) == 0 || len(parts) > 2 {
+		return "", false
+	}
+
+	normalizePart := func(part string) (string, bool) {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return "", false
+		}
+		if strings.HasPrefix(part, "\"") && strings.HasSuffix(part, "\"") {
+			part = strings.TrimPrefix(strings.TrimSuffix(part, "\""), "\"")
+			part = strings.ReplaceAll(part, `""`, `"`)
+		}
+		if !data.IsValidIdentifier(part) {
+			return "", false
+		}
+		return part, true
+	}
+
+	if len(parts) == 1 {
+		tableName, ok := normalizePart(parts[0])
+		return tableName, ok
+	}
+
+	schemaName, ok := normalizePart(parts[0])
+	if !ok || !strings.EqualFold(schemaName, "public") {
+		return "", false
+	}
+
+	tableName, ok := normalizePart(parts[1])
+	return tableName, ok
+}
+
+func splitQualifiedIdentifier(raw string) []string {
+	parts := []string{}
+	var (
+		builder       strings.Builder
+		inDoubleQuote bool
+	)
+
+	flush := func() {
+		part := strings.TrimSpace(builder.String())
+		if part != "" {
+			parts = append(parts, part)
+		}
+		builder.Reset()
+	}
+
+	for i := 0; i < len(raw); i++ {
+		ch := raw[i]
+		if inDoubleQuote {
+			builder.WriteByte(ch)
+			if ch == '"' {
+				if i+1 < len(raw) && raw[i+1] == '"' {
+					builder.WriteByte(raw[i+1])
+					i++
+				} else {
+					inDoubleQuote = false
+				}
+			}
+			continue
+		}
+		if ch == '"' {
+			inDoubleQuote = true
+			builder.WriteByte(ch)
+			continue
+		}
+		if ch == '.' {
+			flush()
+			continue
+		}
+		builder.WriteByte(ch)
+	}
+
+	flush()
+	return parts
 }
 
 func sqlQueryProducesRows(query string) bool {

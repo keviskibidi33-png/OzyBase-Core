@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   Check,
   Copy,
   CreditCard,
@@ -27,6 +28,20 @@ interface SettingsProps {
 interface ProjectInfo {
   database?: string;
   version?: string;
+  production?: ProductionReadiness;
+}
+
+interface ProductionReadiness {
+  status?: string;
+  launch_ready?: boolean;
+  deployment_mode?: string;
+  strict_security?: boolean;
+  managed_secrets?: boolean;
+  https_site_url?: boolean;
+  placeholder_domains?: boolean;
+  smtp_configured?: boolean;
+  pooler_configured?: boolean;
+  warnings?: string[];
 }
 
 interface ConnectionInfo {
@@ -158,6 +173,118 @@ const Settings: React.FC<SettingsProps> = ({
           </div>
         </div>
       </div>
+
+      <div className="bg-[#171717]/50 border border-[#2e2e2e] rounded-3xl overflow-hidden shadow-2xl">
+        <div className="px-8 py-6 border-b border-[#2e2e2e] flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h3 className="text-lg font-black text-white uppercase tracking-tight">
+              Production Readiness
+            </h3>
+            <p className="text-[11px] text-zinc-500 mt-1">
+              Safe runtime checks for launching OzyBase on Azure or another
+              cloud target.
+            </p>
+          </div>
+          <div
+            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] ${
+              projectInfo?.production?.launch_ready
+                ? "border-green-500/30 bg-green-500/10 text-green-400"
+                : "border-amber-500/30 bg-amber-500/10 text-amber-300"
+            }`}
+          >
+            {projectInfo?.production?.launch_ready ? "Launch Ready" : "Action Required"}
+          </div>
+        </div>
+
+        <div className="p-8 space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {[
+              {
+                label: "Database Runtime",
+                value:
+                  projectInfo?.production?.deployment_mode === "external_postgres"
+                    ? "External Postgres"
+                    : "Embedded Postgres",
+                ok: projectInfo?.production?.deployment_mode === "external_postgres",
+              },
+              {
+                label: "Connection Pooler",
+                value: projectInfo?.production?.pooler_configured
+                  ? "Configured"
+                  : "Missing",
+                ok: projectInfo?.production?.pooler_configured,
+              },
+              {
+                label: "Strict Security",
+                value: projectInfo?.production?.strict_security ? "Enabled" : "Disabled",
+                ok: projectInfo?.production?.strict_security,
+              },
+              {
+                label: "Managed Secrets",
+                value: projectInfo?.production?.managed_secrets
+                  ? "Static"
+                  : "Auto-generated",
+                ok: projectInfo?.production?.managed_secrets,
+              },
+              {
+                label: "HTTPS Site URL",
+                value: projectInfo?.production?.https_site_url ? "HTTPS" : "HTTP or missing",
+                ok: projectInfo?.production?.https_site_url,
+              },
+              {
+                label: "Transactional Email",
+                value: projectInfo?.production?.smtp_configured
+                  ? "SMTP ready"
+                  : "Console mailer",
+                ok: projectInfo?.production?.smtp_configured,
+              },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className="bg-[#0c0c0c] border border-[#2e2e2e] rounded-2xl p-5"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2">
+                      {item.label}
+                    </p>
+                    <p className="text-sm font-semibold text-white">{item.value}</p>
+                  </div>
+                  <div
+                    className={`mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-full border ${
+                      item.ok
+                        ? "border-green-500/30 bg-green-500/10 text-green-400"
+                        : "border-amber-500/30 bg-amber-500/10 text-amber-300"
+                    }`}
+                  >
+                    {item.ok ? <Check size={14} /> : <AlertTriangle size={14} />}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {projectInfo?.production?.warnings &&
+            projectInfo.production.warnings.length > 0 && (
+              <div className="bg-[#0c0c0c] border border-amber-500/20 rounded-2xl p-5">
+                <p className="text-[10px] font-black uppercase tracking-widest text-amber-300 mb-3">
+                  Launch Blockers
+                </p>
+                <div className="space-y-2">
+                  {projectInfo.production.warnings.map((warning) => (
+                    <div
+                      key={warning}
+                      className="flex items-start gap-3 text-xs text-zinc-300"
+                    >
+                      <AlertTriangle size={14} className="mt-0.5 text-amber-300 shrink-0" />
+                      <span>{warning}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+        </div>
+      </div>
     </div>
   );
 
@@ -184,6 +311,9 @@ const Settings: React.FC<SettingsProps> = ({
               label: "Pooler URI",
               value: connectionInfo?.pooler_uri_template,
               copyKey: "pooler-uri",
+              hint: connectionInfo?.pooler_uri_template
+                ? undefined
+                : "Set DB_POOLER_URL when using PgBouncer, Supavisor, or Azure connection pooling.",
             },
             {
               label: "API URL",
@@ -203,6 +333,11 @@ const Settings: React.FC<SettingsProps> = ({
                   <code className="text-xs text-zinc-300 break-all">
                     {item.value || "not available"}
                   </code>
+                  {item.hint && (
+                    <p className="text-[11px] text-zinc-500 mt-2 max-w-2xl">
+                      {item.hint}
+                    </p>
+                  )}
                 </div>
                 <button
                   onClick={() => void copyValue(item.value, item.copyKey)}

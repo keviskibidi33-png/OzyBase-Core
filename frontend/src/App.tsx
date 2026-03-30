@@ -157,7 +157,7 @@ function App() {
             case 'Overview':
                 return <Overview onTableSelect={handleTableSelect} onViewSelect={setSelectedView} />;
             case 'SqlTerminal':
-                return <SqlTerminal />;
+                return <SqlTerminal onSchemaChange={loadTables} />;
             case 'AuthManager':
                 return <AuthManager view={String(props.view || 'users')} onViewSelect={setSelectedView} />;
             case 'AuthProvidersView':

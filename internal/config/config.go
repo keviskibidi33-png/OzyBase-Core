@@ -25,6 +25,8 @@ type Config struct {
 	PreviousServiceRoleKey string
 	StaticKeyGraceUntil    time.Time
 	APIKeyGraceMinutes     int
+	Debug                  bool
+	StrictSecurity         bool
 
 	// Security & Domains
 	AppDomain      string
@@ -147,6 +149,8 @@ func Load() (*Config, error) {
 		PreviousServiceRoleKey:  previousServiceRoleKey,
 		StaticKeyGraceUntil:     staticKeyGraceUntil,
 		APIKeyGraceMinutes:      apiKeyGraceMinutes,
+		Debug:                   debug,
+		StrictSecurity:          strictSecurity,
 		AppDomain:               appDomain,
 		SiteURL:                 siteURL,
 		AllowedOrigins:          origins,
@@ -312,6 +316,20 @@ func resolveAllowedOrigins(originsStr, siteURL, appDomain string, debug bool) ([
 func validateSecurity(cfg *Config, debug, strict bool) ([]string, error) {
 	warnings := []string{}
 
+	if cfg.DatabaseURL == "" && !debug {
+		warnings = append(warnings, "DATABASE_URL is not configured; OzyBase will boot with embedded PostgreSQL, which is not recommended for cloud production")
+	}
+
+	if cfg.GeneratedJWTSecret && !debug {
+		warnings = append(warnings, "JWT_SECRET was auto-generated on this instance; set it explicitly from a secret manager for cloud production")
+	}
+	if cfg.GeneratedAnonKey && !debug {
+		warnings = append(warnings, "ANON_KEY was auto-generated on this instance; set it explicitly so public clients keep a stable publishable key")
+	}
+	if cfg.GeneratedServiceRoleKey && !debug {
+		warnings = append(warnings, "SERVICE_ROLE_KEY was auto-generated on this instance; set it explicitly so server integrations keep a stable secret key")
+	}
+
 	if len(cfg.JWTSecret) < 32 {
 		msg := "JWT_SECRET is shorter than recommended minimum (32 chars)"
 		if strict && !debug {
@@ -340,6 +358,12 @@ func validateSecurity(cfg *Config, debug, strict bool) ([]string, error) {
 			return nil, dbErr
 		}
 		warnings = append(warnings, dbWarnings...)
+	}
+	if cfg.DatabaseURL != "" && !debug &&
+		readEnv("DB_POOLER_URL") == "" &&
+		readEnv("POOLER_URL") == "" &&
+		readEnv("DB_POOLER_HOST") == "" {
+		warnings = append(warnings, "DB_POOLER_URL is not configured; direct database connections are enabled, but a pooler is recommended for multi-instance production workloads")
 	}
 
 	if placeholderDomain(cfg.SiteURL) {

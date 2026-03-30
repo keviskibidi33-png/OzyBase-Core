@@ -103,6 +103,90 @@ func TestLoad_WarnsWhenSMTPIsMissingInNonDebug(t *testing.T) {
 	}
 }
 
+func TestLoad_WarnsWhenDatabaseURLIsMissingInNonDebug(t *testing.T) {
+	withTempDir(t)
+	resetEnv(t)
+
+	t.Setenv("DEBUG", "false")
+	t.Setenv("JWT_SECRET", "this_is_a_strong_secret_with_more_than_32_chars")
+	t.Setenv("SITE_URL", "https://api.real-domain.test")
+	t.Setenv("APP_DOMAIN", "real-domain.test")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	found := false
+	for _, warning := range cfg.SecurityWarnings {
+		if warning == "DATABASE_URL is not configured; OzyBase will boot with embedded PostgreSQL, which is not recommended for cloud production" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected embedded database warning when DATABASE_URL is missing")
+	}
+}
+
+func TestLoad_WarnsWhenPoolerIsMissingForExternalDatabase(t *testing.T) {
+	withTempDir(t)
+	resetEnv(t)
+
+	t.Setenv("DEBUG", "false")
+	t.Setenv("JWT_SECRET", "this_is_a_strong_secret_with_more_than_32_chars")
+	t.Setenv("SITE_URL", "https://api.real-domain.test")
+	t.Setenv("APP_DOMAIN", "real-domain.test")
+	t.Setenv("DATABASE_URL", "postgres://user:pass@db.internal:5432/db?sslmode=require")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	found := false
+	for _, warning := range cfg.SecurityWarnings {
+		if warning == "DB_POOLER_URL is not configured; direct database connections are enabled, but a pooler is recommended for multi-instance production workloads" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected pooler warning for external database without DB_POOLER_URL")
+	}
+}
+
+func TestLoad_WarnsWhenSecretsAreGeneratedInNonDebug(t *testing.T) {
+	withTempDir(t)
+	resetEnv(t)
+
+	t.Setenv("DEBUG", "false")
+	t.Setenv("SITE_URL", "https://api.real-domain.test")
+	t.Setenv("APP_DOMAIN", "real-domain.test")
+	t.Setenv("DATABASE_URL", "postgres://user:pass@db.internal:5432/db?sslmode=require")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	expected := map[string]bool{
+		"JWT_SECRET was auto-generated on this instance; set it explicitly from a secret manager for cloud production":            false,
+		"ANON_KEY was auto-generated on this instance; set it explicitly so public clients keep a stable publishable key":         false,
+		"SERVICE_ROLE_KEY was auto-generated on this instance; set it explicitly so server integrations keep a stable secret key": false,
+	}
+	for _, warning := range cfg.SecurityWarnings {
+		if _, ok := expected[warning]; ok {
+			expected[warning] = true
+		}
+	}
+	for message, found := range expected {
+		if !found {
+			t.Fatalf("expected generated-secret warning %q", message)
+		}
+	}
+}
+
 func TestLoad_NonStrictWarnsOnInsecurePublicDatabaseURL(t *testing.T) {
 	withTempDir(t)
 	resetEnv(t)
@@ -165,6 +249,7 @@ func resetEnv(t *testing.T) {
 	t.Helper()
 	keys := []string{
 		"DATABASE_URL", "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME", "DB_SSLMODE",
+		"DB_POOLER_URL", "POOLER_URL", "DB_POOLER_HOST", "DB_POOLER_PORT", "DB_POOLER_USER", "DB_POOLER_DATABASE", "DB_POOLER_SSLMODE",
 		"JWT_SECRET", "ANON_KEY", "SERVICE_ROLE_KEY", "OZY_SERVICE_ROLE_KEY",
 		"SITE_URL", "APP_DOMAIN", "ALLOWED_ORIGINS", "DEBUG", "OZY_STRICT_SECURITY", "SMTP_HOST",
 	}
