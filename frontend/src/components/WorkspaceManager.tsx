@@ -346,7 +346,7 @@ const WorkspaceManager = ({ onWorkspaceChange, onViewSelect, view = 'wm_overview
                                         <div>
                                             <p className="text-lg font-black text-white group-hover:text-primary transition-colors">{workspace.name}</p>
                                             <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mt-1">
-                                                Role: {workspace.currentRole} â€¢ {workspace.memberCount} member{workspace.memberCount > 1 ? 's' : ''}
+                                                Role: {workspace.currentRole} - {workspace.memberCount} member{workspace.memberCount > 1 ? 's' : ''}
                                             </p>
                                         </div>
                                         <ArrowRight size={18} className="text-zinc-500 group-hover:text-primary transition-colors" />

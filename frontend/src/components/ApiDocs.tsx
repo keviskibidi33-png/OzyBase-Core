@@ -324,7 +324,7 @@ const ApiDocs = ({ page = 'intro' }: any) => {
                             <h2 className="text-2xl font-black text-white mb-4 uppercase tracking-tighter italic">Realtime API</h2>
                             <p className="text-zinc-400 mb-6 leading-relaxed">
                                 Subscribe to database changes in real-time using Server-Sent Events (SSE). 
-                                No complex WebSocket handshakes requiredâ€”just a simple, persistent connection.
+                                No complex WebSocket handshakes required - just a simple, persistent connection.
                             </p>
                             
                             <div className="p-6 bg-[#0c0c0c] rounded-2xl border border-[#2e2e2e] mb-8">

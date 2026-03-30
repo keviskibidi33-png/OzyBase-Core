@@ -125,7 +125,7 @@ const SecurityManager = () => {
                         <Shield className="text-primary" size={24} />
                     </div>
                     <div>
-                        <h1 className="text-3xl font-black text-white uppercase tracking-tighter italic">Security Alertas</h1>
+                        <h1 className="text-3xl font-black text-white uppercase tracking-tighter italic">Geo-Fencing</h1>
                         <p className="text-zinc-500 text-[10px] font-black uppercase tracking-widest mt-1">Configure geo-fencing and access control policies</p>
                     </div>
                 </div>
@@ -178,7 +178,7 @@ const SecurityManager = () => {
                                 <div className="w-full p-8 border-2 border-dashed border-zinc-800 rounded-2xl flex flex-col items-center justify-center text-zinc-600 gap-2">
                                     <Info size={24} />
                                     <p className="text-[10px] font-black uppercase tracking-widest">No countries allowed</p>
-                                    <p className="text-[9px] lowercase italic font-medium">When enabled, ALL countries will be blocked. Addå°‘ãªãã¨ã‚‚ one country.</p>
+                                    <p className="text-[9px] lowercase italic font-medium">When enabled, all countries are blocked until you add at least one allowed country.</p>
                                 </div>
                             ) : (
                                 geo.allowed_countries.map((country: any) => (

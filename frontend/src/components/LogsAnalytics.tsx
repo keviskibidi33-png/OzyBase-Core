@@ -56,20 +56,20 @@ const LogsAnalytics = ({ view = 'explorer' }: any) => {
                 const result = await res.json();
                 const { logs: logData, server_time } = result;
 
-                // ðŸŒ Sync server time
+                // Sync server time
                 if (server_time) {
                     const sTime = new Date(server_time).getTime();
                     latestServerTimeRef.current = sTime;
                     setLastSyncTime(sTime);
                 }
                 
-                // ðŸ›‘ CRITICAL: Check generation AGAIN after the network delay!
+                // Check generation again after the network delay.
                 if (currentGen !== generationRef.current) {
-                    console.debug(`ðŸ•’ [Logs Stale] Ignoring stale data from generation ${currentGen}`);
+                    console.debug(`[Logs Stale] Ignoring stale data from generation ${currentGen}`);
                     return;
                 }
 
-                // ðŸ§¹ Filter at fetch time: never let cleared logs enter state
+                // Filter at fetch time so cleared logs never re-enter state.
                 const clearTime = Number(localStorage.getItem('ozy_logs_clear_time')) || 0;
                 if (clearTime > 0) {
                     const filtered = logData.filter((log: any) => {
@@ -110,7 +110,7 @@ const LogsAnalytics = ({ view = 'explorer' }: any) => {
         } catch (e) { console.error("Export failed", e); }
     };
 
-    // ðŸ”„ Reliable polling with setInterval (never breaks, unlike recursive setTimeout)
+    // Reliable polling with setInterval avoids recursive timer drift.
     useEffect(() => {
         let intervalId;
         let isMounted = true;
@@ -154,18 +154,18 @@ const LogsAnalytics = ({ view = 'explorer' }: any) => {
                 <div className="flex items-center gap-2">
                     <button 
                         onClick={() => {
-                            // ðŸ Reset generation to ignore stale in-flight fetches
+                            // Reset generation to ignore stale in-flight fetches.
                             generationRef.current += 1;
                             
-                            // ðŸŒ AUTHORITATIVE: Use server-relative time for clearing
+                            // Use server-relative time as the authoritative clear threshold.
                             const referenceTime = latestServerTimeRef.current;
                             if (!referenceTime) {
-                                console.warn("âš ï¸ [Clear Guard] Waiting for server sync before clearing...");
+                                console.warn("[Clear Guard] Waiting for server sync before clearing...");
                                 return;
                             }
                             const latestTimestamp = referenceTime; 
                             
-                            console.log(`ðŸ§¹ [Clear Console] Gen: ${generationRef.current} | Threshold: ${new Date(latestTimestamp).toISOString()}`);
+                            console.log(`[Clear Console] Gen: ${generationRef.current} | Threshold: ${new Date(latestTimestamp).toISOString()}`);
                             localStorage.setItem('ozy_logs_clear_time', latestTimestamp.toString());
                             setLastClearedTime(latestTimestamp);
                             setLogs([]);
@@ -182,7 +182,7 @@ const LogsAnalytics = ({ view = 'explorer' }: any) => {
                                 localStorage.removeItem('ozy_logs_clear_time');
                                 setLastClearedTime(0);
                                 // Immediate re-fetch (no skip)
-                                console.log("ðŸ”„ [Reset Filters] All history restored.");
+                                console.log("[Reset Filters] All history restored.");
                             }}
                             className="bg-zinc-800 text-zinc-400 hover:text-emerald-500 p-1.5 rounded-xl transition-all border border-transparent hover:border-emerald-500/20"
                             title="Restore all logs"
@@ -246,7 +246,7 @@ const LogsAnalytics = ({ view = 'explorer' }: any) => {
                             <span className={`shrink-0 font-bold ${log.method === 'GET' ? 'text-blue-400' : 'text-purple-400'}`}>{log.method}</span>
                             <span className="text-zinc-300 truncate">{log.path}</span>
                             <span className={`shrink-0 ${log.status >= 400 ? 'text-red-500' : 'text-emerald-500'}`}>{log.status}</span>
-                            <span className="ml-auto text-zinc-700 italic opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{log.latency} â€¢ {log.ip || 'local'}</span>
+                            <span className="ml-auto text-zinc-700 italic opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{log.latency} - {log.ip || 'local'}</span>
                         </div>
                     ))}
                     {(() => {
@@ -309,7 +309,7 @@ const LogsAnalytics = ({ view = 'explorer' }: any) => {
             const browserTime = Date.now();
             const drift = Math.abs(browserTime - lastSyncTime);
             if (drift > 10000) {
-                console.warn(`ðŸ•’ [Clock Drift] Browser and Server clocks are desynced by ${Math.round(drift/1000)}s! This might cause "Clear Console" to behave unexpectedly if not using server-relative thresholds.`);
+                console.warn(`[Clock Drift] Browser and Server clocks are desynced by ${Math.round(drift/1000)}s. "Clear Console" may behave unexpectedly without server-relative thresholds.`);
             }
         }
     }, [lastSyncTime]);
@@ -461,18 +461,18 @@ const LogsAnalytics = ({ view = 'explorer' }: any) => {
                 <div className="flex items-center gap-3">
                     <button 
                         onClick={() => {
-                            // ðŸ Reset generation to ignore stale in-flight fetches
+                            // Reset generation to ignore stale in-flight fetches.
                             generationRef.current += 1;
 
-                            // ðŸŒ AUTHORITATIVE: Use server-relative time for clearing
+                            // Use server-relative time as the authoritative clear threshold.
                             const referenceTime = latestServerTimeRef.current;
                             if (!referenceTime) {
-                                console.warn("âš ï¸ [Clear Guard] Waiting for server sync before clearing...");
+                                console.warn("[Clear Guard] Waiting for server sync before clearing...");
                                 return;
                             }
                             const latestTimestamp = referenceTime; 
                             
-                            console.log(`ðŸ§¹ [Clear Explorer] Gen: ${generationRef.current} | Threshold: ${new Date(latestTimestamp).toISOString()}`);
+                            console.log(`[Clear Explorer] Gen: ${generationRef.current} | Threshold: ${new Date(latestTimestamp).toISOString()}`);
                             localStorage.setItem('ozy_logs_clear_time', latestTimestamp.toString());
                             setLastClearedTime(latestTimestamp);
                             setLogs([]);
@@ -488,7 +488,7 @@ const LogsAnalytics = ({ view = 'explorer' }: any) => {
                             onClick={() => {
                                 localStorage.removeItem('ozy_logs_clear_time');
                                 setLastClearedTime(0);
-                                console.log("ðŸ”„ [Reset Explorer] All history restored.");
+                                console.log("[Reset Explorer] All history restored.");
                             }}
                             className="bg-[#0c0c0c] text-zinc-500 hover:text-emerald-500 p-1.5 rounded-xl transition-all border border-[#2e2e2e] hover:border-emerald-500/20"
                             title="Restore all logs"

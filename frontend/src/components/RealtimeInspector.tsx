@@ -329,7 +329,7 @@ const RealtimeInspector: React.FC<RealtimeInspectorProps> = ({ view = 'inspector
                                                     {col.realtime_enabled && <span className="px-1.5 py-0.5 bg-green-500/10 text-green-500 border border-green-500/20 rounded text-[8px] font-black uppercase tracking-widest">Active</span>}
                                                 </div>
                                                 <p className="text-[9px] text-zinc-600 font-bold uppercase tracking-widest mt-1">
-                                                    {col.schema?.length || 0} Columns â€¢ Public Schema â€¢ tr_notify_{col.name}
+                                                    {col.schema?.length || 0} Columns - Public Schema - tr_notify_{col.name}
                                                 </p>
                                             </div>
                                         </div>

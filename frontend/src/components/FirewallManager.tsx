@@ -138,7 +138,7 @@ const FirewallManager = () => {
                                         <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-widest flex items-center gap-2">
                                             {rule.reason || 'No reason provided'}
                                             {rule.expires_at && (
-                                                <span className="text-zinc-600">â€¢ Expires: {new Date(rule.expires_at).toLocaleDateString()}</span>
+                                                <span className="text-zinc-600">- Expires: {new Date(rule.expires_at).toLocaleDateString()}</span>
                                             )}
                                         </p>
                                     </div>
