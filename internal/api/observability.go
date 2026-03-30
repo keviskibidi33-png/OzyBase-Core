@@ -216,23 +216,21 @@ func (h *Handler) evaluateServiceSLO(ctx context.Context, persistSnapshot bool) 
 		return SLOEvaluation{}, fmt.Errorf("database pool not initialized")
 	}
 	thresholds := loadSLOThresholdsFromEnv()
-
-	var totalRequests int64
-	var successfulRequests int64
-	var serverErrors int64
-	var latencyP95 float64
-
-	err := h.DB.Pool.QueryRow(ctx, `
+	query := `
 		SELECT
 			COUNT(*)::bigint AS total_requests,
 			COUNT(*) FILTER (WHERE status < 500)::bigint AS successful_requests,
 			COUNT(*) FILTER (WHERE status >= 500)::bigint AS server_errors,
 			COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms), 0)::double precision AS latency_p95_ms
 		FROM _v_audit_logs
-		WHERE created_at > NOW() - ($1 * INTERVAL '1 minute')
-		  AND path NOT LIKE '/api/project/logs%'
-		  AND path NOT LIKE '/api/project/info%'
-	`, thresholds.WindowMinutes).Scan(&totalRequests, &successfulRequests, &serverErrors, &latencyP95)
+		WHERE created_at > NOW() - ($1 * INTERVAL '1 minute')` + buildPerformanceSignalExclusionSQL("path")
+
+	var totalRequests int64
+	var successfulRequests int64
+	var serverErrors int64
+	var latencyP95 float64
+
+	err := h.DB.Pool.QueryRow(ctx, query, thresholds.WindowMinutes).Scan(&totalRequests, &successfulRequests, &serverErrors, &latencyP95)
 	if err != nil {
 		return SLOEvaluation{}, err
 	}

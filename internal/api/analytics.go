@@ -17,20 +17,21 @@ type AnalyticsHandler struct {
 // This leverages PostgreSQL's speed instead of JS client-side processing
 func (h *Handler) GetTrafficStats(c echo.Context) error {
 	ctx := c.Request().Context()
-
-	// 1. Calculate Request Rate (Last 24h, grouped by hour)
-	// Using PostgreSQL's date_trunc for high efficient grouping
-	rows, err := h.DB.Pool.Query(ctx, `
+	query := `
 		SELECT
 			date_trunc('hour', created_at) as bucket,
 			COUNT(*) as count,
 			AVG(latency_ms) as avg_latency,
 			COUNT(*) FILTER (WHERE status >= 400) as errors
 		FROM _v_audit_logs
-		WHERE created_at > NOW() - INTERVAL '24 hours'
+		WHERE created_at > NOW() - INTERVAL '24 hours'` + buildPerformanceSignalExclusionSQL("path") + `
 		GROUP BY bucket
 		ORDER BY bucket ASC
-	`)
+	`
+
+	// 1. Calculate Request Rate (Last 24h, grouped by hour)
+	// Using PostgreSQL's date_trunc for high efficient grouping
+	rows, err := h.DB.Pool.Query(ctx, query)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
