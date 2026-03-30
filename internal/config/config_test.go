@@ -42,6 +42,29 @@ func TestLoad_GeneratesJWTSecretAndDerivesOrigins(t *testing.T) {
 	if len(cfg.AllowedOrigins) == 0 {
 		t.Fatalf("expected non-empty allowed origins")
 	}
+	if cfg.DeploymentProfile != "self_host" {
+		t.Fatalf("expected self_host deployment profile by default, got %q", cfg.DeploymentProfile)
+	}
+}
+
+func TestLoad_UsesExplicitDeploymentProfile(t *testing.T) {
+	withTempDir(t)
+	resetEnv(t)
+
+	t.Setenv("DEBUG", "false")
+	t.Setenv("DATABASE_URL", "postgres://user:pass@db.internal:5432/db?sslmode=require")
+	t.Setenv("JWT_SECRET", "this_is_a_strong_secret_with_more_than_32_chars")
+	t.Setenv("SITE_URL", "https://api.real-domain.test")
+	t.Setenv("APP_DOMAIN", "real-domain.test")
+	t.Setenv("OZY_DEPLOYMENT_PROFILE", "azure_cloud")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if cfg.DeploymentProfile != "azure_cloud" {
+		t.Fatalf("expected explicit deployment profile, got %q", cfg.DeploymentProfile)
+	}
 }
 
 func TestLoad_StrictSecurityRejectsInsecurePublicDatabaseURL(t *testing.T) {
@@ -251,7 +274,7 @@ func resetEnv(t *testing.T) {
 		"DATABASE_URL", "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME", "DB_SSLMODE",
 		"DB_POOLER_URL", "POOLER_URL", "DB_POOLER_HOST", "DB_POOLER_PORT", "DB_POOLER_USER", "DB_POOLER_DATABASE", "DB_POOLER_SSLMODE",
 		"JWT_SECRET", "ANON_KEY", "SERVICE_ROLE_KEY", "OZY_SERVICE_ROLE_KEY",
-		"SITE_URL", "APP_DOMAIN", "ALLOWED_ORIGINS", "DEBUG", "OZY_STRICT_SECURITY", "SMTP_HOST",
+		"SITE_URL", "APP_DOMAIN", "ALLOWED_ORIGINS", "DEBUG", "OZY_STRICT_SECURITY", "SMTP_HOST", "OZY_DEPLOYMENT_PROFILE", "DEPLOYMENT_PROFILE",
 	}
 	for _, k := range keys {
 		t.Setenv(k, "")

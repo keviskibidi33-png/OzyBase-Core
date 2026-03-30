@@ -9,6 +9,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
       DB_POOLER_URL: ${DB_POOLER_URL:-}
+      OZY_DEPLOYMENT_PROFILE: ${OZY_DEPLOYMENT_PROFILE:-install_to_play}
       PORT: "8090"
       SITE_URL: ${SITE_URL:?set SITE_URL}
       APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN}

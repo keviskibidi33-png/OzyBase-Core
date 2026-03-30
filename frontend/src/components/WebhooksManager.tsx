@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 import { BrandedToast } from './OverlayPrimitives';
+import { fetchWithAuth } from '../utils/api';
 
 interface WebhookRecord {
     id: string;
@@ -41,10 +42,7 @@ const WebhooksManager = () => {
     const fetchWebhooks = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('ozy_token');
-            const res = await fetch('/api/webhooks', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const res = await fetchWithAuth('/api/webhooks');
             const data: unknown = await res.json();
             if (Array.isArray(data)) setWebhooks(data as WebhookRecord[]);
         } catch (error) {
@@ -56,13 +54,9 @@ const WebhooksManager = () => {
 
     const createWebhook = async () => {
         try {
-            const token = localStorage.getItem('ozy_token');
-            const res = await fetch('/api/webhooks', {
+            const res = await fetchWithAuth('/api/webhooks', {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newWebhook)
             });
             if (res.ok) {
@@ -78,11 +72,7 @@ const WebhooksManager = () => {
 
     const deleteWebhook = async (id: string) => {
         try {
-            const token = localStorage.getItem('ozy_token');
-            const res = await fetch(`/api/webhooks/${id}`, {
-                method: 'DELETE',
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const res = await fetchWithAuth(`/api/webhooks/${id}`, { method: 'DELETE' });
             if (res.ok) {
                 setToast({ message: 'Webhook deleted', type: 'success' });
                 fetchWebhooks();

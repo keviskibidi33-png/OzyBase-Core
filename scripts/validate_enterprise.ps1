@@ -174,9 +174,12 @@ Require-Command curl.exe
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $frontendDir = Join-Path $repoRoot "frontend"
-$e2eSmokeSpec = Join-Path $frontendDir "tests/smoke-critical.spec.js"
+$e2eSmokeSpecs = @(
+  "tests/smoke-critical.spec.js",
+  "tests/essential-keys-mcp.spec.js"
+)
 $bashPath = "C:/Program Files/Git/bin/bash.exe"
-$npmCmd = "npm"
+$npmCmd = "npm.cmd"
 if (Test-Path "D:/Dependencias/nodejs/npm.cmd") {
   $npmCmd = "D:/Dependencias/nodejs/npm.cmd"
 }
@@ -225,6 +228,15 @@ try {
 
   Write-Step "Start API (isolated embedded postgres)"
   $env:PORT = $ApiPort
+  $env:DATABASE_URL = "SET_DATABASE_URL"
+  $env:DB_HOST = "SET_DB_HOST"
+  $env:DB_PORT = "SET_DB_PORT"
+  $env:DB_USER = "SET_DB_USER"
+  $env:DB_PASSWORD = "SET_DB_PASSWORD"
+  $env:DB_NAME = "SET_DB_NAME"
+  $env:DB_SSLMODE = "SET_DB_SSLMODE"
+  $env:DB_POOLER_URL = "SET_DB_POOLER_URL"
+  $env:POOLER_URL = "SET_POOLER_URL"
   $env:SITE_URL = "http://127.0.0.1:$ApiPort"
   $env:APP_DOMAIN = "localhost"
   $env:ALLOWED_ORIGINS = "http://127.0.0.1:$UiPort,http://localhost:$UiPort"
@@ -232,18 +244,19 @@ try {
   $env:OZY_EMBEDDED_DATA_PATH = $embeddedDataPath
   $env:OZY_EMBEDDED_BIN_PATH = $embeddedBinPath
   $env:OZY_EMBEDDED_PORT = $EmbeddedPort
-  $env:OZY_AUTO_BOOTSTRAP_ADMIN = "true"
-  $env:INITIAL_ADMIN_EMAIL = "admin@ozybase.local"
-  $env:INITIAL_ADMIN_PASSWORD = "OzyBase123!"
+  $env:OZY_AUTO_BOOTSTRAP_ADMIN = "false"
+  Remove-Item Env:INITIAL_ADMIN_EMAIL -ErrorAction SilentlyContinue
+  Remove-Item Env:INITIAL_ADMIN_PASSWORD -ErrorAction SilentlyContinue
   $env:SMOKE_ADMIN_EMAIL = "admin@ozybase.local"
-  $env:SMOKE_ADMIN_PASSWORD = "OzyBase123!"
+  $env:SMOKE_ADMIN_PASSWORD = "OzyBase1234!"
   $env:E2E_ADMIN_EMAIL = "admin@ozybase.local"
-  $env:E2E_ADMIN_PASSWORD = "OzyBase123!"
+  $env:E2E_ADMIN_PASSWORD = "OzyBase1234!"
   $env:BASE_URL = "http://127.0.0.1:$ApiPort"
   $env:SMOKE_CURL_CONNECT_TIMEOUT = "3"
   $env:SMOKE_CURL_TIMEOUT = "15"
   $env:CI = "1"
   $env:DEBUG = "false"
+  $env:JWT_SECRET = "validation-secret-0123456789abcdef0123456789abcdef"
 
   $apiProc = Start-Process -FilePath $apiBinary -WorkingDirectory $repoRoot -PassThru -RedirectStandardOutput $apiLog -RedirectStandardError $apiErrLog
   Wait-HttpHealthy -Url "http://127.0.0.1:$ApiPort/api/health" -Process $apiProc
@@ -267,8 +280,9 @@ try {
   }
 
   if (-not $SkipE2E) {
-    if (-not (Test-Path $e2eSmokeSpec)) {
-      Write-Warning "Skipping E2E smoke: spec not found at $e2eSmokeSpec"
+    $missingSpecs = @($e2eSmokeSpecs | Where-Object { -not (Test-Path (Join-Path $frontendDir $_)) })
+    if ($missingSpecs.Count -gt 0) {
+      Write-Warning "Skipping E2E smoke: missing spec(s): $($missingSpecs -join ', ')"
     } else {
       Write-Step "Start frontend"
       $uiProc = Start-Process -FilePath $npmCmd -ArgumentList @("run", "dev", "--", "--host", "127.0.0.1", "--port", $UiPort, "--strictPort") -WorkingDirectory $frontendDir -PassThru -RedirectStandardOutput $uiLog -RedirectStandardError $uiErrLog
@@ -276,7 +290,8 @@ try {
 
       Write-Step "Smoke E2E"
       $playwrightTimeoutSeconds = [Math]::Ceiling($PlaywrightGlobalTimeoutMs / 1000) + 120
-      Invoke-CommandWithTimeout -Name "playwright_smoke" -FilePath $npmCmd -Arguments @("run", "test", "--", "tests/smoke-critical.spec.js", "--project=chromium", "--workers=1", "--pass-with-no-tests", "--global-timeout=$PlaywrightGlobalTimeoutMs") -WorkingDirectory $frontendDir -TimeoutSeconds $playwrightTimeoutSeconds
+      $playwrightArgs = @("run", "test", "--") + $e2eSmokeSpecs + @("--project=chromium", "--workers=1", "--pass-with-no-tests", "--global-timeout=$PlaywrightGlobalTimeoutMs")
+      Invoke-CommandWithTimeout -Name "playwright_smoke" -FilePath $npmCmd -Arguments $playwrightArgs -WorkingDirectory $frontendDir -TimeoutSeconds $playwrightTimeoutSeconds
     }
   }
 

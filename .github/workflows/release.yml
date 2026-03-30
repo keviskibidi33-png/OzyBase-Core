@@ -88,6 +88,9 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Sync embedded frontend assets
+        run: bash scripts/sync_frontend_dist.sh
+
       - name: Frontend bundle budget
         working-directory: frontend
         run: npm run bundle:check
@@ -180,6 +183,24 @@ jobs:
           go-version: "1.25.8"
           cache: true
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Frontend build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Sync embedded frontend assets
+        run: bash scripts/sync_frontend_dist.sh
+
       - name: GoReleaser snapshot
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -205,6 +226,24 @@ jobs:
         with:
           go-version: "1.25.8"
           cache: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Frontend build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Sync embedded frontend assets
+        run: bash scripts/sync_frontend_dist.sh
 
       - name: GoReleaser publish
         uses: goreleaser/goreleaser-action@v6

@@ -13,6 +13,7 @@ import {
     X
 } from 'lucide-react';
 import { BrandedToast } from './OverlayPrimitives';
+import { fetchWithAuth } from '../utils/api';
 
 interface EdgeFunctionRecord {
     id: string;
@@ -57,10 +58,7 @@ const EdgeFunctions: React.FC = () => {
     const fetchFunctions = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('ozy_token');
-            const res = await fetch('/api/functions', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const res = await fetchWithAuth('/api/functions');
             const data: unknown = await res.json();
             if (Array.isArray(data)) setFunctions(data.filter(isEdgeFunctionRecord));
         } catch (error) {
@@ -72,13 +70,9 @@ const EdgeFunctions: React.FC = () => {
 
     const saveFunction = async () => {
         try {
-            const token = localStorage.getItem('ozy_token');
-            const res = await fetch('/api/functions', {
+            const res = await fetchWithAuth('/api/functions', {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(currentFn)
             });
             if (res.ok) {

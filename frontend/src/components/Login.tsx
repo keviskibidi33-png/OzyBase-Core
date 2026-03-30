@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Lock, Mail, Loader2, ArrowRight, ShieldCheck } from 'lucide-react';
+import { fetchWithAuth } from '../utils/api';
 
 type AuthFlow = 'login' | 'request' | 'confirm' | 'mfa';
 
@@ -38,7 +39,7 @@ const Login = ({ onLoginSuccess }: LoginProps) => {
 
         try {
             if (flow === 'login') {
-                const res = await fetch('/api/auth/login', {
+                const res = await fetchWithAuth('/api/auth/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ email, password }),
@@ -56,10 +57,11 @@ const Login = ({ onLoginSuccess }: LoginProps) => {
                 if (typeof data.token === 'string') {
                     localStorage.setItem('ozy_token', data.token);
                 }
+                localStorage.removeItem('ozy_api_key');
                 localStorage.setItem('ozy_user', JSON.stringify(data.user ?? null));
                 onLoginSuccess();
             } else if (flow === 'mfa') {
-                const res = await fetch('/api/auth/2fa/verify', {
+                const res = await fetchWithAuth('/api/auth/2fa/verify', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ user_id: mfaUser, code: mfaCode }),
@@ -71,10 +73,11 @@ const Login = ({ onLoginSuccess }: LoginProps) => {
                 if (typeof data.token === 'string') {
                     localStorage.setItem('ozy_token', data.token);
                 }
+                localStorage.removeItem('ozy_api_key');
                 localStorage.setItem('ozy_user', JSON.stringify(data.user ?? null));
                 onLoginSuccess();
             } else if (flow === 'request') {
-                const res = await fetch('/api/auth/reset-password/request', {
+                const res = await fetchWithAuth('/api/auth/reset-password/request', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ email }),
@@ -88,7 +91,7 @@ const Login = ({ onLoginSuccess }: LoginProps) => {
                     console.log('OZYBASE_LABS_TOKEN:', data.token);
                 }
             } else if (flow === 'confirm') {
-                const res = await fetch('/api/auth/reset-password/confirm', {
+                const res = await fetchWithAuth('/api/auth/reset-password/confirm', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ token, new_password: newPassword }),

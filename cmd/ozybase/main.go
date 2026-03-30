@@ -378,7 +378,16 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins: cfg.AllowedOrigins,
-		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization},
+		AllowHeaders: []string{
+			echo.HeaderOrigin,
+			echo.HeaderContentType,
+			echo.HeaderAccept,
+			echo.HeaderAuthorization,
+			"X-CSRF-Token",
+			"X-Workspace-Id",
+			"apikey",
+			"X-Ozy-Key",
+		},
 	}))
 	e.Use(middleware.RateLimiter(middleware.NewRateLimiterMemoryStoreWithConfig(
 		middleware.RateLimiterMemoryStoreConfig{
@@ -484,6 +493,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 
 		// Auth
 		authGroup := apiGroup.Group("/auth")
+		authGroup.GET("/csrf", authHandler.CSRFToken)
 		authGroup.POST("/login", authHandler.Login)
 		// Signup is now protected, only an authenticated user (admin) can create others
 		authGroup.POST("/signup", authHandler.Signup, authRequired, adminOnly)

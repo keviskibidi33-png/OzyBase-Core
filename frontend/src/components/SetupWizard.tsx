@@ -3,6 +3,7 @@ import {
     ShieldCheck, Zap, Server, Globe, Lock,
     CheckCircle, ArrowRight, Database, Loader2
 } from 'lucide-react';
+import { fetchWithAuth } from '../utils/api';
 
 type SetupMode = 'clean' | 'secure' | 'migrate';
 
@@ -74,7 +75,7 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }: any) => {
             if (!mode) {
                 throw new Error('Select setup mode');
             }
-            const res = await fetch('/api/system/setup', {
+            const res = await fetchWithAuth('/api/system/setup', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

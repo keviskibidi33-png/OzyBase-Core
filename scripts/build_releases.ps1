@@ -18,12 +18,7 @@ Pop-Location
 
 # Ensure internal/api/frontend_dist exists and is clean
 Write-Host "📦 Preparing Embedded Files..." -ForegroundColor Cyan
-if (Test-Path "./internal/api/frontend_dist") {
-    Remove-Item -Recurse -Force "./internal/api/frontend_dist/*"
-} else {
-    New-Item -ItemType Directory -Path "./internal/api/frontend_dist"
-}
-Copy-Item -Path "./frontend/dist/*" -Destination "./internal/api/frontend_dist" -Recurse
+powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/sync_frontend_dist.ps1
 
 # --- Step 2: Build Binaries ---
 function Build-Ozy($os, $arch, $suffix) {

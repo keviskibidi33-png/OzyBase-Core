@@ -97,7 +97,7 @@ function App() {
 
         if (pathname === '/verify-email') {
             clearTokenFromURL();
-            fetch('/api/auth/verify-email', {
+            fetchWithAuth('/api/auth/verify-email', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ token }),

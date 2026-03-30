@@ -16,10 +16,22 @@ import (
 //go:embed all:frontend_dist
 var distEmbedFS embed.FS
 
+func preferredStaticDistDir() string {
+	explicitDir := strings.TrimSpace(os.Getenv("OZY_FRONTEND_DIST_DIR"))
+	if explicitDir != "" {
+		return explicitDir
+	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("DEBUG")), "true") {
+		return filepath.Join("frontend", "dist")
+	}
+	return ""
+}
+
 func resolveStaticFS() fs.FS {
-	devDistPath := filepath.Join("frontend", "dist")
-	if _, err := os.Stat(filepath.Join(devDistPath, "index.html")); err == nil {
-		return os.DirFS(devDistPath)
+	if preferredDistDir := preferredStaticDistDir(); preferredDistDir != "" {
+		if _, err := os.Stat(filepath.Join(preferredDistDir, "index.html")); err == nil {
+			return os.DirFS(preferredDistDir)
+		}
 	}
 
 	distFS, err := fs.Sub(distEmbedFS, "frontend_dist")

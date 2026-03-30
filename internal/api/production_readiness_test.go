@@ -30,6 +30,9 @@ func TestBuildProjectProductionReadinessFlagsActionRequired(t *testing.T) {
 	if got.DeploymentMode != "embedded_postgres" {
 		t.Fatalf("expected embedded_postgres deployment, got %q", got.DeploymentMode)
 	}
+	if got.Profile != "self_host" {
+		t.Fatalf("expected self_host profile, got %q", got.Profile)
+	}
 	if got.ManagedSecrets {
 		t.Fatalf("expected managed_secrets=false when keys were auto-generated")
 	}
@@ -39,6 +42,40 @@ func TestBuildProjectProductionReadinessMarksReadyWhenRequirementsAreMet(t *test
 	t.Setenv("DB_POOLER_URL", "postgres://pooler:secret@pool.internal:6543/ozybase?sslmode=require")
 	cfg := &config.Config{
 		DatabaseURL:             "postgres://user:pass@db.internal:5432/ozybase?sslmode=require",
+		DeploymentProfile:       "azure_cloud",
+		SiteURL:                 "https://api.ozybase.com",
+		AppDomain:               "ozybase.com",
+		StrictSecurity:          true,
+		SMTPHost:                "smtp.example.net",
+		GeneratedJWTSecret:      false,
+		GeneratedAnonKey:        false,
+		GeneratedServiceRoleKey: false,
+		SecurityWarnings:        []string{poolerRecommendationWarning},
+	}
+
+	got := BuildProjectProductionReadiness(cfg)
+	if got.Status != "ready" {
+		t.Fatalf("expected ready status, got %q", got.Status)
+	}
+	if !got.LaunchReady {
+		t.Fatalf("expected launch_ready=true")
+	}
+	if got.DeploymentMode != "external_postgres" {
+		t.Fatalf("expected external_postgres deployment, got %q", got.DeploymentMode)
+	}
+	if got.Profile != "azure_cloud" {
+		t.Fatalf("expected azure_cloud profile, got %q", got.Profile)
+	}
+	if !got.PoolerConfigured {
+		t.Fatalf("expected pooler_configured=true")
+	}
+}
+
+func TestBuildProjectProductionReadinessAllowsInstallToPlayWithoutPooler(t *testing.T) {
+	t.Setenv("DB_POOLER_URL", "")
+	cfg := &config.Config{
+		DatabaseURL:             "postgres://user:pass@db.internal:5432/ozybase?sslmode=require",
+		DeploymentProfile:       "install_to_play",
 		SiteURL:                 "https://api.ozybase.com",
 		AppDomain:               "ozybase.com",
 		StrictSecurity:          true,
@@ -56,10 +93,10 @@ func TestBuildProjectProductionReadinessMarksReadyWhenRequirementsAreMet(t *test
 	if !got.LaunchReady {
 		t.Fatalf("expected launch_ready=true")
 	}
-	if got.DeploymentMode != "external_postgres" {
-		t.Fatalf("expected external_postgres deployment, got %q", got.DeploymentMode)
+	if got.PoolerConfigured {
+		t.Fatalf("expected pooler_configured=false without DB_POOLER_URL")
 	}
-	if !got.PoolerConfigured {
-		t.Fatalf("expected pooler_configured=true")
+	if len(got.Warnings) != 0 {
+		t.Fatalf("expected pooler warning to be filtered for install_to_play, got %v", got.Warnings)
 	}
 }

@@ -17,6 +17,7 @@ import (
 
 type Config struct {
 	DatabaseURL            string
+	DeploymentProfile      string
 	Port                   string
 	JWTSecret              string
 	AnonKey                string
@@ -141,6 +142,7 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		DatabaseURL:             dbURL,
+		DeploymentProfile:       resolveDeploymentProfile(debug, dbURL),
 		Port:                    getEnv("PORT", "8090"),
 		JWTSecret:               jwtSecret,
 		AnonKey:                 anonKey,
@@ -239,6 +241,26 @@ func getEnvAsInt(key string, defaultValue int) int {
 		return defaultValue
 	}
 	return v
+}
+
+func resolveDeploymentProfile(debug bool, dbURL string) string {
+	raw := strings.ToLower(strings.TrimSpace(firstNonEmpty(readEnv("OZY_DEPLOYMENT_PROFILE"), readEnv("DEPLOYMENT_PROFILE"))))
+	switch raw {
+	case "self_host", "install_to_play", "azure_cloud", "custom":
+		return raw
+	case "azure", "azure-container-apps", "azure_container_apps":
+		return "azure_cloud"
+	case "coolify":
+		return "install_to_play"
+	}
+
+	if strings.TrimSpace(os.Getenv("CONTAINER_APP_NAME")) != "" || strings.TrimSpace(os.Getenv("CONTAINER_APP_ENV_DNS_SUFFIX")) != "" {
+		return "azure_cloud"
+	}
+	if debug || strings.TrimSpace(dbURL) == "" {
+		return "self_host"
+	}
+	return "custom"
 }
 
 func readEnv(key string) string {

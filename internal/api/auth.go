@@ -92,6 +92,16 @@ func (h *AuthHandler) Login(c echo.Context) error {
 	})
 }
 
+func (h *AuthHandler) CSRFToken(c echo.Context) error {
+	token, _ := c.Get("csrf").(string)
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "csrf token unavailable"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"csrf_token": token})
+}
+
 func (h *AuthHandler) RequestReset(c echo.Context) error {
 	var req struct {
 		Email string `json:"email"`

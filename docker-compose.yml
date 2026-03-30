@@ -11,6 +11,7 @@ services:
     environment:
       DATABASE_URL: postgres://${DB_USER:?set DB_USER}:${DB_PASSWORD:?set DB_PASSWORD}@db:5432/${DB_NAME:?set DB_NAME}?sslmode=${DB_SSLMODE:-verify-full}
       DB_POOLER_URL: ${DB_POOLER_URL:-}
+      OZY_DEPLOYMENT_PROFILE: ${OZY_DEPLOYMENT_PROFILE:-self_host}
       PORT: "8090"
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
       ANON_KEY: ${ANON_KEY:-}

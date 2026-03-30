@@ -23,9 +23,11 @@ fi
 
 TMP_BODY="$(mktemp)"
 TMP_HEADERS="$(mktemp)"
+TMP_COOKIES="$(mktemp)"
 cleanup() {
   rm -f "$TMP_BODY"
   rm -f "$TMP_HEADERS"
+  rm -f "$TMP_COOKIES"
 }
 trap cleanup EXIT
 
@@ -34,6 +36,7 @@ call_api() {
   local path="$2"
   local body="${3:-}"
   local token="${4:-}"
+  local workspace_id="${5:-}"
 
   local attempt=1
   local max_retries="$SMOKE_RATE_LIMIT_MAX_RETRIES"
@@ -57,6 +60,9 @@ call_api() {
     fi
     if [[ -n "$token" ]]; then
       args+=(-H "Authorization: Bearer ${token}")
+    fi
+    if [[ -n "$workspace_id" ]]; then
+      args+=(-H "X-Workspace-Id: ${workspace_id}")
     fi
 
     local status_code
@@ -87,6 +93,7 @@ call_api_with_apikey() {
   local path="$2"
   local body="${3:-}"
   local api_key="${4:-}"
+  local workspace_id="${5:-}"
 
   local args=(
     -sS
@@ -103,6 +110,60 @@ call_api_with_apikey() {
   fi
   if [[ -n "$api_key" ]]; then
     args+=(-H "apikey: ${api_key}")
+  fi
+  if [[ -n "$workspace_id" ]]; then
+    args+=(-H "X-Workspace-Id: ${workspace_id}")
+  fi
+
+  curl "${args[@]}"
+}
+
+call_api_with_csrf() {
+  local method="$1"
+  local path="$2"
+  local body="${3:-}"
+
+  local bootstrap_status
+  bootstrap_status="$(
+    curl -sS \
+      -c "$TMP_COOKIES" \
+      -b "$TMP_COOKIES" \
+      -D "$TMP_HEADERS" \
+      -o "$TMP_BODY" \
+      -w "%{http_code}" \
+      --connect-timeout "$SMOKE_CURL_CONNECT_TIMEOUT" \
+      --max-time "$SMOKE_CURL_TIMEOUT" \
+      "${BASE_URL}/api/auth/csrf"
+  )"
+  if [[ "$bootstrap_status" != "200" ]]; then
+    echo "Failed to bootstrap CSRF token, got ${bootstrap_status}" >&2
+    cat "$TMP_BODY" >&2
+    return 1
+  fi
+
+  local csrf_token
+  csrf_token="$(json_read csrf_token)"
+  if [[ -z "$csrf_token" ]]; then
+    echo "CSRF bootstrap response missing csrf_token" >&2
+    cat "$TMP_BODY" >&2
+    return 1
+  fi
+
+  local args=(
+    -sS
+    -c "$TMP_COOKIES"
+    -b "$TMP_COOKIES"
+    -D "$TMP_HEADERS"
+    -o "$TMP_BODY"
+    -w "%{http_code}"
+    --connect-timeout "$SMOKE_CURL_CONNECT_TIMEOUT"
+    --max-time "$SMOKE_CURL_TIMEOUT"
+    -X "$method"
+    "${BASE_URL}${path}"
+    -H "X-CSRF-Token: ${csrf_token}"
+  )
+  if [[ -n "$body" ]]; then
+    args+=(-H "Content-Type: application/json" -d "$body")
   fi
 
   curl "${args[@]}"
@@ -203,6 +264,17 @@ if ! grep -qi '^Content-Security-Policy:.*default-src' "$TMP_HEADERS"; then
   exit 1
 fi
 
+echo "[smoke] csrf gate on anonymous recovery flow"
+reset_payload="$(printf '{"email":"%s"}' "$ADMIN_EMAIL")"
+status_code="$(call_api POST /api/auth/reset-password/request "$reset_payload")"
+if [[ "$status_code" != "403" && "$status_code" != "400" ]]; then
+  echo "Expected CSRF protection for anonymous reset request, got ${status_code}" >&2
+  cat "$TMP_BODY" >&2
+  exit 1
+fi
+status_code="$(call_api_with_csrf POST /api/auth/reset-password/request "$reset_payload")"
+require_status "$status_code" "200"
+
 echo "[smoke] login"
 login_payload="$(printf '{"email":"%s","password":"%s"}' "$ADMIN_EMAIL" "$ADMIN_PASSWORD")"
 status_code="$(call_api POST /api/auth/login "$login_payload")"
@@ -211,6 +283,47 @@ TOKEN="$(json_read token)"
 USER_ID="$(json_read user.id)"
 if [[ -z "$TOKEN" || -z "$USER_ID" ]]; then
   echo "Login response missing token or user.id" >&2
+  cat "$TMP_BODY" >&2
+  exit 1
+fi
+
+echo "[smoke] session revocation invalidates the bearer token"
+status_code="$(call_api GET /api/auth/sessions "" "$TOKEN")"
+require_status "$status_code" "200"
+CURRENT_SESSION_ID="$("$PYTHON_BIN" - "$TMP_BODY" <<'PY'
+import json, sys
+with open(sys.argv[1], 'r', encoding='utf-8') as f:
+    data = json.load(f)
+if not isinstance(data, list) or not data:
+    raise SystemExit("sessions payload is empty")
+print(data[0].get("id", ""))
+PY
+)"
+if [[ -z "$CURRENT_SESSION_ID" ]]; then
+  echo "Session list did not include an id" >&2
+  cat "$TMP_BODY" >&2
+  exit 1
+fi
+status_code="$(call_api DELETE "/api/auth/sessions/${CURRENT_SESSION_ID}" "" "$TOKEN")"
+if [[ "$status_code" != "204" && "$status_code" != "200" ]]; then
+  echo "Session revoke failed with status ${status_code}" >&2
+  cat "$TMP_BODY" >&2
+  exit 1
+fi
+status_code="$(call_api GET /api/project/stats "" "$TOKEN")"
+if [[ "$status_code" != "401" ]]; then
+  echo "Revoked bearer token should be rejected, got ${status_code}" >&2
+  cat "$TMP_BODY" >&2
+  exit 1
+fi
+
+echo "[smoke] login again after session revocation"
+status_code="$(call_api POST /api/auth/login "$login_payload")"
+require_status "$status_code" "200"
+TOKEN="$(json_read token)"
+USER_ID="$(json_read user.id)"
+if [[ -z "$TOKEN" || -z "$USER_ID" ]]; then
+  echo "Second login response missing token or user.id" >&2
   cat "$TMP_BODY" >&2
   exit 1
 fi
@@ -505,6 +618,22 @@ if [[ -z "$ORIGINAL_SERVICE_ROLE_KEY" ]]; then
   exit 1
 fi
 
+reveal_anon_payload="$(printf '{"verification_token":"%s"}' "$KEY_VERIFICATION_TOKEN")"
+status_code="$(call_api POST /api/project/keys/essential/anon/reveal "$reveal_anon_payload" "$TOKEN")"
+require_status "$status_code" "200"
+ANON_KEY_VALUE="$(json_read key)"
+if [[ -z "$ANON_KEY_VALUE" ]]; then
+  echo "Essential anon key reveal response missing key" >&2
+  cat "$TMP_BODY" >&2
+  exit 1
+fi
+status_code="$(call_api_with_apikey GET /api/project/mcp/tools "" "$ANON_KEY_VALUE")"
+if [[ "$status_code" != "401" && "$status_code" != "403" ]]; then
+  echo "Anon key should not satisfy protected MCP tools endpoint; got ${status_code}" >&2
+  cat "$TMP_BODY" >&2
+  exit 1
+fi
+
 rotate_service_role_payload="$(printf '{"verification_token":"%s","reason":"ci smoke validation"}' "$KEY_VERIFICATION_TOKEN")"
 status_code="$(call_api POST /api/project/keys/essential/service_role/rotate "$rotate_service_role_payload" "$TOKEN")"
 require_status "$status_code" "200"
@@ -524,6 +653,30 @@ if [[ "$status_code" != "401" ]]; then
 fi
 
 status_code="$(call_api_with_apikey GET /api/project/mcp/tools "" "$ROTATED_SERVICE_ROLE_KEY")"
+require_status "$status_code" "200"
+
+echo "[smoke] workspace scope with jwt and service_role key"
+workspace_payload="$(printf '{"name":"CI Smoke Workspace %s"}' "$(date +%s)")"
+status_code="$(call_api POST /api/workspaces "$workspace_payload" "$TOKEN")"
+require_status "$status_code" "201"
+SMOKE_WORKSPACE_ID="$(json_read id)"
+if [[ -z "$SMOKE_WORKSPACE_ID" ]]; then
+  echo "Workspace create response missing id" >&2
+  cat "$TMP_BODY" >&2
+  exit 1
+fi
+
+status_code="$(call_api GET /api/project/keys "" "$TOKEN" "$SMOKE_WORKSPACE_ID")"
+require_status "$status_code" "200"
+
+status_code="$(call_api GET /api/project/keys "" "$TOKEN" "00000000-0000-0000-0000-000000000000")"
+if [[ "$status_code" != "403" ]]; then
+  echo "JWT request with inaccessible workspace should be rejected, got ${status_code}" >&2
+  cat "$TMP_BODY" >&2
+  exit 1
+fi
+
+status_code="$(call_api_with_apikey GET /api/project/keys "" "$ROTATED_SERVICE_ROLE_KEY" "$SMOKE_WORKSPACE_ID")"
 require_status "$status_code" "200"
 
 status_code="$(call_api GET "/api/project/keys/events?limit=100" "" "$TOKEN")"
@@ -572,8 +725,24 @@ if [[ -n "${mcp_collection_name:-}" ]]; then
   fi
 fi
 
+if [[ -n "${SMOKE_WORKSPACE_ID:-}" ]]; then
+  status_code="$(call_api DELETE "/api/workspaces/${SMOKE_WORKSPACE_ID}" "" "$TOKEN")"
+  if [[ "$status_code" != "204" && "$status_code" != "200" && "$status_code" != "404" ]]; then
+    echo "Workspace cleanup failed with status ${status_code}" >&2
+    cat "$TMP_BODY" >&2
+    exit 1
+  fi
+fi
+
 echo "[smoke] revoke all sessions"
 status_code="$(call_api POST /api/auth/sessions/revoke-all '{}' "$TOKEN")"
 require_status "$status_code" "200"
+
+status_code="$(call_api GET /api/project/stats "" "$TOKEN")"
+if [[ "$status_code" != "401" ]]; then
+  echo "Bearer token should be rejected after revoke-all, got ${status_code}" >&2
+  cat "$TMP_BODY" >&2
+  exit 1
+fi
 
 echo "[smoke] success"

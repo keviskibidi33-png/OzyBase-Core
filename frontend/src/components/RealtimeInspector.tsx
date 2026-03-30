@@ -15,6 +15,7 @@ import {
     RefreshCw,
     Database
 } from 'lucide-react';
+import { fetchWithAuth } from '../utils/api';
 
 interface RealtimeInspectorProps {
     view?: 'inspector' | 'config' | 'configuration';
@@ -46,10 +47,7 @@ const RealtimeInspector: React.FC<RealtimeInspectorProps> = ({ view = 'inspector
     const fetchCollections = useCallback(async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('ozy_token');
-            const res = await fetch('/api/collections', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const res = await fetchWithAuth('/api/collections');
             const data = await res.json();
             setCollections(data.filter((c: any) => !c.is_system));
         } catch (e) { console.error(e); }
@@ -91,13 +89,9 @@ const RealtimeInspector: React.FC<RealtimeInspectorProps> = ({ view = 'inspector
 
     const toggleRealtime = async (name: any, currentStatus: any) => {
         try {
-            const token = localStorage.getItem('ozy_token');
-            await fetch('/api/collections/realtime', {
+            await fetchWithAuth('/api/collections/realtime', {
                 method: 'PATCH',
-                headers: { 
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name, enabled: !currentStatus })
             });
             fetchCollections(); // Refresh
@@ -107,19 +101,15 @@ const RealtimeInspector: React.FC<RealtimeInspectorProps> = ({ view = 'inspector
     const runDiagnostic = async () => {
         setDiagnosticStatus('Running...');
         try {
-            const token = localStorage.getItem('ozy_token');
             // Try to find a table to insert into
             const targetTable = collections.find((c: any) => c.realtime_enabled)?.name || 'users';
             
             // We'll use the generic SQL execution endpoint for a quick diagnostic insert
-            const res = await fetch('/api/sql', {
+            const res = await fetchWithAuth('/api/sql', {
                 method: 'POST',
-                headers: { 
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
-                    sql: `INSERT INTO ${targetTable} (created_at) VALUES (NOW()) -- DIAGNOSTIC EVENT` 
+                    query: `INSERT INTO ${targetTable} (created_at) VALUES (NOW()) -- DIAGNOSTIC EVENT` 
                 })
             });
             

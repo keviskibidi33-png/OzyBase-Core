@@ -188,6 +188,7 @@ DEBUG=false
 ## 📚 Documentation
 
 - Deployment Runbook: `docs/DEPLOYMENT.md`
+- Deployment Profiles: `docs/DEPLOYMENT_PROFILES.md`
 - Azure Production Guide: `docs/AZURE_PRODUCTION.md`
 - Security Suite: `docs/SECURITY_SUITE.md`
 - Security Notifications: `docs/SECURITY_NOTIFICATIONS.md`

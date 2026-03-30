@@ -76,22 +76,17 @@ func AuthMiddleware(db *data.DB, jwtSecret string, optional bool) echo.Middlewar
 				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid token user"})
 			}
 
-			// Hardening: token subject must map to an existing account.
 			var email, role string
 			var isVerified bool
-			err = db.Pool.QueryRow(c.Request().Context(), `
-				SELECT email, role, is_verified
-				FROM _v_users
-				WHERE id = $1
-			`, userID).Scan(&email, &role, &isVerified)
+			err = resolveActiveSessionIdentity(c.Request().Context(), db, tokenString, userID, &email, &role, &isVerified)
 			if err != nil {
 				if optional {
 					return next(c)
 				}
-				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid token subject"})
+				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid or expired session"})
 			}
 
-			// Use DB as source of truth to avoid stale or forged role/email claims.
+			// Use DB + active session state as source of truth to avoid stale or forged role/email claims.
 			c.Set("user_id", userID)
 			c.Set("email", email)
 			c.Set("role", role)
@@ -159,9 +154,37 @@ func RLSMiddleware(db *data.DB) echo.MiddlewareFunc {
 func WorkspaceMiddleware(db *data.DB, jwtSecret string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			workspaceID := c.Request().Header.Get("X-Workspace-Id")
+			requestedWorkspaceID := strings.TrimSpace(c.Request().Header.Get("X-Workspace-Id"))
+			boundWorkspaceID, _ := c.Get("api_key_workspace_id").(string)
+			workspaceID := requestedWorkspaceID
+			if workspaceID == "" {
+				workspaceID = strings.TrimSpace(boundWorkspaceID)
+			}
 			if workspaceID == "" {
 				// We don't block if no workspace is provided (might be public or global API)
+				return next(c)
+			}
+			if requestedWorkspaceID != "" && boundWorkspaceID != "" && requestedWorkspaceID != strings.TrimSpace(boundWorkspaceID) {
+				return c.JSON(http.StatusForbidden, map[string]string{"error": "workspace-scoped api key cannot access a different workspace"})
+			}
+			if c.Get("is_service_role") == true {
+				if !workspaceExists(c.Request().Context(), db, workspaceID) {
+					return c.JSON(http.StatusForbidden, map[string]string{"error": "workspace does not exist"})
+				}
+				c.Set("workspace_id", workspaceID)
+				c.Set("workspace_role", workspaceRoleOwner)
+				return next(c)
+			}
+			if boundWorkspaceID != "" {
+				if !workspaceExists(c.Request().Context(), db, workspaceID) {
+					return c.JSON(http.StatusForbidden, map[string]string{"error": "workspace does not exist"})
+				}
+				workspaceRole := workspaceRoleViewer
+				if role, _ := c.Get("api_key_role").(string); normalizeWorkspaceRole(role) != APIKeyRoleAnon {
+					workspaceRole = workspaceRoleAdmin
+				}
+				c.Set("workspace_id", workspaceID)
+				c.Set("workspace_role", workspaceRole)
 				return next(c)
 			}
 
@@ -241,6 +264,7 @@ func APIKeyMiddleware(db *data.DB) echo.MiddlewareFunc {
 			var id string
 			var isPrevious bool
 			var graceUntil *time.Time
+			var workspaceID string
 			err := db.Pool.QueryRow(c.Request().Context(), `
 				UPDATE _v_api_keys 
 				SET last_used_at = NOW() 
@@ -249,8 +273,8 @@ func APIKeyMiddleware(db *data.DB) echo.MiddlewareFunc {
 				  AND valid_after <= NOW()
 				  AND (expires_at IS NULL OR expires_at > NOW())
 				  AND (rotated_to_key_id IS NULL OR (grace_until IS NOT NULL AND grace_until > NOW()))
-				RETURNING id, role, (rotated_to_key_id IS NOT NULL) AS is_previous, grace_until
-			`, keyHash).Scan(&id, &role, &isPrevious, &graceUntil)
+				RETURNING id, role, (rotated_to_key_id IS NOT NULL) AS is_previous, grace_until, COALESCE(workspace_id::text, '')
+			`, keyHash).Scan(&id, &role, &isPrevious, &graceUntil, &workspaceID)
 
 			if err != nil {
 				// We don't block here, just don't set user context.
@@ -281,11 +305,42 @@ func APIKeyMiddleware(db *data.DB) echo.MiddlewareFunc {
 					c.Set("grace_until", graceUntil.Format(time.RFC3339))
 				}
 			}
+			if strings.TrimSpace(workspaceID) != "" {
+				c.Set("api_key_workspace_id", strings.TrimSpace(workspaceID))
+			}
 			c.Set("is_api_key", true)
 
 			return next(c)
 		}
 	}
+}
+
+func resolveActiveSessionIdentity(ctx context.Context, db *data.DB, tokenString, userID string, email, role *string, isVerified *bool) error {
+	tokenHash := sha256.Sum256([]byte(tokenString))
+	encodedTokenHash := hex.EncodeToString(tokenHash[:])
+
+	return db.Pool.QueryRow(ctx, `
+		UPDATE _v_sessions AS s
+		SET last_used_at = NOW()
+		FROM _v_users AS u
+		WHERE s.token_hash = $1
+		  AND s.user_id = $2::uuid
+		  AND s.expires_at > NOW()
+		  AND u.id = s.user_id
+		RETURNING u.email, u.role, u.is_verified
+	`, encodedTokenHash, userID).Scan(email, role, isVerified)
+}
+
+func workspaceExists(ctx context.Context, db *data.DB, workspaceID string) bool {
+	var exists bool
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM _v_workspaces WHERE id = $1
+		)
+	`, workspaceID).Scan(&exists); err != nil {
+		return false
+	}
+	return exists
 }
 
 // AccessMiddleware checks per-collection permissions (ACL)

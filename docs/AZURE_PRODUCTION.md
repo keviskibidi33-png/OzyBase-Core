@@ -16,7 +16,7 @@ Set these as Azure Container Apps secrets/environment variables:
 ```env
 PORT=8090
 DATABASE_URL=postgres://USER:PASSWORD@SERVER.postgres.database.azure.com:5432/ozybase?sslmode=require
-DB_POOLER_URL=postgres://USER:PASSWORD@POOLER_HOST:6432/ozybase?sslmode=require
+DB_POOLER_URL=postgres://USER:PASSWORD@SERVER.postgres.database.azure.com:6432/ozybase?sslmode=require
 SITE_URL=https://api.your-domain.com
 APP_DOMAIN=your-domain.com
 ALLOWED_ORIGINS=https://your-domain.com,https://app.your-domain.com
@@ -41,7 +41,7 @@ DEBUG=false
 
 ## Launch Checklist
 1. Provision Azure Database for PostgreSQL Flexible Server with TLS enabled.
-2. Enable or provision PgBouncer and wire its endpoint into `DB_POOLER_URL`.
+2. Enable PgBouncer on Azure Database for PostgreSQL Flexible Server and wire the same host over port `6432` into `DB_POOLER_URL`.
 3. Store OzyBase secrets in Azure Key Vault and reference them from Azure Container Apps.
 4. Deploy the container into Azure Container Apps with health probe on `/api/health`.
 5. Set the custom domain and TLS.
@@ -49,7 +49,7 @@ DEBUG=false
 7. Run `go test ./...`, `npm run build`, and a smoke login/create-table/query flow before public cutover.
 
 ## Why Pooler URI Can Be Empty
-`Pooler URI` stays empty when OzyBase does not receive `DB_POOLER_URL` (or the legacy `POOLER_URL`) at runtime. That means the app only knows the direct PostgreSQL connection. In Azure, this is expected until you explicitly provision a pooling endpoint and pass it into the container configuration.
+`Pooler URI` stays empty when OzyBase does not receive `DB_POOLER_URL` (or the legacy `POOLER_URL`) at runtime. That means the app only knows the direct PostgreSQL connection. In Azure Flexible Server, the recommended value is usually the same PostgreSQL host over port `6432` after PgBouncer is enabled.
 
 ## Official Azure References
 - Azure Container Apps secrets: https://learn.microsoft.com/azure/container-apps/manage-secrets

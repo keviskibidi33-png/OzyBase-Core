@@ -386,6 +386,19 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
     const containerRef = useRef<HTMLDivElement | null>(null);
     const ROW_HEIGHT = 45;
     const [viewportHeight, setViewportHeight] = useState(DEFAULT_VIEWPORT_HEIGHT);
+    const [horizontalOverflow, setHorizontalOverflow] = useState({ canScrollLeft: false, canScrollRight: false });
+
+    const updateHorizontalOverflow = useCallback((node?: HTMLDivElement | null) => {
+        if (!node) {
+            setHorizontalOverflow({ canScrollLeft: false, canScrollRight: false });
+            return;
+        }
+        const maxScrollLeft = Math.max(0, node.scrollWidth - node.clientWidth);
+        setHorizontalOverflow({
+            canScrollLeft: node.scrollLeft > 6,
+            canScrollRight: node.scrollLeft < maxScrollLeft - 6,
+        });
+    }, []);
 
     useEffect(() => {
         if (!containerRef.current) return undefined;
@@ -394,6 +407,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
         const updateViewportHeight = () => {
             const nextHeight = node.clientHeight || DEFAULT_VIEWPORT_HEIGHT;
             setViewportHeight(Math.max(ROW_HEIGHT * 4, nextHeight));
+            updateHorizontalOverflow(node);
         };
 
         updateViewportHeight();
@@ -406,7 +420,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
         const observer = new ResizeObserver(updateViewportHeight);
         observer.observe(node);
         return () => observer.disconnect();
-    }, []);
+    }, [updateHorizontalOverflow]);
 
     useEffect(() => {
         setCurrentPage(1);
@@ -415,7 +429,9 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
     useEffect(() => {
         if (!containerRef.current) return;
         containerRef.current.scrollTop = 0;
+        containerRef.current.scrollLeft = 0;
         setScrollTop(0);
+        updateHorizontalOverflow(containerRef.current);
     }, [tableName, currentPage, pageSize, debouncedSearch, filters, sorts]);
 
     const currentTableMeta = useMemo(
@@ -439,7 +455,8 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
 
     const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
         setScrollTop(e.currentTarget.scrollTop);
-    }, []);
+        updateHorizontalOverflow(e.currentTarget);
+    }, [updateHorizontalOverflow]);
 
     const visibleRowCount = Math.max(1, Math.ceil(viewportHeight / ROW_HEIGHT));
     const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - VIRTUAL_OVERSCAN_ROWS);
@@ -962,6 +979,10 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
         ? 'This SQL table does not expose an id primary key, so Table Editor is running in read-only mode. Use SQL Editor for writes until the table has a standard row identity.'
         : null;
     const hiddenColumnCount = Math.max(0, totalColumnCount - visibleColumnCount);
+
+    useEffect(() => {
+        updateHorizontalOverflow(containerRef.current);
+    }, [data.length, totalRecords, totalWidth, updateHorizontalOverflow, visibleColumns.length]);
 
     const resetColumnLayout = useCallback(() => {
         setColumnWidths({});
@@ -1655,12 +1676,19 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
             )}
 
             {/* Table Content - Dynamic Width */}
-            <div
-                ref={containerRef}
-                onScroll={handleScroll}
-                className="flex-1 overflow-auto bg-[#171717] custom-scrollbar"
-            >
-                <div style={{ minWidth: `${totalWidth}px` }}>
+            <div className="relative flex-1 overflow-hidden bg-[#171717]">
+                {horizontalOverflow.canScrollLeft && (
+                    <div className="pointer-events-none absolute inset-y-0 left-0 z-40 w-10 bg-gradient-to-r from-[#171717] via-[#171717]/90 to-transparent" />
+                )}
+                {horizontalOverflow.canScrollRight && (
+                    <div className="pointer-events-none absolute inset-y-0 right-0 z-40 w-10 bg-gradient-to-l from-[#171717] via-[#171717]/90 to-transparent" />
+                )}
+                <div
+                    ref={containerRef}
+                    onScroll={handleScroll}
+                    className="h-full overflow-auto custom-scrollbar"
+                >
+                    <div style={{ minWidth: `${totalWidth}px` }}>
                     {/* Table Header */}
                     <div className="sticky top-0 bg-[#111111] z-10 border-b border-[#2e2e2e] flex">
                         {rowIdentityEnabled && (
@@ -1849,77 +1877,83 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                         )}
                     </div>
                 </div>
+                </div>
             </div>
 
             {/* Table Footer */}
-            <div className="flex items-center justify-between px-6 py-2 border-t border-[#2e2e2e] bg-[#111111] text-[9px] font-black tracking-[0.2em]">
-                <div className="flex items-center gap-6">
-                    <span className="uppercase text-zinc-500 font-bold">{totalRecords} TOTAL RECORDS</span>
-
-                    <div className="h-4 w-[1px] bg-[#2e2e2e]" />
-
-                    {/* Pagination Controls */}
-                    <div className="flex items-center gap-3">
-                        <div className="flex items-center gap-1 group">
-                            <span className="text-zinc-600 uppercase">Per Page:</span>
-                            {PAGE_SIZE_OPTIONS.map((size: any) => (
-                                <button
-                                    key={size}
-                                    onClick={() => { setPageSize(size); setCurrentPage(1); }}
-                                    className={`px-1.5 py-0.5 rounded transition-all ${pageSize === size ? 'bg-primary text-black' : 'text-zinc-600 hover:text-zinc-300'}`}
-                                >
-                                    {size}
-                                </button>
-                            ))}
-                        </div>
-
-                        <div className="h-4 w-[1px] bg-[#2e2e2e]" />
-
-                        <div className="flex items-center gap-4">
-                            <span className="text-zinc-600">
-                                SHOWING <span className="text-zinc-300">{pageStartRecord}-{pageEndRecord}</span>
-                            </span>
-                            <button
-                                disabled={currentPage === 1}
-                                onClick={() => setCurrentPage((prev: any) => Math.max(1, prev - 1))}
-                                className="p-1 hover:text-primary disabled:opacity-30 transition-colors"
-                            >
-                                <ChevronLeft size={14} />
-                            </button>
-                            <span className="text-zinc-500 flex items-center gap-2">
-                                PAGE <span className="text-primary">{currentPage}</span> OF {totalPages}
-                            </span>
-                            <button
-                                disabled={currentPage >= totalPages}
-                                onClick={() => setCurrentPage((prev: any) => prev + 1)}
-                                className="p-1 hover:text-primary disabled:opacity-30 transition-colors"
-                            >
-                                <ChevronRight size={14} />
-                            </button>
-                        </div>
-                    </div>
-
-                    <div className="h-4 w-[1px] bg-[#2e2e2e]" />
-
-                    <div className="flex items-center gap-2">
-                        <div className={`w-1 h-1 rounded-full ${error ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]' : 'bg-primary shadow-[0_0_6px_rgba(254,254,0,0.4)]'}`} />
-                        <span className="uppercase text-zinc-500">
-                            {error ? 'DATABASE DISCONNECTED' : 'SYSTEM OPERATIONAL'}
+            <div className="flex flex-col gap-3 border-t border-[#2e2e2e] bg-[#111111] px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] sm:px-6 xl:flex-row xl:items-center xl:justify-between">
+                <div className="flex flex-wrap items-center gap-3 text-zinc-500">
+                    <span className="rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1 text-zinc-300">
+                        {totalRecords} rows
+                    </span>
+                    <span className="rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1 text-zinc-300">
+                        {visibleColumnCount}/{totalColumnCount} cols
+                    </span>
+                    <span className="rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1 text-zinc-300">
+                        {pageStartRecord}-{pageEndRecord}
+                    </span>
+                    <div className="flex items-center gap-2 rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1">
+                        <div className={`h-1.5 w-1.5 rounded-full ${error ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]' : 'bg-primary shadow-[0_0_6px_rgba(254,254,0,0.4)]'}`} />
+                        <span className={error ? 'text-red-400' : 'text-zinc-300'}>
+                            {error ? 'db issue' : 'live'}
                         </span>
                     </div>
+                    {horizontalOverflow.canScrollRight && (
+                        <span className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-primary">
+                            scroll for more columns
+                        </span>
+                    )}
                 </div>
 
-                <div className="flex items-center gap-4 text-zinc-600">
+                <div className="flex flex-wrap items-center gap-3 text-zinc-600">
+                    <label className="flex items-center gap-2 rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1.5">
+                        <span>Rows</span>
+                        <select
+                            value={pageSize}
+                            onChange={(e: any) => {
+                                setPageSize(Number(e.target.value));
+                                setCurrentPage(1);
+                            }}
+                            className="bg-transparent text-zinc-200 outline-none"
+                        >
+                            {PAGE_SIZE_OPTIONS.map((size: any) => (
+                                <option key={size} value={size} className="bg-[#111111] text-zinc-200">
+                                    {size}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                    <div className="flex items-center gap-2 rounded-full border border-[#2e2e2e] bg-[#161616] px-2 py-1">
+                        <button
+                            disabled={currentPage === 1}
+                            onClick={() => setCurrentPage((prev: any) => Math.max(1, prev - 1))}
+                            className="rounded-full p-1 hover:text-primary disabled:opacity-30 transition-colors"
+                            aria-label="Previous page"
+                        >
+                            <ChevronLeft size={14} />
+                        </button>
+                        <span className="px-1 text-zinc-300">
+                            page {currentPage} / {totalPages}
+                        </span>
+                        <button
+                            disabled={currentPage >= totalPages}
+                            onClick={() => setCurrentPage((prev: any) => prev + 1)}
+                            className="rounded-full p-1 hover:text-primary disabled:opacity-30 transition-colors"
+                            aria-label="Next page"
+                        >
+                            <ChevronRight size={14} />
+                        </button>
+                    </div>
                     <button
                         onClick={() => onOpenSqlEditor?.(tableName)}
                         disabled={!tableName}
-                        className="flex items-center gap-1.5 hover:text-zinc-200 uppercase transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="flex items-center gap-1.5 rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1.5 hover:text-zinc-200 uppercase transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                         <Code2 size={12} /> SQL
                     </button>
                     <button
                         onClick={handleExportCSV}
-                        className="flex items-center gap-1.5 hover:text-zinc-200 uppercase transition-colors"
+                        className="flex items-center gap-1.5 rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1.5 hover:text-zinc-200 uppercase transition-colors"
                     >
                         <Download size={12} /> CSV
                     </button>

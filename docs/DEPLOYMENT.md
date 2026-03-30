@@ -21,6 +21,7 @@ Create a local `.env` beside `docker-compose.yml` and never commit it.
 ```env
 # Core
 PORT=8090
+OZY_DEPLOYMENT_PROFILE=self_host
 SITE_URL=https://api.example.com
 APP_DOMAIN=example.com
 ALLOWED_ORIGINS=https://app.example.com,https://api.example.com
@@ -71,6 +72,13 @@ Recommended for production:
 - `SMTP_PASSWORD`
 - `SMTP_FROM`
 - `ALLOWED_ORIGINS`
+
+Profile mapping:
+- `self_host`: local binary, self-managed VM, or bundled docker stack
+- `install_to_play`: Coolify or low-friction docker install
+- `azure_cloud`: Azure Container Apps + Flexible Server + Key Vault
+
+See `docs/DEPLOYMENT_PROFILES.md` for the branch and file map.
 
 ## 4. Deploy
 ```bash

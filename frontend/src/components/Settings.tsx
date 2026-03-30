@@ -34,6 +34,7 @@ interface ProjectInfo {
 interface ProductionReadiness {
   status?: string;
   launch_ready?: boolean;
+  profile?: string;
   deployment_mode?: string;
   strict_security?: boolean;
   managed_secrets?: boolean;
@@ -55,6 +56,20 @@ interface ConnectionInfo {
   app_version?: string;
   git_commit?: string;
 }
+
+const formatDeploymentProfile = (profile?: string) => {
+  switch (profile) {
+    case "azure_cloud":
+      return "Azure Cloud";
+    case "install_to_play":
+      return "Install to Play";
+    case "custom":
+      return "Custom Runtime";
+    case "self_host":
+    default:
+      return "Self-host";
+  }
+};
 
 const Settings: React.FC<SettingsProps> = ({
   view = "general",
@@ -200,6 +215,11 @@ const Settings: React.FC<SettingsProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {[
               {
+                label: "Target Profile",
+                value: formatDeploymentProfile(projectInfo?.production?.profile),
+                ok: !!projectInfo?.production?.profile,
+              },
+              {
                 label: "Database Runtime",
                 value:
                   projectInfo?.production?.deployment_mode === "external_postgres"
@@ -212,7 +232,11 @@ const Settings: React.FC<SettingsProps> = ({
                 value: projectInfo?.production?.pooler_configured
                   ? "Configured"
                   : "Missing",
-                ok: projectInfo?.production?.pooler_configured,
+                ok:
+                  projectInfo?.production?.profile === "self_host" ||
+                  projectInfo?.production?.profile === "install_to_play"
+                    ? true
+                    : projectInfo?.production?.pooler_configured,
               },
               {
                 label: "Strict Security",
@@ -283,6 +307,45 @@ const Settings: React.FC<SettingsProps> = ({
                 </div>
               </div>
             )}
+
+          <div className="bg-[#0c0c0c] border border-[#2e2e2e] rounded-2xl p-5">
+            <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-3">
+              Deployment Track
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+              {[
+                {
+                  label: "Self-host",
+                  detail: "Local binary or docker-compose.install.yml with bundled Postgres.",
+                  active: projectInfo?.production?.profile === "self_host",
+                },
+                {
+                  label: "Install to Play",
+                  detail: "Coolify or simple compose deployment with explicit env variables.",
+                  active: projectInfo?.production?.profile === "install_to_play",
+                },
+                {
+                  label: "Azure Cloud",
+                  detail: "Container Apps + Flexible Server + Key Vault + PgBouncer.",
+                  active: projectInfo?.production?.profile === "azure_cloud",
+                },
+              ].map((item) => (
+                <div
+                  key={item.label}
+                  className={`rounded-2xl border p-4 ${
+                    item.active
+                      ? "border-primary/40 bg-primary/10 text-white"
+                      : "border-[#2e2e2e] bg-[#111111] text-zinc-400"
+                  }`}
+                >
+                  <p className="text-[10px] font-black uppercase tracking-widest mb-2">
+                    {item.label}
+                  </p>
+                  <p className="leading-relaxed">{item.detail}</p>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     </div>
