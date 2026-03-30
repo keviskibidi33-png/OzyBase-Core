@@ -46,6 +46,36 @@ const SQL_KEYWORDS = [
     'TRUE', 'FALSE', 'COUNT', 'SUM', 'AVG', 'MIN', 'MAX', 'NOW()', 'CURRENT_DATE'
 ];
 
+const DEFAULT_SQL_FALLBACK_QUERY = 'SELECT current_database() AS database, now() AS server_time;';
+const LEGACY_SQL_STARTER_QUERY = 'SELECT * FROM users LIMIT 10;';
+const CATALOG_REFRESH_STATEMENTS = new Set(['ALTER', 'CREATE', 'DROP', 'TRUNCATE', 'RENAME']);
+
+type SQLResultsState = {
+    columns: string[];
+    rows: any[][];
+    rowCount: number;
+    executionTime: string;
+    command: string;
+    statementKind: string;
+    rowsAffected: number;
+    hasResultSet: boolean;
+    message: string;
+};
+
+const quoteIdentifier = (identifier: string) => `"${String(identifier || '').replace(/"/g, '""')}"`;
+
+const buildDefaultSQLQuery = (tables: string[]) => {
+    const preferredTable = tables[0];
+    if (!preferredTable) {
+        return DEFAULT_SQL_FALLBACK_QUERY;
+    }
+    return `SELECT * FROM ${quoteIdentifier(preferredTable)} LIMIT 50;`;
+};
+
+const shouldRefreshCatalogAfterStatement = (statementKind: string) => {
+    return CATALOG_REFRESH_STATEMENTS.has(String(statementKind || '').toUpperCase());
+};
+
 const BarChart = ({ data, columns }: any) => {
     if (!data || data.length === 0) return null;
 
@@ -122,8 +152,8 @@ const BarChart = ({ data, columns }: any) => {
 };
 
 const SqlTerminal = () => {
-    const [query, setQuery] = useState('SELECT * FROM users LIMIT 10;');
-    const [results, setResults] = useState<any>(null);
+    const [query, setQuery] = useState(DEFAULT_SQL_FALLBACK_QUERY);
+    const [results, setResults] = useState<SQLResultsState | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<any>(null);
     const [history, setHistory] = useState<any[]>([]);
@@ -143,7 +173,8 @@ const SqlTerminal = () => {
     const [queryName, setQueryName] = useState('');
     const [timeRange, setTimeRange] = useState(60); // minutes
     const [showTimeMenu, setShowTimeMenu] = useState(false);
-    const [catalog, setCatalog] = useState<{ tables: string[]; columnsByTable: Record<string, string[]>; allColumns: string[] }>({ tables: [], columnsByTable: {}, allColumns: [] });
+    const [catalog, setCatalog] = useState<{ tables: string[]; userTables: string[]; columnsByTable: Record<string, string[]>; allColumns: string[] }>({ tables: [], userTables: [], columnsByTable: {}, allColumns: [] });
+    const [queryTouched, setQueryTouched] = useState(false);
     const isResizing = useRef<boolean>(false);
     const monacoRef = useRef<any>(null);
     const editorRef = useRef<any>(null);
@@ -231,6 +262,7 @@ const SqlTerminal = () => {
             if (!res.ok) return;
             const data = await res.json();
             const tables: string[] = [];
+            const userTables: string[] = [];
             const columnsByTable: Record<string, string[]> = {};
             const allColumnsSet = new Set<string>();
 
@@ -238,6 +270,9 @@ const SqlTerminal = () => {
                 const tableName = collection?.name;
                 if (!tableName) return;
                 tables.push(tableName);
+                if (!collection?.is_system) {
+                    userTables.push(tableName);
+                }
                 const schemaCols = Array.isArray(collection?.schema)
                     ? collection.schema.map((field: any) => field?.name).filter(Boolean)
                     : [];
@@ -247,6 +282,7 @@ const SqlTerminal = () => {
 
             setCatalog({
                 tables,
+                userTables,
                 columnsByTable,
                 allColumns: Array.from(allColumnsSet)
             });
@@ -264,6 +300,27 @@ const SqlTerminal = () => {
             fetchCatalog();
         }
     }, [syncSuccess, fetchCatalog]);
+
+    useEffect(() => {
+        if (queryTouched) return;
+        const nextDefaultQuery = buildDefaultSQLQuery(catalog.userTables);
+        setQuery((prev) => {
+            const trimmed = prev.trim();
+            if (
+                trimmed === '' ||
+                prev === DEFAULT_SQL_FALLBACK_QUERY ||
+                prev === LEGACY_SQL_STARTER_QUERY
+            ) {
+                return nextDefaultQuery;
+            }
+            return prev;
+        });
+    }, [catalog.userTables, queryTouched]);
+
+    const updateQuery = useCallback((nextQuery: string) => {
+        setQueryTouched(true);
+        setQuery(nextQuery);
+    }, []);
 
     const registerCompletionProvider = useCallback(() => {
         if (!monacoRef.current) return;
@@ -396,23 +453,35 @@ const SqlTerminal = () => {
             }
 
             const data = await res.json();
+            const isExplainQuery = String(data.statementKind || '').toUpperCase() === 'EXPLAIN' || targetQuery.toLowerCase().includes('explain');
 
-            if (targetQuery.toLowerCase().includes('explain')) {
+            if (isExplainQuery) {
                 setExplainData(data.rows);
                 setActiveTab('explain');
             } else {
-                setResults({
+                setExplainData(null);
+                const nextResults: SQLResultsState = {
                     columns: data.columns || [],
                     rows: data.rows || [],
                     rowCount: data.rowCount || 0,
-                    executionTime: data.executionTime || '0ms'
-                });
+                    executionTime: data.executionTime || '0ms',
+                    command: data.command || data.statementKind || 'SQL',
+                    statementKind: data.statementKind || 'UNKNOWN',
+                    rowsAffected: data.rowsAffected || 0,
+                    hasResultSet: Boolean(data.hasResultSet),
+                    message: data.message || 'Statement executed successfully.'
+                };
+                setResults(nextResults);
 
                 // Add to history if successful and not already the last one
                 setHistory((prev: any) => {
                     if (prev[0] === targetQuery) return prev;
                     return [targetQuery, ...prev].slice(0, 50);
                 });
+
+                if (shouldRefreshCatalogAfterStatement(nextResults.statementKind)) {
+                    await fetchCatalog();
+                }
             }
             setSelectedRows(new Set());
         } catch (err: any) {
@@ -526,7 +595,7 @@ const SqlTerminal = () => {
     };
 
     const exportToCSV = () => {
-        if (!results) return;
+        if (!results?.hasResultSet || (results?.columns?.length || 0) === 0) return;
         const headers = results.columns.join(',');
         const rows = results.rows.map((row: any) =>
             row.map((val: any) => {
@@ -539,7 +608,7 @@ const SqlTerminal = () => {
     };
 
     const exportToJSON = () => {
-        if (!results) return;
+        if (!results?.hasResultSet || (results?.columns?.length || 0) === 0) return;
         const data = results.rows.map((row: any) => {
             const obj: Record<string, any> = {};
             results.columns.forEach((col: any, i: any) => {
@@ -552,7 +621,7 @@ const SqlTerminal = () => {
     };
 
     const exportToTXT = () => {
-        if (!results) return;
+        if (!results?.hasResultSet || (results?.columns?.length || 0) === 0) return;
         const headers = results.columns.join('\t');
         const rows = results.rows.map((row: any) => row.join('\t')).join('\n');
         downloadFile(`${headers}\n${rows}`, 'export.txt', 'text/plain');
@@ -576,7 +645,7 @@ const SqlTerminal = () => {
     };
 
     const toggleAllRows = () => {
-        if (!results) return;
+        if (!results?.hasResultSet) return;
         if (selectedRows.size === results.rows.length) {
             setSelectedRows(new Set());
         } else {
@@ -585,7 +654,7 @@ const SqlTerminal = () => {
     };
 
     const copySelected = (format: any) => {
-        if (!results || selectedRows.size === 0) return;
+        if (!results?.hasResultSet || selectedRows.size === 0) return;
 
         const selectedData = results.rows.filter((_: any, i: any) => selectedRows.has(i));
         let content = '';
@@ -633,6 +702,10 @@ const SqlTerminal = () => {
         setSelectedRows(new Set());
         showToast('Selection cleared', 'info');
     };
+
+    const hasTabularResults = Boolean(results?.hasResultSet && (results?.columns?.length || 0) > 0);
+    const hasResultRows = Boolean(hasTabularResults && (results?.rows?.length || 0) > 0);
+    const canExportResults = Boolean(hasTabularResults);
 
 
     return (
@@ -683,7 +756,7 @@ const SqlTerminal = () => {
                                     <div
                                         key={q.id}
                                         onClick={() => {
-                                            setQuery(q.query);
+                                            updateQuery(q.query);
                                             showToast(`Loaded "${q.name}"`, 'success');
                                         }}
                                         className="group relative flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[#1a1a1a] cursor-pointer transition-all border border-transparent hover:border-[#2e2e2e]"
@@ -724,7 +797,7 @@ const SqlTerminal = () => {
                                 filteredHistory.map((h: any, i: any) => (
                                     <div
                                         key={i}
-                                        onClick={() => setQuery(h)}
+                                        onClick={() => updateQuery(h)}
                                         className="group flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-[#111111] cursor-pointer transition-colors border border-transparent hover:border-[#1a1a1a]"
                                     >
                                         <div className="w-1.5 h-1.5 rounded-full bg-zinc-800 group-hover:bg-primary/50 transition-colors" />
@@ -794,7 +867,7 @@ const SqlTerminal = () => {
                         <div className="h-4 w-[1px] bg-[#2e2e2e]" />
                         <button onClick={handleSaveQuery} title="Save Query" className="p-2 text-zinc-600 hover:text-primary transition-colors"><Save size={16} /></button>
                         <div className="h-4 w-[1px] bg-[#2e2e2e]" />
-                        <button onClick={() => setQuery('')} title="Clear Editor" className="p-2 text-zinc-600 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
+                        <button onClick={() => updateQuery('')} title="Clear Editor" className="p-2 text-zinc-600 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
                     </div>
                 </div>
 
@@ -809,7 +882,7 @@ const SqlTerminal = () => {
                             height="100%"
                             defaultLanguage="sql"
                             value={query}
-                            onChange={(value: any) => setQuery(value || '')}
+                            onChange={(value: any) => updateQuery(value || '')}
                             theme="vs-dark"
                             options={{
                                 minimap: { enabled: false },
@@ -891,11 +964,15 @@ const SqlTerminal = () => {
                                 Visualize
                             </button>
 
-                            {(results || explainData) && activeTab === 'results' && (
+                            {results && activeTab === 'results' && (
                                 <div className="flex items-center gap-4 border-l border-zinc-800 pl-4 h-full">
                                     <span className="text-[9px] font-bold text-green-500 uppercase tracking-widest flex items-center gap-1.5 font-mono">
                                         <CheckCircle2 size={10} />
-                                        Success ({results?.rowCount || 0} rows)
+                                        {results.message}
+                                    </span>
+                                    <span className="text-[9px] font-bold text-zinc-600 tracking-widest font-mono">CMD: {results.command}</span>
+                                    <span className="text-[9px] font-bold text-zinc-600 tracking-widest font-mono">
+                                        {results.hasResultSet ? `ROWS: ${results.rowCount}` : `AFFECTED: ${results.rowsAffected}`}
                                     </span>
                                     <span className="text-[9px] font-bold text-zinc-600 tracking-widest font-mono">EXEC: {results?.executionTime || '0ms'}</span>
                                 </div>
@@ -936,7 +1013,7 @@ const SqlTerminal = () => {
                                                             const parts = query.split(/LIMIT|GROUP BY|ORDER BY/i);
                                                             const base = parts[0].trim();
                                                             const suffix = query.substring(base.length);
-                                                            setQuery(`${base} ${timeFilter} ${suffix.trim()};`.replace(/;;$/, ';'));
+                                                            updateQuery(`${base} ${timeFilter} ${suffix.trim()};`.replace(/;;$/, ';'));
                                                             showToast(`Applied ${mins}m filter`, 'success');
                                                         }
                                                     }}
@@ -956,10 +1033,12 @@ const SqlTerminal = () => {
                             <div className="relative">
                                 <button
                                     onClick={(e: any) => {
+                                        if (!canExportResults) return;
                                         e.stopPropagation();
                                         setShowExportMenu(!showExportMenu);
                                     }}
-                                    className="flex items-center gap-2 text-[9px] font-bold text-zinc-500 hover:text-white uppercase tracking-widest transition-colors"
+                                    disabled={!canExportResults}
+                                    className={`flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest transition-colors ${canExportResults ? 'text-zinc-500 hover:text-white' : 'text-zinc-700 cursor-not-allowed'}`}
                                 >
                                     <Download size={12} />
                                     Export Data
@@ -1014,6 +1093,7 @@ const SqlTerminal = () => {
                                         </div>
                                     </div>
                                 ) : activeTab === 'results' && results ? (
+                                    hasTabularResults ? (
                                     <table className="min-w-full text-left border-collapse table-auto">
                                         <thead className="sticky top-0 bg-[#0c0c0c] z-10 border-b border-[#2e2e2e]">
                                             <tr>
@@ -1056,6 +1136,33 @@ const SqlTerminal = () => {
                                             ))}
                                         </tbody>
                                     </table>
+                                    ) : (
+                                        <div className="flex flex-col items-center justify-center h-full gap-5 px-8 py-20 text-center">
+                                            <div className="w-16 h-16 rounded-3xl bg-green-500/10 border border-green-500/20 flex items-center justify-center text-green-500">
+                                                <CheckCircle2 size={32} />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <h3 className="text-sm font-black text-white uppercase tracking-widest">Statement Executed</h3>
+                                                <p className="text-[10px] text-zinc-500 uppercase tracking-widest leading-relaxed max-w-xl">
+                                                    {results.message}
+                                                </p>
+                                            </div>
+                                            <div className="grid gap-3 sm:grid-cols-3 w-full max-w-3xl">
+                                                <div className="rounded-2xl border border-[#2e2e2e] bg-[#111111] px-4 py-4">
+                                                    <p className="text-[9px] font-black uppercase tracking-widest text-zinc-600 mb-2">Command</p>
+                                                    <p className="text-xs font-mono text-white break-all">{results.command}</p>
+                                                </div>
+                                                <div className="rounded-2xl border border-[#2e2e2e] bg-[#111111] px-4 py-4">
+                                                    <p className="text-[9px] font-black uppercase tracking-widest text-zinc-600 mb-2">Rows Affected</p>
+                                                    <p className="text-xs font-mono text-white">{results.rowsAffected}</p>
+                                                </div>
+                                                <div className="rounded-2xl border border-[#2e2e2e] bg-[#111111] px-4 py-4">
+                                                    <p className="text-[9px] font-black uppercase tracking-widest text-zinc-600 mb-2">Execution Time</p>
+                                                    <p className="text-xs font-mono text-white">{results.executionTime}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )
                                 ) : activeTab === 'explain' && explainData ? (
                                     <div className="p-6 font-mono text-xs text-zinc-400 leading-relaxed max-w-4xl mx-auto">
                                         <div className="flex items-center gap-3 mb-6 p-4 bg-primary/5 border border-primary/20 rounded-xl">
@@ -1069,7 +1176,7 @@ const SqlTerminal = () => {
                                             {JSON.stringify(explainData, null, 2)}
                                         </pre>
                                     </div>
-                                ) : activeTab === 'visualize' && results ? (
+                                ) : activeTab === 'visualize' && hasTabularResults && results ? (
                                     <div className="p-8 max-w-5xl mx-auto flex flex-col gap-6">
                                         <div>
                                             <h3 className="text-sm font-black text-white uppercase tracking-widest mb-1">Data Visualization</h3>
@@ -1099,7 +1206,7 @@ const SqlTerminal = () => {
                     </div>
 
                     {/* Floating Multi-action Bar */}
-                    {selectedRows.size > 0 && (
+                    {hasResultRows && selectedRows.size > 0 && (
                         <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-[#111111] border border-primary/20 rounded-full px-6 py-3 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.5)] flex items-center gap-6 animate-in fade-in slide-in-from-bottom-4 duration-300 z-50">
                             <span className="text-[10px] font-black uppercase tracking-widest text-primary border-r border-zinc-800 pr-6 mr-2">
                                 {selectedRows.size} Rows Selected

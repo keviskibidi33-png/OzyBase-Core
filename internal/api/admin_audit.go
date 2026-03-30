@@ -231,7 +231,7 @@ func hashedValue(raw string) string {
 }
 
 func sqlStatementKind(raw string) string {
-	trimmed := strings.TrimSpace(raw)
+	trimmed := trimLeadingSQLComments(raw)
 	if trimmed == "" {
 		return "UNKNOWN"
 	}
@@ -240,6 +240,29 @@ func sqlStatementKind(raw string) string {
 		return "UNKNOWN"
 	}
 	return strings.ToUpper(fields[0])
+}
+
+func trimLeadingSQLComments(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	for trimmed != "" {
+		switch {
+		case strings.HasPrefix(trimmed, "--"):
+			nextLine := strings.Index(trimmed, "\n")
+			if nextLine == -1 {
+				return ""
+			}
+			trimmed = strings.TrimSpace(trimmed[nextLine+1:])
+		case strings.HasPrefix(trimmed, "/*"):
+			commentEnd := strings.Index(trimmed, "*/")
+			if commentEnd == -1 {
+				return ""
+			}
+			trimmed = strings.TrimSpace(trimmed[commentEnd+2:])
+		default:
+			return trimmed
+		}
+	}
+	return trimmed
 }
 
 func isSensitiveAuditField(key string) bool {

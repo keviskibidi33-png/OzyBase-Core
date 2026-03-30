@@ -229,7 +229,7 @@ const SchemaVisualizer = ({ viewMode = 'user' }: any) => {
             if (table.columns && table.columns.length > 0) {
                 table.columns.forEach((col: any) => {
                     // Find FK
-                    const rel = schema.relationships?.find((r: any) => r.from_table === table.name && r.from_column === col.name);
+                    const rel = schema.relationships?.find((r: any) => r.from_table === table.name && r.from_col === col.name);
 
                     const row = [
                         table.name,
@@ -237,7 +237,7 @@ const SchemaVisualizer = ({ viewMode = 'user' }: any) => {
                         col.type,
                         col.is_primary ? 'Yes' : 'No',
                         rel ? rel.to_table : '',
-                        rel ? rel.to_column : '',
+                        rel ? rel.to_col : '',
                         Math.round(pos.x),
                         Math.round(pos.y)
                     ];
