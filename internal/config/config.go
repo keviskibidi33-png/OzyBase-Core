@@ -70,7 +70,9 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
-	_ = godotenv.Load()
+	if !strings.EqualFold(strings.TrimSpace(os.Getenv("OZY_SKIP_DOTENV")), "true") {
+		_ = godotenv.Load()
+	}
 	debug := strings.EqualFold(getEnv("DEBUG", "false"), "true")
 	strictSecurity := strings.EqualFold(getEnv("OZY_STRICT_SECURITY", "false"), "true")
 

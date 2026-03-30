@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -16,6 +18,7 @@ import (
 )
 
 const sqlExecutionTimeout = 30 * time.Second
+const defaultSQLEditorMaxRows = 1000
 
 type SQLExecuteRequest struct {
 	Query string `json:"query"`
@@ -30,6 +33,8 @@ type SQLExecuteResponse struct {
 	Columns       []string        `json:"columns"`
 	Rows          [][]interface{} `json:"rows"`
 	RowCount      int             `json:"rowCount"`
+	ResultLimit   int             `json:"resultLimit"`
+	Truncated     bool            `json:"truncated"`
 	ExecutionTime string          `json:"executionTime"`
 	Command       string          `json:"command"`
 	StatementKind string          `json:"statementKind"`
@@ -84,6 +89,8 @@ func (h *Handler) HandleExecuteSQL(c echo.Context) error {
 			Columns:       []string{},
 			Rows:          [][]interface{}{},
 			RowCount:      0,
+			ResultLimit:   resolveSQLEditorMaxRows(),
+			Truncated:     false,
 			ExecutionTime: duration.String(),
 			Command:       sqlCommandLabel(tag.String(), statementKind),
 			StatementKind: statementKind,
@@ -110,6 +117,8 @@ func (h *Handler) HandleExecuteSQL(c echo.Context) error {
 	// Fetch rows
 	var resultRows [][]interface{}
 	rowCount := 0
+	rowLimit := resolveSQLEditorMaxRows()
+	truncated := false
 
 	for rows.Next() {
 		// Create a slice of interface{} to hold the values
@@ -127,8 +136,14 @@ func (h *Handler) HandleExecuteSQL(c echo.Context) error {
 			values[i] = normalizeSQLResultValue(values[i])
 		}
 
-		resultRows = append(resultRows, values)
-		rowCount++
+		if rowCount < rowLimit {
+			resultRows = append(resultRows, values)
+			rowCount++
+			continue
+		}
+
+		truncated = true
+		break
 	}
 
 	if rows.Err() != nil {
@@ -143,6 +158,8 @@ func (h *Handler) HandleExecuteSQL(c echo.Context) error {
 		Columns:       columns,
 		Rows:          resultRows,
 		RowCount:      rowCount,
+		ResultLimit:   rowLimit,
+		Truncated:     truncated,
 		ExecutionTime: duration.String(),
 		Command:       sqlCommandLabel(tag.String(), statementKind),
 		StatementKind: statementKind,
@@ -150,6 +167,25 @@ func (h *Handler) HandleExecuteSQL(c echo.Context) error {
 		HasResultSet:  true,
 		Message:       sqlExecutionMessage(statementKind, true, rowCount, rowsAffected),
 	})
+}
+
+func resolveSQLEditorMaxRows() int {
+	raw := strings.TrimSpace(os.Getenv("OZY_SQL_EDITOR_MAX_ROWS"))
+	if raw == "" {
+		return defaultSQLEditorMaxRows
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return defaultSQLEditorMaxRows
+	}
+	if value < 100 {
+		return 100
+	}
+	if value > 10000 {
+		return 10000
+	}
+	return value
 }
 
 func (h *Handler) syncCollectionsAfterSQL(ctx context.Context, query string, workspaceID string) {

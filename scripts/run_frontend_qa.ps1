@@ -6,7 +6,8 @@ param(
     "tests/smoke-critical.spec.js",
     "tests/essential-keys-mcp.spec.js",
     "tests/auth-scroll-audit.spec.js",
-    "tests/production-qa-smoke.spec.js"
+    "tests/production-qa-smoke.spec.js",
+    "tests/data-grid-massive.spec.js"
   ),
   [int]$PlaywrightGlobalTimeoutMs = 420000
 )
@@ -119,6 +120,7 @@ try {
   $env:E2E_ADMIN_PASSWORD = "OzyBase123!"
   $env:CI = "1"
   $env:DEBUG = "false"
+  $env:OZY_SKIP_DOTENV = "true"
 
   $apiProc = Start-Process -FilePath $apiBinary -WorkingDirectory $repoRoot -PassThru -RedirectStandardOutput $apiLog -RedirectStandardError $apiErrLog
   Wait-HttpHealthy -Url "http://127.0.0.1:$ApiPort/api/health" -Process $apiProc

@@ -176,7 +176,8 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $frontendDir = Join-Path $repoRoot "frontend"
 $e2eSmokeSpecs = @(
   "tests/smoke-critical.spec.js",
-  "tests/essential-keys-mcp.spec.js"
+  "tests/essential-keys-mcp.spec.js",
+  "tests/data-grid-massive.spec.js"
 )
 $bashPath = "C:/Program Files/Git/bin/bash.exe"
 $npmCmd = "npm.cmd"

@@ -72,6 +72,12 @@ const VIRTUAL_OVERSCAN_ROWS = 8;
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500, 1000, 2000];
 const CHECKBOX_COLUMN_WIDTH = 40;
 const ACTIONS_COLUMN_WIDTH = 80;
+const TABLE_DENSITY_STORAGE_KEY = 'ozybase_table_density';
+const ROW_DENSITY_OPTIONS: Record<string, { label: string; rowHeight: number }> = {
+    compact: { label: 'Compact', rowHeight: 36 },
+    standard: { label: 'Standard', rowHeight: 45 },
+    comfortable: { label: 'Comfortable', rowHeight: 56 }
+};
 const FILTER_OPS = [
     { label: 'Equals', value: 'eq' },
     { label: 'Not equal', value: 'neq' },
@@ -127,6 +133,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
     const [editingRow, setEditingRow] = useState<any>(null);
     const [searchTerm, setSearchTerm] = useState('');
     const debouncedSearch = useDebounce(searchTerm, 500);
+    const [pageJumpInput, setPageJumpInput] = useState('1');
     const [confirmDeleteId, setConfirmDeleteId] = useState<any>(null);
     const [alertMessage, setAlertMessage] = useState<any>(null);
     const [realtimeEnabled, setRealtimeEnabled] = useState(false);
@@ -145,6 +152,11 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
     const [isCsvImportOpen, setIsCsvImportOpen] = useState(false);
     const [csvImport, setCsvImport] = useState<any>(null);
     const [columnSearchTerm, setColumnSearchTerm] = useState('');
+    const [rowDensity, setRowDensity] = useState(() => {
+        if (typeof window === 'undefined') return 'standard';
+        const saved = window.localStorage.getItem(TABLE_DENSITY_STORAGE_KEY);
+        return saved && ROW_DENSITY_OPTIONS[saved] ? saved : 'standard';
+    });
 
     // Pagination State
     const [pageSize, setPageSize] = useState(100);
@@ -213,6 +225,10 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
             setHiddenColumns([]);
         }
     }, [tableName]);
+
+    useEffect(() => {
+        window.localStorage.setItem(TABLE_DENSITY_STORAGE_KEY, rowDensity);
+    }, [rowDensity]);
 
     const fetchRealtimeStatus = useCallback(async () => {
         if (!tableName) return;
@@ -384,7 +400,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
     // --- Virtualization Logic ---
     const [scrollTop, setScrollTop] = useState(0);
     const containerRef = useRef<HTMLDivElement | null>(null);
-    const ROW_HEIGHT = 45;
+    const rowHeight = ROW_DENSITY_OPTIONS[rowDensity]?.rowHeight || ROW_DENSITY_OPTIONS.standard.rowHeight;
     const [viewportHeight, setViewportHeight] = useState(DEFAULT_VIEWPORT_HEIGHT);
     const [horizontalOverflow, setHorizontalOverflow] = useState({ canScrollLeft: false, canScrollRight: false });
 
@@ -406,7 +422,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
         const node = containerRef.current;
         const updateViewportHeight = () => {
             const nextHeight = node.clientHeight || DEFAULT_VIEWPORT_HEIGHT;
-            setViewportHeight(Math.max(ROW_HEIGHT * 4, nextHeight));
+            setViewportHeight(Math.max(rowHeight * 4, nextHeight));
             updateHorizontalOverflow(node);
         };
 
@@ -420,7 +436,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
         const observer = new ResizeObserver(updateViewportHeight);
         observer.observe(node);
         return () => observer.disconnect();
-    }, [updateHorizontalOverflow]);
+    }, [rowHeight, updateHorizontalOverflow]);
 
     useEffect(() => {
         setCurrentPage(1);
@@ -458,12 +474,12 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
         updateHorizontalOverflow(e.currentTarget);
     }, [updateHorizontalOverflow]);
 
-    const visibleRowCount = Math.max(1, Math.ceil(viewportHeight / ROW_HEIGHT));
-    const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - VIRTUAL_OVERSCAN_ROWS);
+    const visibleRowCount = Math.max(1, Math.ceil(viewportHeight / rowHeight));
+    const startIndex = Math.max(0, Math.floor(scrollTop / rowHeight) - VIRTUAL_OVERSCAN_ROWS);
     const endIndex = Math.min(data.length, startIndex + visibleRowCount + (VIRTUAL_OVERSCAN_ROWS * 2));
     const visibleData = useMemo(() => data.slice(startIndex, endIndex), [data, startIndex, endIndex]);
-    const topPadding = startIndex * ROW_HEIGHT;
-    const bottomPadding = (data.length - endIndex) * ROW_HEIGHT;
+    const topPadding = startIndex * rowHeight;
+    const bottomPadding = (data.length - endIndex) * rowHeight;
     const totalPages = Math.max(1, Math.ceil(totalRecords / pageSize));
     const pageStartRecord = totalRecords === 0 ? 0 : ((currentPage - 1) * pageSize) + 1;
     const pageEndRecord = totalRecords === 0 ? 0 : Math.min(currentPage * pageSize, totalRecords);
@@ -477,6 +493,31 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
             setCurrentPage(totalPages);
         }
     }, [currentPage, totalPages]);
+
+    useEffect(() => {
+        setPageJumpInput(String(currentPage));
+    }, [currentPage]);
+
+    const goToPage = useCallback((rawPage: number) => {
+        const nextPage = Math.min(totalPages, Math.max(1, rawPage));
+        setCurrentPage(nextPage);
+        setPageJumpInput(String(nextPage));
+    }, [totalPages]);
+
+    const resetDataView = useCallback(() => {
+        setSearchTerm('');
+        setFilters([]);
+        setSorts([]);
+        setCurrentPage(1);
+        setActiveViewId(null);
+        setHiddenColumns([]);
+        saveHiddenColumns([]);
+        setAlertMessage({
+            title: 'View Reset',
+            message: 'Search, filters, sorts, page and hidden columns were reset for this table.',
+            type: 'success'
+        });
+    }, [saveHiddenColumns]);
 
     useEffect(() => {
         if (!selectAllRef.current) return;
@@ -1479,9 +1520,19 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                 </div>
             )}
 
-            {(hiddenColumnCount > 0 || filters.length > 0 || sorts.length > 0 || selectedCount > 0) && (
+            {(hiddenColumnCount > 0 || filters.length > 0 || sorts.length > 0 || selectedCount > 0 || searchTerm.trim() !== '' || !!activeViewId) && (
                 <div className="border-b border-[#2e2e2e] bg-[#121212] px-4 py-2 sm:px-6">
                     <div className="flex flex-wrap items-center gap-2 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">
+                        {activeViewId && (
+                            <span className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-primary">
+                                saved view active
+                            </span>
+                        )}
+                        {searchTerm.trim() !== '' && (
+                            <span className="rounded-full border border-[#2e2e2e] bg-[#171717] px-3 py-1 text-zinc-300">
+                                search: {searchTerm.trim()}
+                            </span>
+                        )}
                         {hiddenColumnCount > 0 && (
                             <span className="rounded-full border border-[#2e2e2e] bg-[#171717] px-3 py-1 text-zinc-300">
                                 {hiddenColumnCount} hidden columns
@@ -1502,6 +1553,12 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                                 {selectedCount} selected rows
                             </span>
                         )}
+                        <button
+                            onClick={resetDataView}
+                            className="rounded-full border border-[#2e2e2e] bg-[#171717] px-3 py-1 text-zinc-300 transition-colors hover:text-white hover:border-zinc-500"
+                        >
+                            reset view
+                        </button>
                     </div>
                 </div>
             )}
@@ -1753,7 +1810,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                                         key={i}
                                         columns={visibleColumns}
                                         getColumnWidth={getColumnWidth}
-                                        rowHeight={ROW_HEIGHT}
+                                        rowHeight={rowHeight}
                                         showSelection={rowIdentityEnabled}
                                         showActions={rowIdentityEnabled}
                                     />
@@ -1797,7 +1854,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                                         <div
                                             key={rowKey}
                                             className="flex hover:bg-zinc-900/30 transition-colors group border-b border-[#2e2e2e]/30"
-                                            style={{ height: `${ROW_HEIGHT}px` }}
+                                            style={{ height: `${rowHeight}px` }}
                                         >
                                             {rowIdentityEnabled && (
                                                 <div className="w-10 px-4 flex items-center shrink-0 sticky left-0 z-20 bg-[#171717] border-r border-[#2e2e2e]/40 group-hover:bg-zinc-900/30">
@@ -1892,6 +1949,21 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                     <span className="rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1 text-zinc-300">
                         {pageStartRecord}-{pageEndRecord}
                     </span>
+                    <div className="flex items-center gap-1 rounded-full border border-[#2e2e2e] bg-[#161616] px-1 py-1">
+                        {Object.entries(ROW_DENSITY_OPTIONS).map(([key, option]) => (
+                            <button
+                                key={key}
+                                onClick={() => setRowDensity(key)}
+                                className={`rounded-full px-3 py-1 transition-colors ${
+                                    rowDensity === key
+                                        ? 'bg-primary/10 text-primary'
+                                        : 'text-zinc-500 hover:text-zinc-200'
+                                }`}
+                            >
+                                {option.label}
+                            </button>
+                        ))}
+                    </div>
                     <div className="flex items-center gap-2 rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1">
                         <div className={`h-1.5 w-1.5 rounded-full ${error ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]' : 'bg-primary shadow-[0_0_6px_rgba(254,254,0,0.4)]'}`} />
                         <span className={error ? 'text-red-400' : 'text-zinc-300'}>
@@ -1926,7 +1998,7 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                     <div className="flex items-center gap-2 rounded-full border border-[#2e2e2e] bg-[#161616] px-2 py-1">
                         <button
                             disabled={currentPage === 1}
-                            onClick={() => setCurrentPage((prev: any) => Math.max(1, prev - 1))}
+                            onClick={() => goToPage(currentPage - 1)}
                             className="rounded-full p-1 hover:text-primary disabled:opacity-30 transition-colors"
                             aria-label="Previous page"
                         >
@@ -1937,13 +2009,26 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                         </span>
                         <button
                             disabled={currentPage >= totalPages}
-                            onClick={() => setCurrentPage((prev: any) => prev + 1)}
+                            onClick={() => goToPage(currentPage + 1)}
                             className="rounded-full p-1 hover:text-primary disabled:opacity-30 transition-colors"
                             aria-label="Next page"
                         >
                             <ChevronRight size={14} />
                         </button>
                     </div>
+                    <label className="flex items-center gap-2 rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1.5">
+                        <span>Page</span>
+                        <input
+                            value={pageJumpInput}
+                            onChange={(e: any) => setPageJumpInput(e.target.value.replace(/[^\d]/g, ''))}
+                            onKeyDown={(e: any) => {
+                                if (e.key === 'Enter') {
+                                    goToPage(Number(pageJumpInput || '1'));
+                                }
+                            }}
+                            className="w-14 bg-transparent text-zinc-200 outline-none"
+                        />
+                    </label>
                     <button
                         onClick={() => onOpenSqlEditor?.(tableName)}
                         disabled={!tableName}

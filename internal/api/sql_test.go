@@ -96,3 +96,25 @@ func TestNormalizePublicTableIdentifierRejectsUnsupportedNames(t *testing.T) {
 		t.Fatalf("expected unsupported quoted identifier to be rejected")
 	}
 }
+
+func TestResolveSQLEditorMaxRowsDefaultsAndBounds(t *testing.T) {
+	t.Setenv("OZY_SQL_EDITOR_MAX_ROWS", "")
+	if got := resolveSQLEditorMaxRows(); got != defaultSQLEditorMaxRows {
+		t.Fatalf("expected default %d, got %d", defaultSQLEditorMaxRows, got)
+	}
+
+	t.Setenv("OZY_SQL_EDITOR_MAX_ROWS", "50")
+	if got := resolveSQLEditorMaxRows(); got != 100 {
+		t.Fatalf("expected lower bound 100, got %d", got)
+	}
+
+	t.Setenv("OZY_SQL_EDITOR_MAX_ROWS", "20000")
+	if got := resolveSQLEditorMaxRows(); got != 10000 {
+		t.Fatalf("expected upper bound 10000, got %d", got)
+	}
+
+	t.Setenv("OZY_SQL_EDITOR_MAX_ROWS", "2500")
+	if got := resolveSQLEditorMaxRows(); got != 2500 {
+		t.Fatalf("expected explicit value 2500, got %d", got)
+	}
+}

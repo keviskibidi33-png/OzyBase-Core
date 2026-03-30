@@ -54,6 +54,8 @@ type SQLResultsState = {
     columns: string[];
     rows: any[][];
     rowCount: number;
+    resultLimit: number;
+    truncated: boolean;
     executionTime: string;
     command: string;
     statementKind: string;
@@ -172,6 +174,7 @@ const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange, initialTableN
     const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
     const [toast, setToast] = useState<any>(null);
     const [searchQuery, setSearchQuery] = useState('');
+    const [resultSearchTerm, setResultSearchTerm] = useState('');
     const [activeTab, setActiveTab] = useState('results'); // 'results' | 'explain' | 'visualize'
     const [explainData, setExplainData] = useState<any>(null);
     const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
@@ -471,6 +474,8 @@ const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange, initialTableN
                     columns: data.columns || [],
                     rows: data.rows || [],
                     rowCount: data.rowCount || 0,
+                    resultLimit: data.resultLimit || 0,
+                    truncated: Boolean(data.truncated),
                     executionTime: data.executionTime || '0ms',
                     command: data.command || data.statementKind || 'SQL',
                     statementKind: data.statementKind || 'UNKNOWN',
@@ -479,6 +484,7 @@ const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange, initialTableN
                     message: data.message || 'Statement executed successfully.'
                 };
                 setResults(nextResults);
+                setResultSearchTerm('');
 
                 // Add to history if successful and not already the last one
                 setHistory((prev: any) => {
@@ -655,11 +661,54 @@ const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange, initialTableN
 
     const toggleAllRows = () => {
         if (!results?.hasResultSet) return;
-        if (selectedRows.size === results.rows.length) {
-            setSelectedRows(new Set());
-        } else {
-            setSelectedRows(new Set(results.rows.map((_: any, i: any) => i)));
+        const visibleIndices = filteredResultRows.map(({ index }: any) => index);
+        if (visibleIndices.length === 0) {
+            return;
         }
+        const allVisibleSelected = visibleIndices.every((index: number) => selectedRows.has(index));
+        if (allVisibleSelected) {
+            const next = new Set(selectedRows);
+            visibleIndices.forEach((index: number) => next.delete(index));
+            setSelectedRows(next);
+        } else {
+            const next = new Set(selectedRows);
+            visibleIndices.forEach((index: number) => next.add(index));
+            setSelectedRows(next);
+        }
+    };
+
+    const handleCopyAllPreviewRows = (format: any) => {
+        if (!results?.hasResultSet || filteredResultRows.length === 0) return;
+
+        const previewRows = filteredResultRows.map(({ row }: any) => row);
+        let content = '';
+
+        if (format === 'json') {
+            const data = previewRows.map((row: any) => {
+                const obj: Record<string, any> = {};
+                results.columns.forEach((col: any, i: any) => {
+                    obj[col] = row[i];
+                });
+                return obj;
+            });
+            content = JSON.stringify(data, null, 2);
+        } else if (format === 'csv') {
+            const headers = results.columns.join(',');
+            const rows = previewRows.map((row: any) =>
+                row.map((val: any) => {
+                    const s = String(val).replace(/"/g, '""');
+                    return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s}"` : s;
+                }).join(',')
+            ).join('\n');
+            content = `${headers}\n${rows}`;
+        } else {
+            const headers = results.columns.join('\t');
+            const rows = previewRows.map((row: any) => row.join('\t')).join('\n');
+            content = `${headers}\n${rows}`;
+        }
+
+        navigator.clipboard.writeText(content);
+        showToast(`Copied ${filteredResultRows.length} preview rows`, 'success');
     };
 
     const copySelected = (format: any) => {
@@ -715,6 +764,27 @@ const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange, initialTableN
     const hasTabularResults = Boolean(results?.hasResultSet && (results?.columns?.length || 0) > 0);
     const hasResultRows = Boolean(hasTabularResults && (results?.rows?.length || 0) > 0);
     const canExportResults = Boolean(hasTabularResults);
+    const normalizedResultSearch = resultSearchTerm.trim().toLowerCase();
+    const filteredResultRows = React.useMemo(() => {
+        if (!hasTabularResults || !results) {
+            return [];
+        }
+
+        return results.rows
+            .map((row: any, index: number) => ({ row, index }))
+            .filter(({ row }: any) => {
+                if (!normalizedResultSearch) {
+                    return true;
+                }
+                return row.some((value: any) =>
+                    String(value ?? '').toLowerCase().includes(normalizedResultSearch),
+                );
+            });
+    }, [hasTabularResults, normalizedResultSearch, results]);
+    const selectedVisibleCount = React.useMemo(
+        () => filteredResultRows.filter(({ index }: any) => selectedRows.has(index)).length,
+        [filteredResultRows, selectedRows],
+    );
 
 
     return (
@@ -991,12 +1061,29 @@ const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange, initialTableN
                                     <span className="text-[9px] font-bold text-zinc-600 tracking-widest font-mono">
                                         {results.hasResultSet ? `ROWS: ${results.rowCount}` : `AFFECTED: ${results.rowsAffected}`}
                                     </span>
+                                    {results.truncated && (
+                                        <span className="text-[9px] font-bold text-amber-300 uppercase tracking-widest font-mono">
+                                            PREVIEW CAP: {results.resultLimit}
+                                        </span>
+                                    )}
                                     <span className="text-[9px] font-bold text-zinc-600 tracking-widest font-mono">EXEC: {results?.executionTime || '0ms'}</span>
                                 </div>
                             )}
                         </div>
 
                         <div className="flex items-center gap-4">
+                            {activeTab === 'results' && hasTabularResults && (
+                                <div className="relative hidden xl:block">
+                                    <Search size={12} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600" />
+                                    <input
+                                        type="text"
+                                        value={resultSearchTerm}
+                                        onChange={(e: any) => setResultSearchTerm(e.target.value)}
+                                        placeholder="Filter preview rows..."
+                                        className="w-56 rounded-lg border border-[#2e2e2e] bg-[#0c0c0c] py-1.5 pl-8 pr-3 text-[10px] font-bold tracking-[0.1em] text-zinc-200 placeholder:text-zinc-600 focus:border-primary/30 focus:outline-none"
+                                    />
+                                </div>
+                            )}
                             {activeTab === 'visualize' && results && (
                                 <div className="relative">
                                     <button
@@ -1111,6 +1198,36 @@ const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange, initialTableN
                                     </div>
                                 ) : activeTab === 'results' && results ? (
                                     hasTabularResults ? (
+                                    <>
+                                    {results.truncated && (
+                                        <div className="border-b border-amber-500/20 bg-amber-500/5 px-6 py-3">
+                                            <div className="flex flex-wrap items-center gap-3 text-[10px] font-black uppercase tracking-[0.18em] text-amber-200">
+                                                <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1">
+                                                    Preview capped at {results.resultLimit} rows
+                                                </span>
+                                                <span className="text-amber-100/80">
+                                                    Add an explicit LIMIT or tighter WHERE clause for deterministic bulk inspection.
+                                                </span>
+                                            </div>
+                                        </div>
+                                    )}
+                                    {hasResultRows && (
+                                        <div className="border-b border-[#2e2e2e] bg-[#121212] px-6 py-2">
+                                            <div className="flex flex-wrap items-center gap-2 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">
+                                                <span className="rounded-full border border-[#2e2e2e] bg-[#171717] px-3 py-1 text-zinc-300">
+                                                    {filteredResultRows.length}/{results.rows.length} preview rows
+                                                </span>
+                                                {resultSearchTerm.trim() !== '' && (
+                                                    <button
+                                                        onClick={() => setResultSearchTerm('')}
+                                                        className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-primary transition-colors hover:bg-primary/15"
+                                                    >
+                                                        clear preview filter
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
                                     <table className="min-w-full text-left border-collapse table-auto">
                                         <thead className="sticky top-0 bg-[#0c0c0c] z-10 border-b border-[#2e2e2e]">
                                             <tr>
@@ -1118,7 +1235,7 @@ const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange, initialTableN
                                                     <input
                                                         type="checkbox"
                                                         className="w-3.5 h-3.5 rounded border-zinc-700 bg-zinc-900 checked:bg-primary checked:border-primary focus:ring-0 transition-all cursor-pointer accent-primary"
-                                                        checked={results.rows.length > 0 && selectedRows.size === results.rows.length}
+                                                        checked={filteredResultRows.length > 0 && selectedVisibleCount === filteredResultRows.length}
                                                         onChange={toggleAllRows}
                                                     />
                                                 </th>
@@ -1130,18 +1247,18 @@ const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange, initialTableN
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-[#2e2e2e]/50">
-                                            {results.rows?.map((row: any, i: any) => (
+                                            {filteredResultRows.map(({ row, index }: any) => (
                                                 <tr
-                                                    key={i}
-                                                    className={`transition-colors cursor-pointer ${selectedRows.has(i) ? 'bg-primary/5' : 'hover:bg-zinc-900'}`}
-                                                    onClick={() => toggleRow(i)}
+                                                    key={index}
+                                                    className={`transition-colors cursor-pointer ${selectedRows.has(index) ? 'bg-primary/5' : 'hover:bg-zinc-900'}`}
+                                                    onClick={() => toggleRow(index)}
                                                 >
                                                     <td className="w-10 px-6 py-3 border-r border-[#2e2e2e]/30" onClick={(e: any) => e.stopPropagation()}>
                                                         <input
                                                             type="checkbox"
                                                             className="w-3.5 h-3.5 rounded border-zinc-700 bg-zinc-900 checked:bg-primary checked:border-primary focus:ring-0 transition-all cursor-pointer accent-primary"
-                                                            checked={selectedRows.has(i)}
-                                                            onChange={() => toggleRow(i)}
+                                                            checked={selectedRows.has(index)}
+                                                            onChange={() => toggleRow(index)}
                                                         />
                                                     </td>
                                                     {row.map((val: any, cellIdx: any) => (
@@ -1151,8 +1268,19 @@ const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange, initialTableN
                                                     ))}
                                                 </tr>
                                             ))}
+                                            {filteredResultRows.length === 0 && (
+                                                <tr>
+                                                    <td
+                                                        colSpan={(results.columns?.length || 0) + 1}
+                                                        className="px-6 py-16 text-center text-[10px] font-black uppercase tracking-[0.18em] text-zinc-600"
+                                                    >
+                                                        No preview rows match this filter.
+                                                    </td>
+                                                </tr>
+                                            )}
                                         </tbody>
                                     </table>
+                                    </>
                                     ) : (
                                         <div className="flex flex-col items-center justify-center h-full gap-5 px-8 py-20 text-center">
                                             <div className="w-16 h-16 rounded-3xl bg-green-500/10 border border-green-500/20 flex items-center justify-center text-green-500">
@@ -1235,6 +1363,12 @@ const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange, initialTableN
                                 >
                                     <Copy size={12} />
                                     Copy Selected
+                                </button>
+                                <button
+                                    onClick={() => handleCopyAllPreviewRows('csv')}
+                                    className="px-4 py-1.5 border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-600 rounded-full text-[9px] font-black uppercase tracking-widest transition-all"
+                                >
+                                    Copy Preview
                                 </button>
                                 <button
                                     onClick={handleClearSelection}

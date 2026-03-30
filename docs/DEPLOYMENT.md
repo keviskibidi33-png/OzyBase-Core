@@ -47,6 +47,7 @@ DB_POOLER_URL=<recommended-pgbouncer-or-supavisor-url>
 # Rate limiter
 RATE_LIMIT_RPS=20
 RATE_LIMIT_BURST=20
+OZY_SQL_EDITOR_MAX_ROWS=1000
 
 # Optional SMTP
 SMTP_HOST=

@@ -253,6 +253,27 @@ func TestLoad_UsesProvidedAllowedOrigins(t *testing.T) {
 	}
 }
 
+func TestLoad_SkipsDotenvWhenRequested(t *testing.T) {
+	withTempDir(t)
+	resetEnv(t)
+
+	if err := os.WriteFile(".env", []byte("DATABASE_URL=postgres://dotenv-user:dotenv-pass@dotenv-host:5432/dotenv-db?sslmode=require\n"), 0o644); err != nil {
+		t.Fatalf("failed to write temp .env: %v", err)
+	}
+	t.Setenv("OZY_SKIP_DOTENV", "true")
+	t.Setenv("JWT_SECRET", "this_is_a_strong_secret_with_more_than_32_chars")
+	t.Setenv("SITE_URL", "https://api.real-domain.test")
+	t.Setenv("APP_DOMAIN", "real-domain.test")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if cfg.DatabaseURL != "" {
+		t.Fatalf("expected DatabaseURL to stay empty when dotenv loading is skipped, got %q", cfg.DatabaseURL)
+	}
+}
+
 func withTempDir(t *testing.T) {
 	t.Helper()
 	tmp := t.TempDir()
