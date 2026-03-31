@@ -149,7 +149,7 @@ export const VIEW_REGISTRY: Record<string, ViewMeta> = {
     wm_shared: { id: 'wm_shared', group: 'workspaces', label: 'Shared With Me', component: 'WorkspaceManager', props: { view: 'wm_shared' }, supportsExplorer: true },
     wm_templates: { id: 'wm_templates', group: 'workspaces', label: 'Templates', component: 'WorkspaceManager', props: { view: 'wm_templates' }, supportsExplorer: true },
 
-    workspace_settings: { id: 'workspace_settings', group: 'workspace_settings', label: 'Workspace Settings', component: 'WorkspaceSettings', props: { view: 'ws_general' }, supportsExplorer: true },
+    workspace_settings: { id: 'workspace_settings', group: 'workspace_settings', label: 'Project Settings', component: 'WorkspaceSettings', props: { view: 'ws_general' }, supportsExplorer: true },
     ws_general: { id: 'ws_general', group: 'workspace_settings', label: 'General', component: 'WorkspaceSettings', props: { view: 'ws_general' }, supportsExplorer: true },
     ws_members: { id: 'ws_members', group: 'workspace_settings', label: 'Team Members', component: 'WorkspaceSettings', props: { view: 'ws_members' }, supportsExplorer: true },
     ws_danger: { id: 'ws_danger', group: 'workspace_settings', label: 'Danger Zone', component: 'WorkspaceSettings', props: { view: 'ws_danger' }, supportsExplorer: true },

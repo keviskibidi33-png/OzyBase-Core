@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
 import ConfirmModal from './ConfirmModal';
+import ModulePageHero from './ModulePageHero';
 
 interface Workspace {
     id: string | number;
@@ -150,14 +151,14 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
                 method: 'DELETE'
             });
             if (!res.ok) {
-                setFeedback({ tone: 'error', message: await readErrorMessage(res, 'Unable to remove workspace member.') });
+                setFeedback({ tone: 'error', message: await readErrorMessage(res, 'Unable to remove project member.') });
                 return;
             }
-            setFeedback({ tone: 'success', message: 'Workspace member removed.' });
+            setFeedback({ tone: 'success', message: 'Project member removed.' });
             fetchData();
         } catch (err: unknown) {
             console.error(err);
-            setFeedback({ tone: 'error', message: 'Unable to remove workspace member.' });
+            setFeedback({ tone: 'error', message: 'Unable to remove project member.' });
         }
     };
 
@@ -176,15 +177,15 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
                 body: JSON.stringify(payload)
             });
             if (!res.ok) {
-                setFeedback({ tone: 'error', message: await readErrorMessage(res, 'Unable to update workspace members.') });
+                setFeedback({ tone: 'error', message: await readErrorMessage(res, 'Unable to update project members.') });
                 return;
             }
             setInviteEmail('');
-            setFeedback({ tone: 'success', message: 'Workspace member updated.' });
+            setFeedback({ tone: 'success', message: 'Project member updated.' });
             fetchData();
         } catch (err: unknown) {
             console.error(err);
-            setFeedback({ tone: 'error', message: 'Unable to update workspace members.' });
+            setFeedback({ tone: 'error', message: 'Unable to update project members.' });
         }
     };
 
@@ -225,8 +226,8 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
         <div className="flex-1 flex items-center justify-center p-10 bg-[#0c0c0c]">
              <div className="text-center">
                 <AlertTriangle className="w-12 h-12 text-zinc-600 mx-auto mb-4" />
-                <h2 className="text-zinc-500 font-bold">No Workspace Selected</h2>
-                <p className="text-zinc-700 text-sm mt-2">Please select a workspace to configure settings.</p>
+                <h2 className="text-zinc-500 font-bold">No Project Selected</h2>
+                <p className="text-zinc-700 text-sm mt-2">Please select a project to configure its settings.</p>
              </div>
         </div>
     );
@@ -235,8 +236,34 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
         <div className="flex-1 overflow-y-auto p-12 bg-[#0c0c0c] custom-scrollbar animate-in fade-in duration-500">
             <div className="max-w-4xl mx-auto">
                 <div className="mb-12">
-                    <h1 className="text-3xl font-black text-white uppercase italic tracking-tighter mb-2">Project Settings</h1>
-                    <p className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.3em]">Configure {workspace?.name} core parameters</p>
+                    <ModulePageHero
+                        eyebrow="Project Settings"
+                        title={workspace.name}
+                        description="Adjust the project identity, manage who can access it, and handle destructive actions from one place. The goal is to keep project administration obvious, not hidden behind ambiguous workspace jargon."
+                        icon={Settings}
+                        pills={[
+                            { label: workspace.slug ? `slug: ${workspace.slug}` : 'slug pending', tone: workspace.slug ? 'accent' : 'warning' },
+                            { label: `${members.length} team member${members.length === 1 ? '' : 's'}`, tone: 'neutral' },
+                            { label: view === 'ws_danger' ? 'danger zone' : view === 'ws_members' ? 'team access' : 'general config', tone: view === 'ws_danger' ? 'danger' : 'success' },
+                        ]}
+                        stats={[
+                            {
+                                label: 'Project Name',
+                                value: workspace.name,
+                                hint: 'Rename the project here without affecting the rest of the dashboard structure.',
+                            },
+                            {
+                                label: 'Project Slug',
+                                value: workspace.slug || 'Not available',
+                                hint: 'This identifier is stable after project creation so links and integrations stay predictable.',
+                            },
+                            {
+                                label: 'Primary Job',
+                                value: view === 'ws_members' ? 'Manage team access' : view === 'ws_danger' ? 'Protect destructive actions' : 'Keep project identity clean',
+                                hint: 'Each tab focuses on one clear responsibility to reduce admin mistakes.',
+                            },
+                        ]}
+                    />
                 </div>
 
                 {feedback && (
@@ -395,7 +422,7 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
                                 className="px-8 py-3 bg-red-600 text-white font-black uppercase text-xs tracking-[0.2em] rounded-xl hover:bg-red-700 transition-colors flex items-center gap-3 disabled:opacity-60 disabled:cursor-not-allowed"
                             >
                                 <Trash2 size={16} />
-                                Delete Workspace
+                                Delete Project
                             </button>
                         </div>
                     </section>
@@ -407,9 +434,9 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
                 isOpen={isDeleteConfirmOpen}
                 onClose={() => setIsDeleteConfirmOpen(false)}
                 onConfirm={handleDeleteWorkspace}
-                title="Delete Workspace"
-                message={`Workspace "${workspace.name}" and its configuration metadata will be removed from the dashboard context.`}
-                confirmText="Delete Workspace"
+                title="Delete Project"
+                message={`Project "${workspace.name}" and its configuration metadata will be removed from the dashboard context.`}
+                confirmText="Delete Project"
                 type="danger"
             />
         </div>

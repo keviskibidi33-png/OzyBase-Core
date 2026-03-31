@@ -202,7 +202,7 @@ const AuthManager: React.FC<AuthManagerProps> = ({ view = 'users', onViewSelect 
                             className="flex items-center gap-2 bg-[#2e2e2e] hover:bg-[#3e3e3e] text-zinc-300 px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest transition-all"
                         >
                             <Settings size={14} />
-                            Policies
+                            Permissions
                         </button>
                         <button
                             onClick={() => setShowCreateUser(true)}

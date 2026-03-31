@@ -13,6 +13,7 @@ import {
     Sparkles
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
+import ModulePageHero from './ModulePageHero';
 
 const WorkspaceManager = ({ onWorkspaceChange, onViewSelect, view = 'wm_overview' }: any) => {
     const [workspaces, setWorkspaces] = useState<any[]>([]);
@@ -159,19 +160,19 @@ const WorkspaceManager = ({ onWorkspaceChange, onViewSelect, view = 'wm_overview
             id: 'saas',
             name: 'SaaS Starter',
             hint: 'Auth + billing-ready structure',
-            quickSeed: 'SaaS Workspace'
+            quickSeed: 'SaaS Project'
         },
         {
             id: 'ecommerce',
             name: 'E-commerce',
             hint: 'Catalog, orders and analytics baseline',
-            quickSeed: 'Commerce Workspace'
+            quickSeed: 'Commerce Project'
         },
         {
             id: 'internal',
             name: 'Internal Tool',
             hint: 'Admin ops and automation workflows',
-            quickSeed: 'Ops Workspace'
+            quickSeed: 'Ops Project'
         }
     ]), []);
 
@@ -181,22 +182,44 @@ const WorkspaceManager = ({ onWorkspaceChange, onViewSelect, view = 'wm_overview
 
     return (
         <div className="flex flex-col h-full bg-[#050505] p-10 overflow-y-auto custom-scrollbar">
-            {/* Header Area */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
-                <div>
-                    <h1 className="text-4xl font-black text-white italic tracking-tighter uppercase mb-2">Projects</h1>
-                    <p className="text-zinc-500 text-sm font-bold uppercase tracking-widest flex items-center gap-2">
-                        <Briefcase size={14} />
-                        Manage your isolated environments
-                    </p>
-                </div>
-                <button
-                    onClick={() => setShowCreateModal(true)}
-                    className="flex items-center gap-2 px-6 py-3 bg-primary text-black font-black uppercase text-xs tracking-widest rounded-xl hover:scale-105 transition-transform shadow-[0_0_20px_rgba(var(--primary-rgb),0.3)]"
-                >
-                    <Plus size={18} strokeWidth={3} />
-                    New Project
-                </button>
+            <div className="mb-12">
+                <ModulePageHero
+                    eyebrow="Projects"
+                    title="Projects"
+                    description="Create isolated project spaces for apps, teams, and environments. Keep data, members, and settings scoped cleanly so a new user understands where work belongs immediately."
+                    icon={Briefcase}
+                    pills={[
+                        { label: `${overviewStats.total} total projects`, tone: 'accent' },
+                        { label: `${overviewStats.shared} shared with you`, tone: sharedWorkspaces.length > 0 ? 'success' : 'neutral' },
+                        { label: 'team-aware navigation', tone: 'neutral' },
+                    ]}
+                    stats={[
+                        {
+                            label: 'Latest Project',
+                            value: overviewStats.recentName,
+                            hint: 'Recently created spaces appear here first while the switcher keeps quick access in the sidebar.',
+                        },
+                        {
+                            label: 'Primary Use',
+                            value: 'Apps, teams, environments',
+                            hint: 'Use projects to separate clients, stages, or internal workloads without mixing context.',
+                        },
+                        {
+                            label: 'First Step',
+                            value: 'Create or select a project',
+                            hint: 'Once selected, the rest of the dashboard stays scoped to that active project.',
+                        },
+                    ]}
+                    actions={
+                        <button
+                            onClick={() => setShowCreateModal(true)}
+                            className="flex items-center gap-2 px-6 py-3 bg-primary text-black font-black uppercase text-xs tracking-widest rounded-xl hover:scale-105 transition-transform shadow-[0_0_20px_rgba(var(--primary-rgb),0.3)]"
+                        >
+                            <Plus size={18} strokeWidth={3} />
+                            New Project
+                        </button>
+                    }
+                />
             </div>
 
             {/* View Content */}
@@ -432,4 +455,3 @@ const WorkspaceManager = ({ onWorkspaceChange, onViewSelect, view = 'wm_overview
 };
 
 export default WorkspaceManager;
-

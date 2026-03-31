@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 
 import ConfirmModal from './ConfirmModal';
+import ModulePageHero from './ModulePageHero';
 import { BrandedToast } from './OverlayPrimitives';
 import { fetchWithAuth } from '../utils/api';
 
@@ -158,6 +159,30 @@ const StorageManager = (_props: StorageManagerProps) => {
         if (!term) return files;
         return files.filter((file) => file.name.toLowerCase().includes(term) || file.content_type.toLowerCase().includes(term));
     }, [deferredSearch, files]);
+    const storageHeroPills = [
+        { label: selectedBucket.public ? 'public reads allowed' : 'private bucket', tone: selectedBucket.public ? 'accent' : 'neutral' },
+        { label: selectedBucket.rls_enabled ? 'rls enforced' : 'rls optional', tone: selectedBucket.rls_enabled ? 'success' : 'warning' },
+        { label: `${selectedBucket.object_count} object${selectedBucket.object_count === 1 ? '' : 's'}`, tone: 'neutral' },
+    ] as const;
+    const storageHeroStats = [
+        {
+            label: 'Bucket',
+            value: selectedBucket.name,
+            hint: 'Pick a bucket on the left, then manage files and access rules here.',
+        },
+        {
+            label: 'Stored Size',
+            value: formatSize(selectedBucket.total_size),
+            hint: 'Use list or grid view depending on whether you are auditing or browsing files.',
+        },
+        {
+            label: 'Search Scope',
+            value: deferredSearch.trim() ? 'Filtered objects' : 'All bucket objects',
+            hint: deferredSearch.trim()
+                ? `Filtering by "${deferredSearch.trim()}".`
+                : 'Search by file name or MIME type inside the current bucket.',
+        },
+    ];
 
     const openBucketDialog = (mode: BucketDialogMode) => {
         setBucketDialogMode(mode);
@@ -315,22 +340,22 @@ const StorageManager = (_props: StorageManagerProps) => {
 
             <div className="flex flex-1 flex-col overflow-hidden">
                 <div className="border-b border-[#2e2e2e] bg-[#171717] px-8 py-8">
-                    <div className="flex flex-wrap items-start justify-between gap-6">
-                        <div className="flex items-start gap-5">
-                            <div className="flex h-16 w-16 items-center justify-center rounded-[24px] border border-primary/20 bg-primary/10 text-primary"><FolderOpen size={30} /></div>
-                            <div>
-                                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Storage Explorer</p>
-                                <h1 className="mt-2 text-3xl font-black tracking-tight text-white">{selectedBucket.name}</h1>
-                                <p className="mt-2 flex flex-wrap items-center gap-3 text-xs text-zinc-500"><span>{selectedBucket.public ? 'Public bucket' : 'Private bucket'}</span><span>•</span><span>{selectedBucket.rls_enabled ? 'RLS enabled' : 'RLS disabled'}</span><span>•</span><span>{selectedBucket.object_count} objects</span></p>
-                            </div>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-3">
-                            <button type="button" onClick={() => { void fetchBuckets(selectedBucket.name); void fetchFiles(selectedBucket.name); }} className="inline-flex items-center gap-2 rounded-xl border border-zinc-800 px-4 py-2.5 text-[10px] font-black uppercase tracking-widest text-zinc-300 transition-colors hover:border-primary/30 hover:text-primary"><RefreshCw size={14} />Refresh</button>
-                            <button type="button" onClick={() => openBucketDialog('edit')} className="inline-flex items-center gap-2 rounded-xl border border-zinc-800 px-4 py-2.5 text-[10px] font-black uppercase tracking-widest text-zinc-300 transition-colors hover:border-primary/30 hover:text-primary"><Settings size={14} />Edit bucket</button>
-                            <button type="button" onClick={() => fileInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-[10px] font-black uppercase tracking-widest text-black transition-colors hover:bg-[#E6E600]"><Upload size={14} />Upload file</button>
-                            <input ref={fileInputRef} type="file" className="hidden" onChange={handleUpload} />
-                        </div>
-                    </div>
+                    <ModulePageHero
+                        eyebrow="Storage"
+                        title={selectedBucket.name}
+                        description="Choose a bucket, upload files, and control access with public visibility plus optional RLS. The right panel stays focused on the current bucket so file operations feel predictable."
+                        icon={FolderOpen}
+                        pills={storageHeroPills}
+                        stats={storageHeroStats}
+                        actions={
+                            <>
+                                <button type="button" onClick={() => { void fetchBuckets(selectedBucket.name); void fetchFiles(selectedBucket.name); }} className="inline-flex items-center gap-2 rounded-xl border border-zinc-800 px-4 py-2.5 text-[10px] font-black uppercase tracking-widest text-zinc-300 transition-colors hover:border-primary/30 hover:text-primary"><RefreshCw size={14} />Refresh</button>
+                                <button type="button" onClick={() => openBucketDialog('edit')} className="inline-flex items-center gap-2 rounded-xl border border-zinc-800 px-4 py-2.5 text-[10px] font-black uppercase tracking-widest text-zinc-300 transition-colors hover:border-primary/30 hover:text-primary"><Settings size={14} />Edit bucket</button>
+                                <button type="button" onClick={() => fileInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-[10px] font-black uppercase tracking-widest text-black transition-colors hover:bg-[#E6E600]"><Upload size={14} />Upload file</button>
+                                <input ref={fileInputRef} type="file" className="hidden" onChange={handleUpload} />
+                            </>
+                        }
+                    />
                 </div>
                 <div className="grid flex-1 gap-8 overflow-y-auto px-8 py-8 custom-scrollbar xl:grid-cols-[1.25fr_0.75fr]">
                     <div className="space-y-6">

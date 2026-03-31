@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { fetchWithAuth } from "../utils/api";
 import EssentialApiKeysPanel from "./EssentialApiKeysPanel";
+import ModulePageHero from "./ModulePageHero";
 
 const MENU_ITEMS = [
   { id: "general", name: "General", icon: SettingsIcon },
@@ -137,14 +138,54 @@ const Settings: React.FC<SettingsProps> = ({
 
   const renderGeneral = () => (
     <div className="space-y-8 animate-in fade-in duration-300">
-      <div>
-        <h2 className="text-2xl font-black text-white italic tracking-tighter uppercase mb-2">
-          Project Metadata
-        </h2>
-        <p className="text-zinc-500 text-sm font-medium">
-          Safe project information exposed by the running deployment.
-        </p>
-      </div>
+      <ModulePageHero
+        eyebrow="Settings"
+        title="General Settings"
+        description="Review safe project metadata and readiness signals before exposing this instance to real traffic. This page keeps operational facts visible without surfacing dead controls."
+        icon={SettingsIcon}
+        pills={[
+          {
+            label: formatDeploymentProfile(projectInfo?.production?.profile),
+            tone: "accent",
+          },
+          {
+            label: projectInfo?.production?.launch_ready
+              ? "launch ready"
+              : "action required",
+            tone: projectInfo?.production?.launch_ready ? "success" : "warning",
+          },
+          {
+            label: projectInfo?.production?.strict_security
+              ? "strict security on"
+              : "security review needed",
+            tone: projectInfo?.production?.strict_security
+              ? "success"
+              : "warning",
+          },
+        ]}
+        stats={[
+          {
+            label: "Project ID",
+            value: projectInfo?.database || "unknown",
+            hint: "Useful for support, logs, and client configuration.",
+          },
+          {
+            label: "Runtime Mode",
+            value:
+              projectInfo?.production?.deployment_mode === "external_postgres"
+                ? "External Postgres"
+                : "Embedded Postgres",
+            hint: "Move to external Postgres when the project starts serving real traffic.",
+          },
+          {
+            label: "Email Delivery",
+            value: projectInfo?.production?.smtp_configured
+              ? "SMTP ready"
+              : "Console mailer",
+            hint: "Customer-facing auth flows should use a real SMTP provider.",
+          },
+        ]}
+      />
 
       <div className="bg-[#171717]/50 border border-[#2e2e2e] rounded-3xl overflow-hidden shadow-2xl">
         <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -393,14 +434,43 @@ const Settings: React.FC<SettingsProps> = ({
 
   const renderInfrastructure = () => (
     <div className="space-y-8 animate-in fade-in duration-300">
-      <div>
-        <h2 className="text-2xl font-black text-white italic tracking-tighter uppercase mb-2">
-          Infrastructure
-        </h2>
-        <p className="text-zinc-500 text-sm font-medium">
-          Connection metadata without passwords or service-role secrets.
-        </p>
-      </div>
+      <ModulePageHero
+        eyebrow="Settings"
+        title="Infrastructure"
+        description="Copy the connection endpoints your applications actually need. Passwords and project secrets stay hidden here so the screen remains safe to share during operations."
+        icon={Server}
+        pills={[
+          {
+            label: connectionInfo?.api_url ? "api endpoint ready" : "api endpoint missing",
+            tone: connectionInfo?.api_url ? "success" : "warning",
+          },
+          {
+            label: connectionInfo?.pooler_uri_template ? "pooler configured" : "pooler optional",
+            tone: connectionInfo?.pooler_uri_template ? "accent" : "neutral",
+          },
+          {
+            label: projectInfo?.production?.https_site_url ? "https configured" : "https pending",
+            tone: projectInfo?.production?.https_site_url ? "success" : "warning",
+          },
+        ]}
+        stats={[
+          {
+            label: "API URL",
+            value: connectionInfo?.api_url || "not available",
+            hint: "Frontend clients and admin tools should target this endpoint.",
+          },
+          {
+            label: "Direct URI",
+            value: connectionInfo?.direct_uri_template ? "Available" : "Missing",
+            hint: "Use the direct URI for trusted backends and migrations.",
+          },
+          {
+            label: "Pooler URI",
+            value: connectionInfo?.pooler_uri_template ? "Available" : "Missing",
+            hint: "Use a pooler when connection fan-out starts growing.",
+          },
+        ]}
+      />
 
       <div className="bg-[#171717]/50 border border-[#2e2e2e] rounded-3xl overflow-hidden shadow-2xl">
         <div className="p-8 space-y-6">
@@ -499,14 +569,34 @@ const Settings: React.FC<SettingsProps> = ({
 
   const renderBilling = () => (
     <div className="space-y-8 animate-in fade-in duration-300">
-      <div>
-        <h2 className="text-2xl font-black text-white italic tracking-tighter uppercase mb-2">
-          Billing
-        </h2>
-        <p className="text-zinc-500 text-sm font-medium">
-          Self-hosted deployments do not use the managed billing surface.
-        </p>
-      </div>
+      <ModulePageHero
+        eyebrow="Settings"
+        title="Billing"
+        description="Self-hosted deployments do not attach a managed billing layer inside the dashboard. This section exists to explain that choice clearly instead of presenting controls that do nothing."
+        icon={CreditCard}
+        pills={[
+          { label: "self-hosted billing", tone: "accent" },
+          { label: "no managed invoices", tone: "neutral" },
+          { label: "bring your own infra", tone: "neutral" },
+        ]}
+        stats={[
+          {
+            label: "Current Model",
+            value: "External cost management",
+            hint: "Cloud bills, object storage, and SMTP spend stay with your own providers.",
+          },
+          {
+            label: "In-Dashboard Controls",
+            value: "Informational only",
+            hint: "OzyBase avoids dead billing actions when you are running self-hosted.",
+          },
+          {
+            label: "Best For",
+            value: "Operators and indie teams",
+            hint: "Simple enough for small teams while still clear for enterprise handoff.",
+          },
+        ]}
+      />
       <div className="bg-[#171717]/50 border border-[#2e2e2e] rounded-3xl p-8 shadow-2xl">
         <div className="flex items-start gap-4">
           <CreditCard size={18} className="text-primary mt-0.5" />

@@ -24,7 +24,7 @@ const WorkspaceSelector = ({ activeWorkspace, onClick }: WorkspaceSelectorProps)
             {/* Content */}
             <div className="flex-1 min-w-0">
                 <h3 className="text-[10px] font-black text-white uppercase tracking-[0.2em] leading-none mb-1.5 flex items-center gap-2">
-                    Select Workspace
+                    Select Project
                 </h3>
                 <div className="flex items-center gap-2 text-zinc-500 group-hover:text-zinc-300 transition-colors">
                     <Globe size={12} className="text-primary/50" />

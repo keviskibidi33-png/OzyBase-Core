@@ -218,7 +218,7 @@ const TableEditorToolbar: React.FC<TableEditorToolbarProps> = ({
                                 className="flex items-center gap-2 px-3 py-1.5 bg-[#111111] border border-[#2e2e2e] rounded-lg hover:border-zinc-500 transition-all text-[10px] font-black uppercase tracking-widest text-zinc-300 shrink-0"
                             >
                                 <SlidersHorizontal size={14} />
-                                Views
+                                Saved Views
                                 <ChevronDown size={14} className={`transition-transform ${isViewsOpen ? 'rotate-180' : ''}`} />
                             </button>
 
@@ -260,7 +260,7 @@ const TableEditorToolbar: React.FC<TableEditorToolbarProps> = ({
 
                                             <div className="space-y-2">
                                                 <p className="text-[9px] font-black uppercase tracking-widest text-zinc-500">
-                                                    Save Current
+                                                    Save This Layout
                                                 </p>
                                                 <div className="flex gap-2">
                                                     <input
@@ -375,7 +375,7 @@ const TableEditorToolbar: React.FC<TableEditorToolbarProps> = ({
                                                     <Database size={16} className="text-zinc-500 group-hover:text-primary" />
                                                 </div>
                                                 <div className="flex flex-col text-left">
-                                                    <span className="uppercase tracking-wide">Insert Column</span>
+                                                    <span className="uppercase tracking-wide">Add Column</span>
                                                     <span className="text-[9px] text-zinc-600">Add a new field</span>
                                                 </div>
                                                 <ChevronRight size={14} className="ml-auto text-zinc-700" />

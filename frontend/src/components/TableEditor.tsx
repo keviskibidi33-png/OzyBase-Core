@@ -37,6 +37,7 @@ import ConfirmModal from './ConfirmModal';
 import BulkEditModal from './BulkEditModal';
 import InlineCellEditor from './InlineCellEditor';
 import CSVImportModal from './CSVImportModal';
+import ModulePageHero from './ModulePageHero';
 import TableEditorFooter from './table-editor/TableEditorFooter';
 import TableEditorStateBar from './table-editor/TableEditorStateBar';
 import TableEditorToolbar from './table-editor/TableEditorToolbar';
@@ -1154,6 +1155,34 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
         : null;
     const hiddenColumnCount = Math.max(0, totalColumnCount - visibleColumnCount);
     const hasQueryModifiers = searchTerm.trim() !== '' || filters.length > 0 || sorts.length > 0;
+    const tableHeroPills = [
+        { label: rowIdentityEnabled ? 'inline edits enabled' : 'read-only surface', tone: rowIdentityEnabled ? 'success' : 'warning' },
+        { label: activeViewId ? 'saved view applied' : 'live grid view', tone: activeViewId ? 'accent' : 'neutral' },
+        { label: realtimeEnabled ? 'realtime active' : 'realtime optional', tone: realtimeEnabled ? 'accent' : 'neutral' },
+    ] as const;
+    const tableHeroStats = [
+        {
+            label: 'Current Table',
+            value: currentTableLabel || 'Select a table',
+            hint: tableName
+                ? 'Browse and edit rows here before dropping into SQL for advanced work.'
+                : 'Choose a table from the switcher to start exploring your data.',
+        },
+        {
+            label: 'Visible Columns',
+            value: `${visibleColumnCount}/${totalColumnCount}`,
+            hint: hiddenColumnCount > 0
+                ? `${hiddenColumnCount} hidden column${hiddenColumnCount === 1 ? '' : 's'} can be restored from Columns.`
+                : 'All current columns are visible in this layout.',
+        },
+        {
+            label: 'Rows In View',
+            value: isTotalExact ? `${totalRecords}` : `${pageEndRecord}${hasMoreRecords ? '+' : ''}`,
+            hint: hasQueryModifiers
+                ? 'Filters, sorting, and search are shaping this live slice.'
+                : 'Use filters, views, and search to narrow large datasets quickly.',
+        },
+    ];
     const frozenColumnNames = useMemo(() => {
         const names = visibleColumns
             .filter((col: any) => (rowIdentityEnabled && col.name === 'id') || pinnedColumnSet.has(col.name))
@@ -1317,6 +1346,19 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                 fetchData={fetchData}
                 loading={loading}
             />
+
+            <div className="border-b border-[#2e2e2e] bg-[#141414] px-4 py-4 sm:px-6">
+                <ModulePageHero
+                    eyebrow="Table Editor"
+                    title={currentTableLabel || 'Choose a table'}
+                    description={rowIdentityEnabled
+                        ? 'Browse, filter, sort, and update rows without writing SQL. Saved views, column controls, and realtime help you stay in flow for everyday admin work.'
+                        : 'Inspect rows and schema safely from the grid. This table stays read-only here until it exposes a standard id column for reliable row actions.'}
+                    icon={Database}
+                    pills={tableHeroPills}
+                    stats={tableHeroStats}
+                />
+            </div>
 
             {readOnlyCompatibilityMessage && (
                 <div className="border-b border-amber-500/20 bg-amber-500/5 px-4 py-3 text-[10px] font-bold tracking-wide text-amber-200 sm:px-6">
