@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -50,6 +51,42 @@ type ListRecordsResult struct {
 	Total int64
 }
 
+func isSearchableRecordColumnType(dataType string) bool {
+	switch strings.ToLower(strings.TrimSpace(dataType)) {
+	case "text", "character varying", "varchar", "character", "char", "uuid", "citext":
+		return true
+	default:
+		return false
+	}
+}
+
+func buildRecordSearchClause(columnTypes map[string]string, placeholder string) string {
+	searchableColumns := make([]string, 0, len(columnTypes))
+	for columnName, dataType := range columnTypes {
+		if !IsValidIdentifier(columnName) {
+			continue
+		}
+		if columnName == "deleted_at" {
+			continue
+		}
+		if columnName == "id" || isSearchableRecordColumnType(dataType) {
+			searchableColumns = append(searchableColumns, columnName)
+		}
+	}
+	if len(searchableColumns) == 0 {
+		return ""
+	}
+
+	sort.Strings(searchableColumns)
+
+	searchClauses := make([]string, 0, len(searchableColumns))
+	for _, columnName := range searchableColumns {
+		searchClauses = append(searchClauses, fmt.Sprintf("%s::text ILIKE %s", columnName, placeholder))
+	}
+
+	return "(" + strings.Join(searchClauses, " OR ") + ")"
+}
+
 // ListRecords fetches all records with filters and sorting, respecting RLS if configured in DB.
 // This implementation uses a structured QueryBuilder for improved maintainability.
 func (db *DB) ListRecords(ctx context.Context, collectionName string, filters map[string][]string, orderBy string, limit, offset int) (*ListRecordsResult, error) {
@@ -68,6 +105,10 @@ func (db *DB) ListRecords(ctx context.Context, collectionName string, filters ma
 	if err != nil {
 		return nil, err
 	}
+	columnTypes, err := db.GetTableColumnTypes(ctx, collectionName)
+	if err != nil {
+		return nil, err
+	}
 	if len(validCols) == 0 {
 		return nil, fmt.Errorf("table not found or empty: %s", collectionName)
 	}
@@ -82,7 +123,12 @@ func (db *DB) ListRecords(ctx context.Context, collectionName string, filters ma
 
 		// 3. Search Logic
 		if qValues, ok := filters["q"]; ok && len(qValues) > 0 && qValues[0] != "" {
-			if validCols["id"] {
+			placeholder := fmt.Sprintf("$%d", qb.argIdx)
+			if searchClause := buildRecordSearchClause(columnTypes, placeholder); searchClause != "" {
+				qb.whereClauses = append(qb.whereClauses, searchClause)
+				qb.args = append(qb.args, "%"+qValues[0]+"%")
+				qb.argIdx++
+			} else if validCols["id"] {
 				qb.Where("id", "ilike", qValues[0])
 			}
 		}

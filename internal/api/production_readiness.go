@@ -12,8 +12,12 @@ const poolerRecommendationWarning = "DB_POOLER_URL is not configured; direct dat
 type ProjectProductionReadiness struct {
 	Status             string   `json:"status"`
 	LaunchReady        bool     `json:"launch_ready"`
+	MVPReady           bool     `json:"mvp_ready"`
+	SaaSReady          bool     `json:"saas_ready"`
 	Profile            string   `json:"profile"`
 	DeploymentMode     string   `json:"deployment_mode"`
+	StorageRuntime     string   `json:"storage_runtime"`
+	RealtimeRuntime    string   `json:"realtime_runtime"`
 	StrictSecurity     bool     `json:"strict_security"`
 	ManagedSecrets     bool     `json:"managed_secrets"`
 	HTTPSSiteURL       bool     `json:"https_site_url"`
@@ -27,8 +31,12 @@ func BuildProjectProductionReadiness(cfg *config.Config) ProjectProductionReadin
 	readiness := ProjectProductionReadiness{
 		Status:             "ready",
 		LaunchReady:        true,
+		MVPReady:           false,
+		SaaSReady:          false,
 		Profile:            "self_host",
 		DeploymentMode:     "embedded_postgres",
+		StorageRuntime:     "local",
+		RealtimeRuntime:    "local",
 		StrictSecurity:     cfg != nil && cfg.StrictSecurity,
 		ManagedSecrets:     true,
 		HTTPSSiteURL:       false,
@@ -44,6 +52,8 @@ func BuildProjectProductionReadiness(cfg *config.Config) ProjectProductionReadin
 		return readiness
 	}
 	readiness.Profile = normalizeReadinessProfile(cfg.DeploymentProfile)
+	readiness.StorageRuntime = normalizeRuntimeValue(cfg.StorageProvider, "local")
+	readiness.RealtimeRuntime = normalizeRuntimeValue(cfg.RealtimeBroker, "local")
 
 	if strings.TrimSpace(cfg.DatabaseURL) != "" {
 		readiness.DeploymentMode = "external_postgres"
@@ -60,16 +70,32 @@ func BuildProjectProductionReadiness(cfg *config.Config) ProjectProductionReadin
 		}
 		readiness.Warnings = append(readiness.Warnings, warning)
 	}
+	if (readiness.Profile == "azure_cloud" || readiness.Profile == "custom") && readiness.StorageRuntime == "local" {
+		readiness.Warnings = append(readiness.Warnings, "OZY_STORAGE_PROVIDER=local keeps files on a single node; use S3-compatible storage for resilient SaaS workloads")
+	}
+	if (readiness.Profile == "azure_cloud" || readiness.Profile == "custom") && readiness.RealtimeRuntime == "local" {
+		readiness.Warnings = append(readiness.Warnings, "OZY_REALTIME_BROKER=local keeps realtime fan-out on one node; use Redis for multi-instance workloads")
+	}
 
-	if readiness.DeploymentMode != "external_postgres" ||
-		!readiness.StrictSecurity ||
-		!readiness.ManagedSecrets ||
-		!readiness.HTTPSSiteURL ||
-		readiness.PlaceholderDomains ||
-		!readiness.SMTPConfigured ||
-		(poolerRequired && !readiness.PoolerConfigured) {
+	readiness.LaunchReady =
+		readiness.StrictSecurity &&
+			readiness.ManagedSecrets &&
+			readiness.HTTPSSiteURL &&
+			!readiness.PlaceholderDomains
+
+	readiness.MVPReady =
+		readiness.LaunchReady &&
+			readiness.DeploymentMode == "external_postgres" &&
+			readiness.SMTPConfigured
+
+	readiness.SaaSReady =
+		readiness.MVPReady &&
+			readiness.PoolerConfigured &&
+			readiness.StorageRuntime != "local" &&
+			readiness.RealtimeRuntime != "local"
+
+	if !readiness.LaunchReady || (poolerRequired && !readiness.MVPReady) {
 		readiness.Status = "action_required"
-		readiness.LaunchReady = false
 	}
 
 	return readiness
@@ -82,6 +108,14 @@ func normalizeReadinessProfile(profile string) string {
 	default:
 		return "self_host"
 	}
+}
+
+func normalizeRuntimeValue(value, fallback string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return fallback
+	}
+	return normalized
 }
 
 func hasPlaceholderDomain(raw string) bool {

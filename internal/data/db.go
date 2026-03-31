@@ -20,6 +20,7 @@ type DB struct {
 
 type columnCacheEntry struct {
 	columns   map[string]bool
+	types     map[string]string
 	expiresAt time.Time
 }
 
@@ -122,12 +123,12 @@ func (db *DB) GetTableColumns(ctx context.Context, tableName string) (map[string
 		return nil, fmt.Errorf("invalid table name")
 	}
 
-	if cached, ok := db.getColumnCache(tableName); ok {
-		return cached, nil
+	if cached, ok := db.getColumnCacheEntry(tableName); ok {
+		return cloneColumnsMap(cached.columns), nil
 	}
 
 	rows, err := db.Pool.Query(ctx, `
-		SELECT column_name 
+		SELECT column_name, data_type
 		FROM information_schema.columns 
 		WHERE table_name = $1 AND table_schema = 'public'
 	`, tableName)
@@ -137,14 +138,38 @@ func (db *DB) GetTableColumns(ctx context.Context, tableName string) (map[string
 	defer rows.Close()
 
 	cols := make(map[string]bool)
+	types := make(map[string]string)
 	for rows.Next() {
 		var name string
-		if err := rows.Scan(&name); err == nil {
+		var dataType string
+		if err := rows.Scan(&name, &dataType); err == nil {
 			cols[name] = true
+			types[name] = dataType
 		}
 	}
-	db.setColumnCache(tableName, cols)
+	db.setColumnCache(tableName, cols, types)
 	return cols, nil
+}
+
+// GetTableColumnTypes returns a map of column names to PostgreSQL data types for a specific table.
+func (db *DB) GetTableColumnTypes(ctx context.Context, tableName string) (map[string]string, error) {
+	if !IsValidIdentifier(tableName) {
+		return nil, fmt.Errorf("invalid table name")
+	}
+
+	if cached, ok := db.getColumnCacheEntry(tableName); ok && len(cached.types) > 0 {
+		return cloneStringMap(cached.types), nil
+	}
+
+	if _, err := db.GetTableColumns(ctx, tableName); err != nil {
+		return nil, err
+	}
+
+	if cached, ok := db.getColumnCacheEntry(tableName); ok {
+		return cloneStringMap(cached.types), nil
+	}
+
+	return map[string]string{}, nil
 }
 
 // InvalidateTableColumnCache clears cached table column metadata after schema changes.
@@ -160,20 +185,24 @@ func (db *DB) InvalidateTableColumnCache(tableName string) {
 	delete(db.columnCache, tableName)
 }
 
-func (db *DB) getColumnCache(tableName string) (map[string]bool, bool) {
+func (db *DB) getColumnCacheEntry(tableName string) (columnCacheEntry, bool) {
 	if db == nil || tableName == "" {
-		return nil, false
+		return columnCacheEntry{}, false
 	}
 	db.columnCacheMu.RLock()
 	entry, ok := db.columnCache[tableName]
 	db.columnCacheMu.RUnlock()
 	if !ok || time.Now().After(entry.expiresAt) {
-		return nil, false
+		return columnCacheEntry{}, false
 	}
-	return cloneColumnsMap(entry.columns), true
+	return columnCacheEntry{
+		columns:   cloneColumnsMap(entry.columns),
+		types:     cloneStringMap(entry.types),
+		expiresAt: entry.expiresAt,
+	}, true
 }
 
-func (db *DB) setColumnCache(tableName string, cols map[string]bool) {
+func (db *DB) setColumnCache(tableName string, cols map[string]bool, types map[string]string) {
 	if db == nil || tableName == "" {
 		return
 	}
@@ -188,12 +217,21 @@ func (db *DB) setColumnCache(tableName string, cols map[string]bool) {
 	}
 	db.columnCache[tableName] = columnCacheEntry{
 		columns:   cloneColumnsMap(cols),
+		types:     cloneStringMap(types),
 		expiresAt: time.Now().Add(ttl),
 	}
 }
 
 func cloneColumnsMap(input map[string]bool) map[string]bool {
 	out := make(map[string]bool, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneStringMap(input map[string]string) map[string]string {
+	out := make(map[string]string, len(input))
 	for key, value := range input {
 		out[key] = value
 	}

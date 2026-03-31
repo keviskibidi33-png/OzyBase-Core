@@ -34,8 +34,12 @@ interface ProjectInfo {
 interface ProductionReadiness {
   status?: string;
   launch_ready?: boolean;
+  mvp_ready?: boolean;
+  saas_ready?: boolean;
   profile?: string;
   deployment_mode?: string;
+  storage_runtime?: string;
+  realtime_runtime?: string;
   strict_security?: boolean;
   managed_secrets?: boolean;
   https_site_url?: boolean;
@@ -68,6 +72,19 @@ const formatDeploymentProfile = (profile?: string) => {
     case "self_host":
     default:
       return "Self-host";
+  }
+};
+
+const formatRuntimeLabel = (value?: string) => {
+  switch (value) {
+    case "s3":
+      return "S3 Compatible";
+    case "redis":
+      return "Redis Cluster";
+    case "local":
+      return "Local Node";
+    default:
+      return value || "unknown";
   }
 };
 
@@ -196,8 +213,8 @@ const Settings: React.FC<SettingsProps> = ({
               Production Readiness
             </h3>
             <p className="text-[11px] text-zinc-500 mt-1">
-              Safe runtime checks for launching OzyBase on Azure or another
-              cloud target.
+              Runtime checks for install-to-play, real-app MVPs, and more
+              demanding SaaS deployments.
             </p>
           </div>
           <div
@@ -225,7 +242,11 @@ const Settings: React.FC<SettingsProps> = ({
                   projectInfo?.production?.deployment_mode === "external_postgres"
                     ? "External Postgres"
                     : "Embedded Postgres",
-                ok: projectInfo?.production?.deployment_mode === "external_postgres",
+                ok:
+                  projectInfo?.production?.profile === "self_host" ||
+                  projectInfo?.production?.profile === "install_to_play"
+                    ? true
+                    : projectInfo?.production?.deployment_mode === "external_postgres",
               },
               {
                 label: "Connection Pooler",
@@ -237,6 +258,22 @@ const Settings: React.FC<SettingsProps> = ({
                   projectInfo?.production?.profile === "install_to_play"
                     ? true
                     : projectInfo?.production?.pooler_configured,
+              },
+              {
+                label: "Storage Runtime",
+                value: formatRuntimeLabel(projectInfo?.production?.storage_runtime),
+                ok:
+                  projectInfo?.production?.saas_ready === true
+                    ? projectInfo?.production?.storage_runtime !== "local"
+                    : true,
+              },
+              {
+                label: "Realtime Broker",
+                value: formatRuntimeLabel(projectInfo?.production?.realtime_runtime),
+                ok:
+                  projectInfo?.production?.saas_ready === true
+                    ? projectInfo?.production?.realtime_runtime !== "local"
+                    : true,
               },
               {
                 label: "Strict Security",
@@ -260,7 +297,10 @@ const Settings: React.FC<SettingsProps> = ({
                 value: projectInfo?.production?.smtp_configured
                   ? "SMTP ready"
                   : "Console mailer",
-                ok: projectInfo?.production?.smtp_configured,
+                ok:
+                  projectInfo?.production?.profile === "self_host"
+                    ? true
+                    : projectInfo?.production?.smtp_configured,
               },
             ].map((item) => (
               <div
@@ -292,7 +332,7 @@ const Settings: React.FC<SettingsProps> = ({
             projectInfo.production.warnings.length > 0 && (
               <div className="bg-[#0c0c0c] border border-amber-500/20 rounded-2xl p-5">
                 <p className="text-[10px] font-black uppercase tracking-widest text-amber-300 mb-3">
-                  Launch Blockers
+                  Readiness Gaps
                 </p>
                 <div className="space-y-2">
                   {projectInfo.production.warnings.map((warning) => (
@@ -310,24 +350,24 @@ const Settings: React.FC<SettingsProps> = ({
 
           <div className="bg-[#0c0c0c] border border-[#2e2e2e] rounded-2xl p-5">
             <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-3">
-              Deployment Track
+              Workload Track
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
               {[
                 {
-                  label: "Self-host",
-                  detail: "Local binary or docker-compose.install.yml with bundled Postgres.",
-                  active: projectInfo?.production?.profile === "self_host",
+                  label: "Install / Single Node",
+                  detail: "Best for demos, internal tools, and low-friction deployments on one node.",
+                  active: projectInfo?.production?.launch_ready,
                 },
                 {
-                  label: "Install to Play",
-                  detail: "Coolify or simple compose deployment with explicit env variables.",
-                  active: projectInfo?.production?.profile === "install_to_play",
+                  label: "MVP / Real Apps",
+                  detail: "Use external Postgres, HTTPS, managed secrets, and SMTP for customer-facing apps.",
+                  active: projectInfo?.production?.mvp_ready,
                 },
                 {
-                  label: "Private Cloud",
-                  detail: "Managed cloud profile maintained outside this public repo.",
-                  active: projectInfo?.production?.profile === "azure_cloud",
+                  label: "SaaS / Multi-Instance",
+                  detail: "Add pooler, shared object storage, and distributed realtime before calling it cloud-grade.",
+                  active: projectInfo?.production?.saas_ready,
                 },
               ].map((item) => (
                 <div

@@ -289,12 +289,58 @@ func createBenchmarkTable(ctx context.Context, svc *httpClient, tableName string
 	if err := execSQL(ctx, svc, createTableQuery); err != nil {
 		return err
 	}
-	return execSQL(ctx, svc, insertRowsQuery)
+	if err := execSQL(ctx, svc, insertRowsQuery); err != nil {
+		return err
+	}
+	if err := createBenchmarkIndexes(ctx, svc, tableName); err != nil {
+		return err
+	}
+	// Refresh planner stats after the bulk insert so the benchmark reflects
+	// runtime query performance instead of cold statistics noise.
+	return execSQL(ctx, svc, fmt.Sprintf("ANALYZE %s", quoteIdent(tableName)))
+}
+
+func createBenchmarkIndexes(ctx context.Context, svc *httpClient, tableName string) error {
+	createdAtIndex := fmt.Sprintf("%s_created_at_idx", tableName)
+	amountIndex := fmt.Sprintf("%s_amount_idx", tableName)
+	titleSearchIndex := fmt.Sprintf("%s_title_trgm_idx", tableName)
+
+	indexQueries := []string{
+		fmt.Sprintf("CREATE INDEX %s ON %s (created_at DESC)", quoteIdent(createdAtIndex), quoteIdent(tableName)),
+		fmt.Sprintf("CREATE INDEX %s ON %s (amount DESC)", quoteIdent(amountIndex), quoteIdent(tableName)),
+	}
+	for _, query := range indexQueries {
+		if err := execSQL(ctx, svc, query); err != nil {
+			return err
+		}
+	}
+
+	if err := tryExecSQL(ctx, svc, "CREATE EXTENSION IF NOT EXISTS pg_trgm"); err == nil {
+		_ = tryExecSQL(
+			ctx,
+			svc,
+			fmt.Sprintf(
+				"CREATE INDEX %s ON %s USING GIN (title gin_trgm_ops)",
+				quoteIdent(titleSearchIndex),
+				quoteIdent(tableName),
+			),
+		)
+	}
+
+	return nil
 }
 
 func execSQL(ctx context.Context, svc *httpClient, query string) error {
 	_, err := svc.request(ctx, http.MethodPost, "/api/sql", sqlRequest{Query: query}, nil)
 	return err
+}
+
+func tryExecSQL(ctx context.Context, svc *httpClient, query string) error {
+	if err := execSQL(ctx, svc, query); err != nil {
+		fmt.Fprintf(os.Stderr, "benchmark setup warning: %v\n", err)
+		return err
+	}
+	return nil
 }
 
 func (svc *httpClient) request(ctx context.Context, method, path string, payload any, dest any) ([]byte, error) {
@@ -370,6 +416,11 @@ func (svc *httpClient) request(ctx context.Context, method, path string, payload
 }
 
 func runScenario(ctx context.Context, scenario benchmarkScenario, iterations, workers int) scenarioResult {
+	// Warm up one request to reduce cold-cache spikes in p95 reporting.
+	if err := scenario.Request(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "warmup warning for %s: %v\n", scenario.Name, err)
+	}
+
 	jobs := make(chan struct{}, iterations)
 	type measurement struct {
 		duration time.Duration

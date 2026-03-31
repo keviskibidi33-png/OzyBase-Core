@@ -73,6 +73,8 @@ Recommended for production:
 - `SMTP_PASSWORD`
 - `SMTP_FROM`
 - `ALLOWED_ORIGINS`
+- `OZY_STORAGE_PROVIDER` / `S3_*` when files must survive node loss
+- `OZY_REALTIME_BROKER` / `REDIS_*` when realtime must fan out across multiple app instances
 
 Profile mapping:
 - `self_host`: local binary, self-managed VM, or bundled docker stack
@@ -80,6 +82,15 @@ Profile mapping:
 - `custom`: private cloud or internal platform profile maintained outside this public repo
 
 See `docs/DEPLOYMENT_PROFILES.md` for the branch and file map.
+
+## 3.1 Workload Tiers
+The dashboard now separates runtime readiness into three tiers:
+
+- `Launch / Single Node`: secure enough to run one node behind HTTPS with stable secrets
+- `MVP / Real Apps`: launch tier plus external PostgreSQL and SMTP for real customer flows
+- `SaaS / Multi-Instance`: MVP tier plus pooler, shared object storage, and distributed realtime
+
+This matters because a stack can be acceptable for `install-to-play` while still not being ready for a multi-instance SaaS claim.
 
 ## 4. Deploy
 ```bash
@@ -250,9 +261,16 @@ Use `docker-compose.coolify.yml` with a managed PostgreSQL service.
 ### Variables to set in Coolify
 - `DATABASE_URL` (required)
 - `DB_POOLER_URL` (recommended)
+- `JWT_SECRET` (recommended for stable auth across redeploys)
+- `ALLOWED_ORIGINS` (recommended when app and API run on different domains)
 - `DEBUG=false`
 - `OZY_STRICT_SECURITY=true` (recommended in production)
+- `OZY_SQL_EDITOR_MAX_ROWS=1000` (recommended cap for admin SQL previews)
 - `OZY_STORAGE_FALLBACK_LOCAL=true` (recommended, fail-open to local storage if S3 init fails)
+- `OZY_STORAGE_PROVIDER` (`local` or `s3`)
+- `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_USE_SSL` when using object storage
+- `OZY_REALTIME_BROKER` (`local` or `redis`)
+- `REDIS_ADDR`, `REDIS_PASSWORD`, `REDIS_DB` when using shared realtime fan-out
 - `API_KEY_ROTATION_GRACE_MINUTES=15` (default grace for DB API key rotation)
 - `ANON_KEY_PREVIOUS` / `SERVICE_ROLE_KEY_PREVIOUS` (optional for static key cutover)
 - `STATIC_KEY_GRACE_UNTIL` (RFC3339 timestamp for previous static keys)
@@ -272,6 +290,8 @@ Auto defaults in Coolify compose:
 - Set `DB_POOLER_URL` when your managed PostgreSQL provider exposes a pooler endpoint.
 - With `OZY_STRICT_SECURITY=true`, startup fails on insecure public DB URLs or wildcard origins.
 - With `OZY_STORAGE_FALLBACK_LOCAL=true`, startup falls back to local storage if S3 is unavailable.
+- Keep `OZY_STORAGE_PROVIDER=local` only for single-node installs; switch to `s3` before calling the deployment SaaS-ready.
+- Keep `OZY_REALTIME_BROKER=local` only for one app instance; switch to Redis before scaling horizontally.
 - During static key rotation, previous keys are accepted only until `STATIC_KEY_GRACE_UNTIL`.
 - `OZY_SKIP_MIGRATIONS_SEED=true` skips copying `/app/migrations` from the image into the mounted volume.
 - Persist volumes:
@@ -296,11 +316,15 @@ Visible DB variables in Coolify (install stack):
 - `DB_PASSWORD` (required)
 - `DB_NAME` (default: `ozybase`)
 - `DB_SSLMODE` (default: `disable`)
+- `JWT_SECRET` (recommended)
+- `ALLOWED_ORIGINS` (optional, auto-derived if omitted)
 - `API_KEY_ROTATION_GRACE_MINUTES` (default: `15`)
 - `ANON_KEY_PREVIOUS` / `SERVICE_ROLE_KEY_PREVIOUS` (optional)
 - `STATIC_KEY_GRACE_UNTIL` (optional RFC3339)
 - `INITIAL_ADMIN_EMAIL` (optional)
 - `INITIAL_ADMIN_PASSWORD` (optional)
+- `OZY_STORAGE_PROVIDER`, `OZY_STORAGE_FALLBACK_LOCAL`, `S3_*`
+- `OZY_REALTIME_BROKER`, `REDIS_*`
 
 `DATABASE_URL` is built automatically in compose from DB vars:
 `postgres://${DB_USER:-ozybase}:${DB_PASSWORD}@db:5432/${DB_NAME:-ozybase}?sslmode=${DB_SSLMODE:-disable}`
