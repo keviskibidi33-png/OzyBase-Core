@@ -67,6 +67,22 @@ func TestLoad_UsesExplicitDeploymentProfile(t *testing.T) {
 	}
 }
 
+func TestLoad_DefaultBodyLimitSupportsLargerSelfHostedUploads(t *testing.T) {
+	withTempDir(t)
+	resetEnv(t)
+
+	t.Setenv("DEBUG", "false")
+	t.Setenv("JWT_SECRET", "this_is_a_strong_secret_with_more_than_32_chars")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if cfg.BodyLimit != "64M" {
+		t.Fatalf("expected default BodyLimit=64M, got %q", cfg.BodyLimit)
+	}
+}
+
 func TestLoad_StrictSecurityRejectsInsecurePublicDatabaseURL(t *testing.T) {
 	withTempDir(t)
 	resetEnv(t)

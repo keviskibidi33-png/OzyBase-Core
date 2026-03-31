@@ -160,7 +160,7 @@ func Load() (*Config, error) {
 		AllowedOrigins:          origins,
 		RateLimitRPS:            rps,
 		RateLimitBurst:          burst,
-		BodyLimit:               getEnv("BODY_LIMIT", "10M"),
+		BodyLimit:               getEnv("BODY_LIMIT", "64M"),
 		GeneratedJWTSecret:      generatedJWTSecret,
 		GeneratedAnonKey:        generatedAnonKey,
 		GeneratedServiceRoleKey: generatedServiceRoleKey,

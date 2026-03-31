@@ -32,7 +32,7 @@ func EnsureAdminUser(db *data.DB) {
 	var count int
 	err := db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM _v_users WHERE role = 'admin'").Scan(&count)
 	if err != nil {
-		log.Printf("⚠️ Error checking for admin user: %v", err)
+		log.Printf("warning: error checking for admin user: %v", err)
 		return
 	}
 
@@ -59,17 +59,20 @@ func EnsureAdminUser(db *data.DB) {
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	if err != nil {
-		log.Printf("⚠️ Error hashing admin password: %v", err)
+		log.Printf("warning: error hashing admin password: %v", err)
 		return
 	}
 
-	_, err = db.Pool.Exec(ctx, `
+	commandTag, err := db.Pool.Exec(ctx, `
 		INSERT INTO _v_users (email, password_hash, role)
 		VALUES ($1, $2, $3)
+		ON CONFLICT (email) DO NOTHING
 	`, email, string(hashedPassword), "admin")
-
 	if err != nil {
-		log.Printf("⚠️ Error creating initial admin user: %v", err)
+		log.Printf("warning: error creating initial admin user: %v", err)
+		return
+	}
+	if commandTag.RowsAffected() == 0 {
 		return
 	}
 

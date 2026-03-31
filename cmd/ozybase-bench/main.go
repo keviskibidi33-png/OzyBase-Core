@@ -142,7 +142,7 @@ func main() {
 		{
 			Name: "table_first_page",
 			Request: func(ctx context.Context) error {
-				endpoint := fmt.Sprintf("/api/tables/%s?limit=100", url.PathEscape(tableName))
+				endpoint := fmt.Sprintf("/api/tables/%s?limit=100&count_mode=auto", url.PathEscape(tableName))
 				_, err := httpSvc.request(ctx, http.MethodGet, endpoint, nil, nil)
 				return err
 			},
@@ -150,7 +150,7 @@ func main() {
 		{
 			Name: "table_deep_page_sorted",
 			Request: func(ctx context.Context) error {
-				endpoint := fmt.Sprintf("/api/tables/%s?limit=100&offset=%d&order=amount.desc", url.PathEscape(tableName), deepOffset)
+				endpoint := fmt.Sprintf("/api/tables/%s?limit=100&offset=%d&order=amount.desc&count_mode=auto", url.PathEscape(tableName), deepOffset)
 				_, err := httpSvc.request(ctx, http.MethodGet, endpoint, nil, nil)
 				return err
 			},
@@ -158,7 +158,7 @@ func main() {
 		{
 			Name: "table_search_tail",
 			Request: func(ctx context.Context) error {
-				endpoint := fmt.Sprintf("/api/tables/%s?limit=50&q=item-%d&skip_count=1", url.PathEscape(tableName), *rows-1)
+				endpoint := fmt.Sprintf("/api/tables/%s?limit=50&q=item-%d&count_mode=auto", url.PathEscape(tableName), *rows-1)
 				_, err := httpSvc.request(ctx, http.MethodGet, endpoint, nil, nil)
 				return err
 			},

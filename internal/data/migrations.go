@@ -531,19 +531,24 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 	}
 	defer conn.Release()
 
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationsAdvisoryLockKey); err != nil {
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin migration transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", migrationsAdvisoryLockKey); err != nil {
 		return fmt.Errorf("failed to acquire migration lock: %w", err)
 	}
-	defer func() {
-		if _, unlockErr := conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", migrationsAdvisoryLockKey); unlockErr != nil {
-			log.Printf("warning: failed to release migration lock: %v", unlockErr)
-		}
-	}()
 
 	for i, migration := range migrations {
-		if _, err := conn.Exec(ctx, migration); err != nil {
+		if _, err := tx.Exec(ctx, migration); err != nil {
 			return fmt.Errorf("migration %d failed: %w", i+1, err)
 		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit migrations: %w", err)
 	}
 
 	log.Println("🛠️ Migrations completed successfully")

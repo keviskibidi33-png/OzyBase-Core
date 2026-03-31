@@ -382,14 +382,8 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
             const params = new URLSearchParams();
             params.set('limit', String(pageSize));
             params.set('offset', String(offset));
+            params.set('count_mode', 'auto');
             if (debouncedSearch) params.set('q', debouncedSearch);
-            const shouldSkipCount = Boolean(
-                debouncedSearch ||
-                filters.some((f: any) => f.column && f.value !== undefined && f.value !== '')
-            );
-            if (shouldSkipCount) {
-                params.set('skip_count', '1');
-            }
 
             const orderParam = sorts
                 .filter((s: any) => s.column && s.direction)

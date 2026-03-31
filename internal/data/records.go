@@ -53,6 +53,14 @@ type ListRecordsResult struct {
 	TotalExact bool
 }
 
+type recordCountMode string
+
+const (
+	recordCountExact    recordCountMode = "exact"
+	recordCountDeferred recordCountMode = "deferred"
+	recordCountAuto     recordCountMode = "auto"
+)
+
 func isSearchableRecordColumnType(dataType string) bool {
 	switch strings.ToLower(strings.TrimSpace(dataType)) {
 	case "text", "character varying", "varchar", "character", "char", "uuid", "citext":
@@ -89,6 +97,36 @@ func buildRecordSearchClause(columnTypes map[string]string, placeholder string) 
 	return "(" + strings.Join(searchClauses, " OR ") + ")"
 }
 
+func normalizeRecordCountMode(filters map[string][]string) recordCountMode {
+	if filters["skip_count"] != nil {
+		return recordCountDeferred
+	}
+	if rawModes, ok := filters["count_mode"]; ok {
+		for _, rawMode := range rawModes {
+			switch strings.ToLower(strings.TrimSpace(rawMode)) {
+			case string(recordCountDeferred), "skip":
+				return recordCountDeferred
+			case string(recordCountAuto):
+				return recordCountAuto
+			case string(recordCountExact):
+				return recordCountExact
+			}
+		}
+	}
+	return recordCountExact
+}
+
+func shouldUseDeferredRecordCount(mode recordCountMode, hasSearch bool, offset int, filterCount int) bool {
+	switch mode {
+	case recordCountDeferred:
+		return true
+	case recordCountAuto:
+		return hasSearch || offset > 0 || filterCount > 0
+	default:
+		return false
+	}
+}
+
 // ListRecords fetches all records with filters and sorting, respecting RLS if configured in DB.
 // This implementation uses a structured QueryBuilder for improved maintainability.
 func (db *DB) ListRecords(ctx context.Context, collectionName string, filters map[string][]string, orderBy string, limit, offset int) (*ListRecordsResult, error) {
@@ -118,6 +156,8 @@ func (db *DB) ListRecords(ctx context.Context, collectionName string, filters ma
 
 	err = db.WithTransactionAndRLS(ctx, func(tx pgx.Tx) error {
 		qb := NewQueryBuilder(collectionName)
+		hasSearch := false
+		filterCount := 0
 
 		// 2. Structural Filters (Soft Delete) - Only if column exists
 		if !isSystemTable && validCols["deleted_at"] {
@@ -126,6 +166,7 @@ func (db *DB) ListRecords(ctx context.Context, collectionName string, filters ma
 
 		// 3. Search Logic
 		if qValues, ok := filters["q"]; ok && len(qValues) > 0 && qValues[0] != "" {
+			hasSearch = true
 			placeholder := fmt.Sprintf("$%d", qb.argIdx)
 			if searchClause := buildRecordSearchClause(columnTypes, placeholder); searchClause != "" {
 				qb.whereClauses = append(qb.whereClauses, searchClause)
@@ -146,6 +187,7 @@ func (db *DB) ListRecords(ctx context.Context, collectionName string, filters ma
 			}
 
 			for _, valStr := range values {
+				filterCount++
 				parts := strings.SplitN(valStr, ".", 2)
 				op, val := "eq", valStr
 				if len(parts) == 2 {
@@ -156,7 +198,7 @@ func (db *DB) ListRecords(ctx context.Context, collectionName string, filters ma
 		}
 
 		// 5. Sorting and Pagination
-		skipCount := filters["skip_count"] != nil
+		skipCount := shouldUseDeferredRecordCount(normalizeRecordCountMode(filters), hasSearch, offset, filterCount)
 		if orderBy != "" {
 			qb.Order(orderBy)
 		} else if validCols["created_at"] {

@@ -1,10 +1,14 @@
 package realtime
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Event represents a realtime event data matching Postgres trigger payload
@@ -24,6 +28,9 @@ type Broker struct {
 	closingClients chan chan Event
 	clients        map[chan Event]bool
 	mu             sync.Mutex
+	dedupeMu       sync.Mutex
+	recentEvents   map[string]time.Time
+	dedupeWindow   time.Duration
 	Dispatcher     *WebhookDispatcher
 	NodeID         string
 }
@@ -35,6 +42,8 @@ func NewBroker() *Broker {
 		newClients:     make(chan chan Event),
 		closingClients: make(chan chan Event),
 		clients:        make(map[chan Event]bool),
+		recentEvents:   make(map[string]time.Time),
+		dedupeWindow:   750 * time.Millisecond,
 		NodeID:         DefaultNodeID(),
 	}
 
@@ -81,6 +90,9 @@ func (b *Broker) Unsubscribe(clientChan chan Event) {
 
 // Broadcast sends an event to all connected clients
 func (b *Broker) Broadcast(event Event) {
+	if b.shouldSuppressDuplicate(event) {
+		return
+	}
 	b.notifier <- event
 	if b.Dispatcher != nil {
 		b.Dispatcher.Dispatch(event)
@@ -111,4 +123,51 @@ func DefaultNodeID() string {
 		host = "ozy-node"
 	}
 	return host + "-" + strconv.Itoa(os.Getpid())
+}
+
+func (b *Broker) shouldSuppressDuplicate(event Event) bool {
+	key, ok := fingerprintEvent(event)
+	if !ok || b.dedupeWindow <= 0 {
+		return false
+	}
+
+	now := time.Now()
+	cutoff := now.Add(-b.dedupeWindow)
+
+	b.dedupeMu.Lock()
+	defer b.dedupeMu.Unlock()
+
+	for fingerprint, seenAt := range b.recentEvents {
+		if seenAt.Before(cutoff) {
+			delete(b.recentEvents, fingerprint)
+		}
+	}
+
+	if seenAt, exists := b.recentEvents[key]; exists && now.Sub(seenAt) <= b.dedupeWindow {
+		return true
+	}
+
+	b.recentEvents[key] = now
+	return false
+}
+
+func fingerprintEvent(event Event) (string, bool) {
+	payload := struct {
+		Table  string `json:"table"`
+		Action string `json:"action"`
+		Record any    `json:"record"`
+		Old    any    `json:"old,omitempty"`
+	}{
+		Table:  event.Table,
+		Action: event.Action,
+		Record: event.Record,
+		Old:    event.Old,
+	}
+
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", false
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:]), true
 }

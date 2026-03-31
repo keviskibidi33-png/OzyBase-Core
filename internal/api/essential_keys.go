@@ -29,6 +29,7 @@ const (
 	apiKeyManagedKindEssential = "essential"
 	adminVerifyScopeEssential  = "essential_api_keys"
 	adminVerifyTTL             = 10 * time.Minute
+	essentialAPIKeysLockKey    = int64(2026033101)
 )
 
 type EssentialAPIKeyBootstrap struct {
@@ -272,13 +273,13 @@ func buildMCPConfigPayload(c echo.Context, serviceRoleKey string) map[string]any
 	vscodeConfigJSON, _ := json.MarshalIndent(vscodeConfig, "", "  ")
 
 	return map[string]any{
-		"runtime":      "native",
-		"transport":    "jsonrpc-http",
-		"server_url":   serverURL,
-		"tools_url":    toolsURL,
-		"invoke_url":   invokeURL,
-		"auth_header":  "apikey",
-		"tool_count":   len(buildMCPTools()),
+		"runtime":     "native",
+		"transport":   "jsonrpc-http",
+		"server_url":  serverURL,
+		"tools_url":   toolsURL,
+		"invoke_url":  invokeURL,
+		"auth_header": "apikey",
+		"tool_count":  len(buildMCPTools()),
 		"sample_server": fmt.Sprintf(
 			"curl -s %q -H %q -H %q -d %q",
 			serverURL,
@@ -581,13 +582,23 @@ func EnsureEssentialAPIKeys(ctx context.Context, db *data.DB, bootstrap Essentia
 		{role: APIKeyRoleServiceRole, key: strings.TrimSpace(bootstrap.ServiceRoleKey)},
 	}
 
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", essentialAPIKeysLockKey); err != nil {
+		return err
+	}
+
 	for _, spec := range specs {
 		if spec.key == "" {
 			return fmt.Errorf("missing bootstrap key for role %s", spec.role)
 		}
 
 		var exists bool
-		if err := db.Pool.QueryRow(ctx, `
+		if err := tx.QueryRow(ctx, `
 			SELECT EXISTS(
 				SELECT 1
 				FROM _v_api_keys
@@ -612,7 +623,7 @@ func EnsureEssentialAPIKeys(ctx context.Context, db *data.DB, bootstrap Essentia
 		}
 		keyGroupID := uuid.NewString()
 
-		if _, err := db.Pool.Exec(ctx, `
+		if _, err := tx.Exec(ctx, `
 			INSERT INTO _v_api_keys (name, key_hash, prefix, role, is_active, key_group_id, key_version, valid_after, managed_kind, secret_ciphertext)
 			VALUES ($1, $2, $3, $4, TRUE, $5, 1, NOW(), $6, $7)
 		`, apiKeyLabel(spec.role), keyHash, managedAPIKeyPrefix(spec.role, spec.key), spec.role, keyGroupID, apiKeyManagedKindEssential, ciphertext); err != nil {
@@ -620,5 +631,5 @@ func EnsureEssentialAPIKeys(ctx context.Context, db *data.DB, bootstrap Essentia
 		}
 	}
 
-	return nil
+	return tx.Commit(ctx)
 }

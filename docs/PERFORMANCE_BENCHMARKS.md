@@ -63,6 +63,12 @@ If one machine reports much worse p95 than another, treat the result as an envir
 
 For serious production claims, rerun on the same runtime you intend to ship: external Postgres, realistic CPU limits, warm cache, and the same security settings as production.
 
+Connection topology note:
+
+- keep `DATABASE_URL` pointed at the direct PostgreSQL endpoint the server uses internally
+- set `DB_POOLER_URL` separately when you want PgBouncer/Supavisor for client-facing pooling or readiness checks
+- avoid running the server itself against a transaction-pooled URL when validating realtime, because `LISTEN/NOTIFY` requires session-style behavior
+
 ## Target Use
 
 Use this runner before claiming production-readiness for:
@@ -75,5 +81,5 @@ Before claiming SaaS-grade readiness, extend the run to:
 
 - `100k` and `1M+` rows
 - sustained concurrency beyond the default 4 workers
-- external Postgres with `DB_POOLER_URL`
+- external Postgres with direct `DATABASE_URL` plus `DB_POOLER_URL`
 - shared object storage and Redis-backed realtime when those modes are enabled

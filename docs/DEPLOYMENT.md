@@ -42,6 +42,7 @@ DB_USER=ozyuser
 DB_PASSWORD=<strong-password>
 DB_NAME=Ozydb
 DB_SSLMODE=verify-full
+DATABASE_URL=<direct-postgres-url-for-server-runtime>
 DB_POOLER_URL=<recommended-pgbouncer-or-supavisor-url>
 
 # Rate limiter
@@ -66,6 +67,7 @@ Required by compose:
 - `APP_DOMAIN`
 
 Recommended for production:
+- `DATABASE_URL`
 - `DB_POOLER_URL`
 - `SMTP_HOST`
 - `SMTP_PORT`
@@ -92,6 +94,11 @@ The dashboard now separates runtime readiness into three tiers:
 
 This matters because a stack can be acceptable for `install-to-play` while still not being ready for a multi-instance SaaS claim.
 
+Database connection pattern:
+- `DATABASE_URL`: direct PostgreSQL endpoint used by the OzyBase server runtime.
+- `DB_POOLER_URL`: PgBouncer/Supavisor endpoint used for pooled client-facing connection info and readiness posture.
+- Do not point the runtime itself at a transaction-pooled URL if you expect `LISTEN/NOTIFY` realtime fan-out to stay reliable.
+
 ## 4. Deploy
 ```bash
 docker compose up -d --build
@@ -102,6 +109,11 @@ Verify:
 docker ps
 curl -i http://localhost:8090/api/health
 ```
+
+Validation helpers:
+- `powershell -File scripts/validate_external_stack.ps1` validates external Postgres + S3 + Redis + storage pressure + benchmark.
+- `powershell -File scripts/validate_multinode_stack.ps1` validates two app nodes, distributed realtime fan-out, and single-node failover behavior.
+- `powershell -File scripts/validate_https_smtp_stack.ps1` validates HTTPS reverse proxy and SMTP password reset delivery.
 
 Expected:
 - Both containers healthy.

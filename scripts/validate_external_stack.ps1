@@ -9,7 +9,11 @@ param(
   [string]$AdminPassword = "OzyBase1234!",
   [int]$Rows = 100000,
   [int]$Iterations = 12,
-  [int]$Workers = 8
+  [int]$Workers = 8,
+  [int]$SmallFiles = 20,
+  [int]$SmallFileSizeKB = 256,
+  [int]$LargeFiles = 3,
+  [int]$LargeFileSizeMB = 20
 )
 
 $ErrorActionPreference = "Stop"
@@ -115,6 +119,50 @@ function Remove-ContainerSafe {
   }
 }
 
+function Start-CurlProcess {
+  param(
+    [string[]]$Arguments,
+    [string]$Label
+  )
+
+  $safeLabel = ($Label -replace '[^A-Za-z0-9_.-]', '_')
+  $stdout = Join-Path $env:TEMP "$safeLabel.stdout.log"
+  $stderr = Join-Path $env:TEMP "$safeLabel.stderr.log"
+  $argumentLine = ($Arguments | ForEach-Object {
+    if ($_ -match '[\s"]') {
+      '"' + ($_ -replace '"', '\"') + '"'
+    } else {
+      $_
+    }
+  }) -join ' '
+  $process = Start-Process -FilePath "curl.exe" -ArgumentList $argumentLine -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+  return [pscustomobject]@{
+    Label   = $Label
+    Process = $process
+    StdOut  = $stdout
+    StdErr  = $stderr
+  }
+}
+
+function Wait-CurlProcesses {
+  param([object[]]$Jobs)
+
+  foreach ($job in $Jobs) {
+    if ($null -eq $job) {
+      continue
+    }
+    $job.Process.WaitForExit()
+    $stdout = if (Test-Path $job.StdOut) { Get-Content $job.StdOut -Raw } else { "" }
+    $stderr = if (Test-Path $job.StdErr) { Get-Content $job.StdErr -Raw } else { "" }
+    if (-not [string]::IsNullOrWhiteSpace($stderr)) {
+      throw "curl job '$($job.Label)' failed: $stderr"
+    }
+    if ($stdout -match '"error"\s*:') {
+      throw "curl job '$($job.Label)' returned API error payload: $stdout"
+    }
+  }
+}
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $network = "ozy-validate-net"
 $pgName = "ozy-validate-pg"
@@ -128,7 +176,6 @@ $apiLog = Join-Path $env:TEMP "ozybase-external-api.out.log"
 $apiErr = Join-Path $env:TEMP "ozybase-external-api.err.log"
 $apiBinary = Join-Path $env:TEMP "ozybase-external-validation.exe"
 $storageDir = Join-Path $env:TEMP "ozybase-external-storage-test"
-$downloadPath = Join-Path $storageDir "downloaded-large.bin"
 $apiProc = $null
 $rng = $null
 
@@ -153,7 +200,6 @@ try {
   Wait-Check -Label "postgres" -Check {
     docker run --rm --network $network postgres:15-alpine pg_isready -h $pgName -U $dbUser -d $dbName *> $null
   }
-  docker exec $pgName psql -U $dbUser -d postgres -c "SET password_encryption='md5'; ALTER ROLE $dbUser WITH PASSWORD '$dbPass';" | Out-Null
   Wait-Check -Label "redis" -Check {
     docker run --rm --network $network redis:7-alpine redis-cli -h $redisName ping *> $null
   }
@@ -172,14 +218,18 @@ try {
   go build -o $apiBinary ./cmd/ozybase
 
   $env:PORT = $ApiPort
-  $env:DATABASE_URL = "postgres://${dbUser}:${dbPass}@127.0.0.1:$PoolerPort/${dbName}?sslmode=disable"
-  $env:DB_POOLER_URL = $env:DATABASE_URL
+  $env:DATABASE_URL = "postgres://${dbUser}:${dbPass}@127.0.0.1:$PgPort/${dbName}?sslmode=disable"
+  $env:DB_POOLER_URL = "postgres://${dbUser}:${dbPass}@127.0.0.1:$PoolerPort/${dbName}?sslmode=disable"
   $env:SITE_URL = "http://127.0.0.1:$ApiPort"
   $env:APP_DOMAIN = "localhost"
   $env:ALLOWED_ORIGINS = "http://127.0.0.1:$ApiPort"
   $env:OZY_SKIP_DOTENV = "true"
   $env:DEBUG = "false"
   $env:OZY_STRICT_SECURITY = "false"
+  $env:JWT_SECRET = "ozy_validation_jwt_secret_1234567890abcdef"
+  $env:ANON_KEY = "ozy_validation_publishable_key_1234567890abcdef"
+  $env:SERVICE_ROLE_KEY = "ozy_validation_secret_key_1234567890abcdef"
+  $env:OZY_API_KEY_ENCRYPTION_SECRET = "ozy_validation_api_key_encryption_1234567890abcdef"
   $env:OZY_AUTO_BOOTSTRAP_ADMIN = "true"
   $env:INITIAL_ADMIN_EMAIL = $AdminEmail
   $env:INITIAL_ADMIN_PASSWORD = $AdminPassword
@@ -217,17 +267,23 @@ try {
   New-Item -ItemType Directory -Force -Path $storageDir | Out-Null
   $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
   $smallPaths = @()
-  for ($i = 1; $i -le 20; $i++) {
+  $smallBytesLength = $SmallFileSizeKB * 1024
+  for ($i = 1; $i -le $SmallFiles; $i++) {
     $path = Join-Path $storageDir ("doc-{0:00}.bin" -f $i)
-    $bytes = New-Object byte[](262144)
+    $bytes = New-Object byte[]($smallBytesLength)
     $rng.GetBytes($bytes)
     [System.IO.File]::WriteAllBytes($path, $bytes)
     $smallPaths += $path
   }
-  $largePath = Join-Path $storageDir "large-doc.bin"
-  $largeBytes = New-Object byte[](8388608)
-  $rng.GetBytes($largeBytes)
-  [System.IO.File]::WriteAllBytes($largePath, $largeBytes)
+  $largePaths = @()
+  $largeBytesLength = $LargeFileSizeMB * 1024 * 1024
+  for ($i = 1; $i -le $LargeFiles; $i++) {
+    $path = Join-Path $storageDir ("large-doc-{0:00}.bin" -f $i)
+    $bytes = New-Object byte[]($largeBytesLength)
+    $rng.GetBytes($bytes)
+    [System.IO.File]::WriteAllBytes($path, $bytes)
+    $largePaths += $path
+  }
 
   $loginResponse = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ApiPort/api/auth/login" -ContentType "application/json" -Body (@{ email = $AdminEmail; password = $AdminPassword } | ConvertTo-Json)
   $token = [string]$loginResponse.token
@@ -242,30 +298,66 @@ try {
   $bucketBody = @{ name = $bucketName; public = $false; rls_enabled = $false } | ConvertTo-Json
   Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ApiPort/api/files/buckets" -Headers ($headers + @{ "Content-Type" = "application/json" }) -Body $bucketBody | Out-Null
 
-  foreach ($filePath in ($smallPaths + $largePath)) {
+  foreach ($filePath in $smallPaths) {
     $uploadUrl = "http://127.0.0.1:$ApiPort/api/files?bucket=$bucketName"
     & curl.exe -sS -X POST $uploadUrl -H "Authorization: Bearer $token" -H "X-Workspace-Id: $workspaceId" -F "file=@$filePath" *> $null
     if ($LASTEXITCODE -ne 0) {
       throw "upload failed for $filePath"
     }
   }
+  $largeUploadJobs = @()
+  foreach ($filePath in $largePaths) {
+    $uploadUrl = "http://127.0.0.1:$ApiPort/api/files?bucket=$bucketName"
+    $label = "ozybase-upload-$([IO.Path]::GetFileNameWithoutExtension($filePath))"
+    $largeUploadJobs += Start-CurlProcess -Label $label -Arguments @(
+      "-sS",
+      "-X", "POST",
+      $uploadUrl,
+      "-H", "Authorization: Bearer $token",
+      "-H", "X-Workspace-Id: $workspaceId",
+      "-F", "file=@$filePath"
+    )
+  }
+  Wait-CurlProcesses -Jobs $largeUploadJobs
 
   $files = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:$ApiPort/api/files?bucket=$bucketName" -Headers $headers
-  if ($files.Count -lt 21) {
-    throw "expected at least 21 files in bucket, got $($files.Count)"
+  $expectedFileCount = $SmallFiles + $LargeFiles
+  if ($files.Count -lt $expectedFileCount) {
+    throw "expected at least $expectedFileCount files in bucket, got $($files.Count)"
   }
-  $largeEntry = $files | Where-Object { $_.name -eq "large-doc.bin" } | Select-Object -First 1
-  if ($null -eq $largeEntry) {
-    throw "large-doc.bin missing from storage listing"
+  $largeEntries = @($files | Where-Object { $_.name -like "large-doc-*.bin" })
+  if ($largeEntries.Count -lt $LargeFiles) {
+    throw "expected $LargeFiles large storage objects, got $($largeEntries.Count)"
   }
-  & curl.exe -sS -o $downloadPath -H "Authorization: Bearer $token" -H "X-Workspace-Id: $workspaceId" "http://127.0.0.1:$ApiPort$($largeEntry.path)" *> $null
-  if ($LASTEXITCODE -ne 0) {
-    throw "download of large S3-backed object failed"
+
+  $downloadJobs = @()
+  foreach ($entry in $largeEntries) {
+    $target = Join-Path $storageDir ("download-" + $entry.name)
+    $downloadJobs += Start-CurlProcess -Label ("ozybase-download-" + $entry.name) -Arguments @(
+      "-sS",
+      "-o", $target,
+      "-H", "Authorization: Bearer $token",
+      "-H", "X-Workspace-Id: $workspaceId",
+      "http://127.0.0.1:$ApiPort$($entry.path)"
+    )
   }
-  if ((Get-Item $downloadPath).Length -ne (Get-Item $largePath).Length) {
-    throw "downloaded large object size mismatch"
+  Wait-CurlProcesses -Jobs $downloadJobs
+
+  foreach ($entry in $largeEntries) {
+    $target = Join-Path $storageDir ("download-" + $entry.name)
+    $source = Join-Path $storageDir $entry.name
+    if (-not (Test-Path $target)) {
+      throw "downloaded file missing: $target"
+    }
+    if ((Get-Item $target).Length -ne (Get-Item $source).Length) {
+      throw "downloaded large object size mismatch for $($entry.name)"
+    }
   }
-  Write-Host "==> S3-compatible storage upload/list/download passed"
+  $deleteBucket = Invoke-RestMethod -Method Delete -Uri "http://127.0.0.1:$ApiPort/api/files/buckets/$bucketName" -Headers $headers
+  if ([int]$deleteBucket.deleted_files -lt $expectedFileCount) {
+    throw "bucket cleanup removed fewer objects than expected: $($deleteBucket.deleted_files) < $expectedFileCount"
+  }
+  Write-Host "==> S3-compatible storage upload/list/parallel-download/cleanup passed"
 
   $realtimeStatus = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:$ApiPort/api/project/realtime/status" -Headers $headers
   if ([string]$realtimeStatus.mode -ne "redis") {
