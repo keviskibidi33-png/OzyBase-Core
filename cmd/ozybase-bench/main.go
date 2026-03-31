@@ -158,7 +158,7 @@ func main() {
 		{
 			Name: "table_search_tail",
 			Request: func(ctx context.Context) error {
-				endpoint := fmt.Sprintf("/api/tables/%s?limit=50&q=item-%d", url.PathEscape(tableName), *rows-1)
+				endpoint := fmt.Sprintf("/api/tables/%s?limit=50&q=item-%d&skip_count=1", url.PathEscape(tableName), *rows-1)
 				_, err := httpSvc.request(ctx, http.MethodGet, endpoint, nil, nil)
 				return err
 			},

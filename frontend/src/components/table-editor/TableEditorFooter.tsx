@@ -3,6 +3,8 @@ import { ChevronLeft, ChevronRight, Code2, Download } from 'lucide-react';
 
 interface TableEditorFooterProps {
     totalRecords: number;
+    hasMoreRecords: boolean;
+    isTotalExact: boolean;
     visibleColumnCount: number;
     totalColumnCount: number;
     pageStartRecord: number;
@@ -28,6 +30,8 @@ interface TableEditorFooterProps {
 
 const TableEditorFooter: React.FC<TableEditorFooterProps> = ({
     totalRecords,
+    hasMoreRecords,
+    isTotalExact,
     visibleColumnCount,
     totalColumnCount,
     pageStartRecord,
@@ -53,7 +57,7 @@ const TableEditorFooter: React.FC<TableEditorFooterProps> = ({
     <div className="flex flex-col gap-3 border-t border-[#2e2e2e] bg-[#111111] px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] sm:px-6 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-wrap items-center gap-3 text-zinc-500">
             <span className="rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1 text-zinc-300">
-                {totalRecords} rows
+                {isTotalExact ? `${totalRecords} rows` : `${pageEndRecord}${hasMoreRecords ? '+' : ''} rows`}
             </span>
             <span className="rounded-full border border-[#2e2e2e] bg-[#161616] px-3 py-1 text-zinc-300">
                 {visibleColumnCount}/{totalColumnCount} cols
@@ -119,10 +123,10 @@ const TableEditorFooter: React.FC<TableEditorFooterProps> = ({
                     <ChevronLeft size={14} />
                 </button>
                 <span className="px-1 text-zinc-300">
-                    page {currentPage} / {totalPages}
+                    {isTotalExact ? `page ${currentPage} / ${totalPages}` : `page ${currentPage}${hasMoreRecords ? ' / +' : ''}`}
                 </span>
                 <button
-                    disabled={currentPage >= totalPages}
+                    disabled={isTotalExact ? currentPage >= totalPages : !hasMoreRecords}
                     onClick={() => goToPage(currentPage + 1)}
                     className="rounded-full p-1 transition-colors hover:text-primary disabled:opacity-30"
                     aria-label="Next page"
@@ -140,6 +144,7 @@ const TableEditorFooter: React.FC<TableEditorFooterProps> = ({
                             goToPage(Number(pageJumpInput || '1'));
                         }
                     }}
+                    disabled={!isTotalExact}
                     className="w-14 bg-transparent text-zinc-200 outline-none"
                 />
             </label>

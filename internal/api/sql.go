@@ -100,8 +100,10 @@ func (h *Handler) HandleExecuteSQL(c echo.Context) error {
 		})
 	}
 
+	previewQuery := buildSQLPreviewQuery(req.Query, resolveSQLEditorMaxRows())
+
 	// Execute the query
-	rows, err := h.DB.Pool.Query(ctx, req.Query)
+	rows, err := h.DB.Pool.Query(ctx, previewQuery)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
@@ -485,6 +487,29 @@ func sqlQueryProducesRows(query string) bool {
 		return strings.Contains(strings.ToUpper(trimLeadingSQLComments(query)), "RETURNING")
 	default:
 		return false
+	}
+}
+
+func buildSQLPreviewQuery(raw string, rowLimit int) string {
+	if rowLimit <= 0 {
+		return raw
+	}
+
+	statements := splitSQLStatements(raw)
+	if len(statements) != 1 {
+		return raw
+	}
+
+	statement := strings.TrimSpace(statements[0])
+	if statement == "" {
+		return raw
+	}
+
+	switch sqlStatementKind(statement) {
+	case "SELECT", "WITH", "VALUES", "TABLE":
+		return fmt.Sprintf("SELECT * FROM (%s) AS _ozy_preview LIMIT %d", statement, rowLimit+1)
+	default:
+		return raw
 	}
 }
 

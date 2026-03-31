@@ -118,3 +118,25 @@ func TestResolveSQLEditorMaxRowsDefaultsAndBounds(t *testing.T) {
 		t.Fatalf("expected explicit value 2500, got %d", got)
 	}
 }
+
+func TestBuildSQLPreviewQueryWrapsPlainSelects(t *testing.T) {
+	got := buildSQLPreviewQuery("SELECT * FROM demo ORDER BY id ASC;", 1000)
+	want := "SELECT * FROM (SELECT * FROM demo ORDER BY id ASC) AS _ozy_preview LIMIT 1001"
+	if got != want {
+		t.Fatalf("unexpected preview query: %q", got)
+	}
+}
+
+func TestBuildSQLPreviewQueryLeavesShowUntouched(t *testing.T) {
+	query := "SHOW search_path"
+	if got := buildSQLPreviewQuery(query, 1000); got != query {
+		t.Fatalf("expected SHOW query to remain untouched, got %q", got)
+	}
+}
+
+func TestBuildSQLPreviewQueryLeavesMultiStatementUntouched(t *testing.T) {
+	query := "SELECT 1; SELECT 2;"
+	if got := buildSQLPreviewQuery(query, 1000); got != query {
+		t.Fatalf("expected multi-statement query to remain untouched, got %q", got)
+	}
+}

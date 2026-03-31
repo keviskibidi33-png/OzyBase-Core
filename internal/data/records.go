@@ -47,8 +47,10 @@ func (db *DB) InsertRecord(ctx context.Context, collectionName string, data map[
 
 // ListRecordsResult encapsulates the output of a paginated list operation
 type ListRecordsResult struct {
-	Data  []map[string]any
-	Total int64
+	Data       []map[string]any
+	Total      int64
+	HasMore    bool
+	TotalExact bool
 }
 
 func isSearchableRecordColumnType(dataType string) bool {
@@ -95,7 +97,8 @@ func (db *DB) ListRecords(ctx context.Context, collectionName string, filters ma
 	}
 
 	result := &ListRecordsResult{
-		Data: []map[string]any{},
+		Data:       []map[string]any{},
+		TotalExact: true,
 	}
 
 	isSystemTable := strings.HasPrefix(collectionName, "_v_") || strings.HasPrefix(collectionName, "_ozy_")
@@ -153,15 +156,19 @@ func (db *DB) ListRecords(ctx context.Context, collectionName string, filters ma
 		}
 
 		// 5. Sorting and Pagination
+		skipCount := filters["skip_count"] != nil
 		if orderBy != "" {
 			qb.Order(orderBy)
 		} else if validCols["created_at"] {
 			qb.Order("created_at DESC")
 		}
-		qb.Paginate(limit, offset)
+		queryLimit := limit
+		if skipCount && limit > 0 {
+			queryLimit = limit + 1
+		}
+		qb.Paginate(queryLimit, offset)
 
 		// 5. Execution - Count (Optional for performance)
-		skipCount := filters["skip_count"] != nil
 		if !skipCount {
 			countQuery, args := qb.BuildCount()
 			if err := tx.QueryRow(ctx, countQuery, args...).Scan(&result.Total); err != nil {
@@ -169,6 +176,7 @@ func (db *DB) ListRecords(ctx context.Context, collectionName string, filters ma
 			}
 		} else {
 			result.Total = -1 // Indicator that count was skipped
+			result.TotalExact = false
 		}
 
 		// 6. Execution - Data
@@ -180,8 +188,23 @@ func (db *DB) ListRecords(ctx context.Context, collectionName string, filters ma
 		defer rows.Close()
 
 		result.Data, err = rowsToMaps(rows)
+		if err != nil {
+			return err
+		}
 
-		return err
+		if skipCount && limit > 0 && len(result.Data) > limit {
+			result.HasMore = true
+			result.Data = result.Data[:limit]
+		}
+
+		if !result.TotalExact {
+			result.Total = int64(offset + len(result.Data))
+			if result.HasMore {
+				result.Total++
+			}
+		}
+
+		return nil
 	})
 
 	return result, err

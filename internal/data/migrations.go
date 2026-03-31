@@ -6,6 +6,8 @@ import (
 	"log"
 )
 
+const migrationsAdvisoryLockKey int64 = 80900301
+
 func (db *DB) RunMigrations(ctx context.Context) error {
 	migrations := []string{
 		`CREATE SCHEMA IF NOT EXISTS auth`,
@@ -523,8 +525,23 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_query_explain_samples_table_time ON _v_query_explain_samples(table_name, recorded_at DESC)`,
 	}
 
+	conn, err := db.Pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to acquire migration connection: %w", err)
+	}
+	defer conn.Release()
+
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationsAdvisoryLockKey); err != nil {
+		return fmt.Errorf("failed to acquire migration lock: %w", err)
+	}
+	defer func() {
+		if _, unlockErr := conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", migrationsAdvisoryLockKey); unlockErr != nil {
+			log.Printf("warning: failed to release migration lock: %v", unlockErr)
+		}
+	}()
+
 	for i, migration := range migrations {
-		if _, err := db.Pool.Exec(ctx, migration); err != nil {
+		if _, err := conn.Exec(ctx, migration); err != nil {
 			return fmt.Errorf("migration %d failed: %w", i+1, err)
 		}
 	}

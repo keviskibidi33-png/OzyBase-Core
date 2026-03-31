@@ -166,6 +166,8 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
     const [pageSize, setPageSize] = useState(100);
     const [currentPage, setCurrentPage] = useState(1);
     const [totalRecords, setTotalRecords] = useState(0);
+    const [hasMoreRecords, setHasMoreRecords] = useState(false);
+    const [isTotalExact, setIsTotalExact] = useState(true);
 
     // --- NEW: Column Widths & Inline Editing State ---
     const [columnWidths, setColumnWidths] = useState<Record<string, any>>({});
@@ -380,6 +382,13 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
             params.set('limit', String(pageSize));
             params.set('offset', String(offset));
             if (debouncedSearch) params.set('q', debouncedSearch);
+            const shouldSkipCount = Boolean(
+                debouncedSearch ||
+                filters.some((f: any) => f.column && f.value !== undefined && f.value !== '')
+            );
+            if (shouldSkipCount) {
+                params.set('skip_count', '1');
+            }
 
             const orderParam = sorts
                 .filter((s: any) => s.column && s.direction)
@@ -409,6 +418,8 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
             setSchema(schemaItems);
             setData(Array.isArray(result.data) ? result.data : []);
             setTotalRecords(typeof result.total === 'number' ? result.total : 0);
+            setHasMoreRecords(Boolean(result.hasMore));
+            setIsTotalExact(Boolean(result.totalExact ?? true));
             setError(null);
         } catch (err: any) {
             console.error(err);
@@ -573,29 +584,32 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
     const visibleData = useMemo(() => data.slice(startIndex, endIndex), [data, startIndex, endIndex]);
     const topPadding = startIndex * rowHeight;
     const bottomPadding = (data.length - endIndex) * rowHeight;
-    const totalPages = Math.max(1, Math.ceil(totalRecords / pageSize));
-    const pageStartRecord = totalRecords === 0 ? 0 : ((currentPage - 1) * pageSize) + 1;
-    const pageEndRecord = totalRecords === 0 ? 0 : Math.min(currentPage * pageSize, totalRecords);
+    const totalPages = isTotalExact
+        ? Math.max(1, Math.ceil(totalRecords / pageSize))
+        : Math.max(currentPage, currentPage + (hasMoreRecords ? 1 : 0));
+    const pageStartRecord = data.length === 0 ? 0 : ((currentPage - 1) * pageSize) + 1;
+    const pageEndRecord = data.length === 0 ? 0 : (((currentPage - 1) * pageSize) + data.length);
     const visibleIds = useMemo(() => rowIdentityEnabled ? visibleData.map((row: any) => String(row.id)) : [], [visibleData, rowIdentityEnabled]);
     const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id: any) => selectedIds.has(id));
     const someVisibleSelected = visibleIds.some((id: any) => selectedIds.has(id));
     const selectedCount = rowIdentityEnabled ? selectedIds.size : 0;
 
     useEffect(() => {
-        if (currentPage > totalPages) {
+        if (isTotalExact && currentPage > totalPages) {
             setCurrentPage(totalPages);
         }
-    }, [currentPage, totalPages]);
+    }, [currentPage, isTotalExact, totalPages]);
 
     useEffect(() => {
         setPageJumpInput(String(currentPage));
     }, [currentPage]);
 
     const goToPage = useCallback((rawPage: number) => {
-        const nextPage = Math.min(totalPages, Math.max(1, rawPage));
+        const maxPage = isTotalExact ? totalPages : Math.max(1, rawPage);
+        const nextPage = Math.min(maxPage, Math.max(1, rawPage));
         setCurrentPage(nextPage);
         setPageJumpInput(String(nextPage));
-    }, [totalPages]);
+    }, [isTotalExact, totalPages]);
 
     const resetDataView = useCallback(() => {
         setSearchTerm('');
@@ -1732,6 +1746,8 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
 
             <TableEditorFooter
                 totalRecords={totalRecords}
+                hasMoreRecords={hasMoreRecords}
+                isTotalExact={isTotalExact}
                 visibleColumnCount={visibleColumnCount}
                 totalColumnCount={totalColumnCount}
                 pageStartRecord={pageStartRecord}

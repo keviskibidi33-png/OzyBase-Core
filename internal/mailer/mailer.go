@@ -3,6 +3,7 @@ package mailer
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/smtp"
 	"net/url"
 	"os"
@@ -83,8 +84,8 @@ func (m *SMTPMailer) Send(to, subject, body string) error {
 		"\r\n" +
 		body + "\r\n")
 
-	auth := smtp.PlainAuth("", m.Username, m.Password, m.Host)
 	addr := fmt.Sprintf("%s:%s", m.Host, m.Port)
+	auth := smtpAuthForConfig(m.Host, m.Username, m.Password)
 
 	err := smtp.SendMail(addr, auth, m.From, []string{to}, msg)
 	if err != nil {
@@ -139,4 +140,17 @@ func buildTokenURL(path, token string) string {
 	u.RawQuery = query.Encode()
 
 	return u.String()
+}
+
+func smtpAuthForConfig(host, username, password string) smtp.Auth {
+	host = strings.TrimSpace(host)
+	username = strings.TrimSpace(username)
+	password = strings.TrimSpace(password)
+	if host == "" || username == "" || password == "" {
+		return nil
+	}
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+	}
+	return smtp.PlainAuth("", username, password, host)
 }

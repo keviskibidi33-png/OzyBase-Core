@@ -166,10 +166,12 @@ func (h *Handler) ListRecords(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, map[string]any{
-		"data":  result.Data,
-		"total": result.Total,
-		"page":  (offset / limit) + 1,
-		"limit": limit,
+		"data":       result.Data,
+		"total":      result.Total,
+		"page":       (offset / limit) + 1,
+		"limit":      limit,
+		"hasMore":    result.HasMore,
+		"totalExact": result.TotalExact,
 	})
 }
 
