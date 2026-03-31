@@ -27,6 +27,9 @@ const defaultBucketRLSRule = "auth.uid() = owner_id"
 const storageUploadSessionTTL = 15 * time.Minute
 const storageMultipartChunkSize int64 = 8 * 1024 * 1024
 const storageMultipartThreshold int64 = 64 * 1024 * 1024
+const storageMultipartKeepAliveTTL = 30 * time.Minute
+const storageMultipartMinSessionTTL = 45 * time.Minute
+const storageMultipartMaxSessionTTL = 12 * time.Hour
 const storageMultipartTempBucket = "ozy-upload-parts"
 
 var bucketNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._-]{1,61}[a-z0-9])?$`)
@@ -271,7 +274,7 @@ func (h *FileHandler) CreateMultipartUploadSession(c echo.Context) error {
 
 	chunkSize := req.ChunkSizeBytes
 	if chunkSize <= 0 {
-		chunkSize = storageMultipartChunkSize
+		chunkSize = recommendedMultipartChunkSize(req.Size)
 	}
 	if chunkSize > storageMultipartThreshold {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("chunk_size_bytes must be <= %d", storageMultipartThreshold)})
@@ -287,7 +290,7 @@ func (h *FileHandler) CreateMultipartUploadSession(c echo.Context) error {
 	}
 
 	ownerID := uuidPointerFromContext(c)
-	expiresAt := time.Now().UTC().Add(storageUploadSessionTTL)
+	expiresAt := time.Now().UTC().Add(multipartSessionTTL(req.Size, chunkSize))
 	objectKey := buildObjectStorageKey(displayName)
 	var sessionID string
 	err = h.DB.Pool.QueryRow(c.Request().Context(), `
@@ -400,6 +403,11 @@ func (h *FileHandler) UploadMultipartPart(c echo.Context) error {
 		_ = h.Storage.Delete(c.Request().Context(), storageMultipartTempBucket, partKey)
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to record multipart chunk: " + err.Error()})
 	}
+	_, _ = h.DB.Pool.Exec(c.Request().Context(), `
+		UPDATE _v_storage_upload_sessions
+		SET expires_at = GREATEST(expires_at, $2)
+		WHERE id = $1
+	`, session.ID, time.Now().UTC().Add(storageMultipartKeepAliveTTL))
 
 	return c.JSON(http.StatusCreated, map[string]any{
 		"session_id":    session.ID,
@@ -1002,59 +1010,6 @@ func (h *FileHandler) DeleteBucket(c echo.Context) error {
 	})
 }
 
-// RunLifecycleSweep handles POST /api/files/buckets/:name/lifecycle/sweep
-func (h *FileHandler) RunLifecycleSweep(c echo.Context) error {
-	bucket, err := h.getBucket(c.Request().Context(), normalizeBucketName(c.Param("name")))
-	if err != nil {
-		return storageErrorResponse(c, err)
-	}
-	if bucket.LifecycleDeleteAfterDays <= 0 {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Bucket lifecycle retention is not configured"})
-	}
-
-	rows, err := h.DB.Pool.Query(c.Request().Context(), `
-		SELECT id, name, size, content_type, path, created_at
-		FROM _v_storage_objects
-		WHERE bucket_id = $1
-		  AND created_at < NOW() - ($2 * INTERVAL '1 day')
-	`, bucket.ID, bucket.LifecycleDeleteAfterDays)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to load lifecycle candidates: " + err.Error()})
-	}
-	defer rows.Close()
-
-	objects := make([]storedObject, 0)
-	var reclaimedBytes int64
-	for rows.Next() {
-		var object storedObject
-		if err := rows.Scan(&object.ID, &object.Name, &object.Size, &object.ContentType, &object.StoragePath, &object.CreatedAt); err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to parse lifecycle candidate: " + err.Error()})
-		}
-		reclaimedBytes += object.Size
-		objects = append(objects, object)
-	}
-	if err := rows.Err(); err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to read lifecycle candidates: " + err.Error()})
-	}
-
-	for _, object := range objects {
-		if err := h.deleteStoredObject(c.Request().Context(), bucket.Name, object.StoragePath); err != nil {
-			return storageErrorResponse(c, err)
-		}
-		if _, err := h.DB.Pool.Exec(c.Request().Context(), `DELETE FROM _v_storage_objects WHERE id = $1`, object.ID); err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to delete lifecycle object metadata: " + err.Error()})
-		}
-	}
-
-	return c.JSON(http.StatusOK, map[string]any{
-		"bucket":               bucket.Name,
-		"retention_days":       bucket.LifecycleDeleteAfterDays,
-		"deleted_objects":      len(objects),
-		"reclaimed_bytes":      reclaimedBytes,
-		"reclaimed_size_human": humanizeBytes(reclaimedBytes),
-	})
-}
-
 func (h *FileHandler) authorizeBucket(c echo.Context, bucket bucketRecord, action storageAction) (string, error) {
 	if isPrivilegedStorageRequest(c) {
 		return "", nil
@@ -1502,6 +1457,33 @@ func multipartPartSize(totalSize, chunkSize int64, partNumber int) int64 {
 
 func multipartPartStorageKey(sessionID string, partNumber int) string {
 	return fmt.Sprintf("%s/part-%06d", strings.TrimSpace(sessionID), partNumber)
+}
+
+func recommendedMultipartChunkSize(totalSize int64) int64 {
+	switch {
+	case totalSize >= 4*1024*1024*1024:
+		return storageMultipartThreshold
+	case totalSize >= 1024*1024*1024:
+		return 32 * 1024 * 1024
+	case totalSize >= 256*1024*1024:
+		return 16 * 1024 * 1024
+	default:
+		return storageMultipartChunkSize
+	}
+}
+
+func multipartSessionTTL(totalSize, chunkSize int64) time.Duration {
+	if chunkSize <= 0 {
+		chunkSize = recommendedMultipartChunkSize(totalSize)
+	}
+	ttl := storageUploadSessionTTL + time.Duration(multipartTotalParts(totalSize, chunkSize))*30*time.Second
+	if ttl < storageMultipartMinSessionTTL {
+		return storageMultipartMinSessionTTL
+	}
+	if ttl > storageMultipartMaxSessionTTL {
+		return storageMultipartMaxSessionTTL
+	}
+	return ttl
 }
 
 func parseMultipartPartRequest(c echo.Context, session storageUploadSession) (int, int64, int, error) {

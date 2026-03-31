@@ -97,6 +97,25 @@ func TestMultipartPartSize(t *testing.T) {
 	assert.Equal(t, int64(1*1024*1024), multipartPartSize(totalSize, chunkSize, 4))
 }
 
+func TestRecommendedMultipartChunkSize(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, storageMultipartChunkSize, recommendedMultipartChunkSize(128*1024*1024))
+	assert.Equal(t, int64(16*1024*1024), recommendedMultipartChunkSize(512*1024*1024))
+	assert.Equal(t, int64(32*1024*1024), recommendedMultipartChunkSize(2*1024*1024*1024))
+	assert.Equal(t, storageMultipartThreshold, recommendedMultipartChunkSize(5*1024*1024*1024))
+}
+
+func TestMultipartSessionTTL(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, storageMultipartMinSessionTTL, multipartSessionTTL(128*1024*1024, storageMultipartChunkSize))
+
+	longTTL := multipartSessionTTL(5*1024*1024*1024, storageMultipartThreshold)
+	assert.GreaterOrEqual(t, longTTL, 50*time.Minute)
+	assert.LessOrEqual(t, longTTL, storageMultipartMaxSessionTTL)
+}
+
 func TestStorageUploadTokenRoundTrip(t *testing.T) {
 	t.Parallel()
 

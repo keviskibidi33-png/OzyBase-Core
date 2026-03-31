@@ -174,7 +174,7 @@ func run() error {
 		go h.Integrations.StartDeliveryWorker(context.Background())
 	}
 
-	e := setupEcho(h, cfg, cronMgr)
+	e := setupEcho(ctx, h, cfg, cronMgr)
 
 	// 📊 Register Prometheus
 	api.RegisterPrometheus(e)
@@ -355,7 +355,7 @@ func initPubSub(cfg *config.Config, broker *realtime.Broker) realtime.PubSub {
 	return realtime.NewLocalPubSub(broker)
 }
 
-func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager) *echo.Echo {
+func setupEcho(ctx context.Context, h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
 	e.HTTPErrorHandler = api.HTTPErrorHandler
@@ -400,7 +400,11 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 	e.Use(middleware.BodyLimitWithConfig(middleware.BodyLimitConfig{
 		Limit: cfg.BodyLimit,
 		Skipper: func(c echo.Context) bool {
-			return c.Request().Method == http.MethodPut && c.Request().URL.Path == "/api/files/uploads"
+			if c.Request().Method != http.MethodPut {
+				return false
+			}
+			path := c.Request().URL.Path
+			return path == "/api/files/uploads" || strings.HasPrefix(path, "/api/files/uploads/multipart/")
 		},
 	}))
 	e.Use(api.PrometheusMiddleware()) // 📊 Stats
@@ -446,6 +450,9 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 	twoFactorHandler := api.NewTwoFactorHandler(twoFactorService, authService)
 	realtimeHandler := api.NewRealtimeHandler(h.Broker)
 	fileHandler := api.NewFileHandler(h.DB, h.Storage, cfg.StoragePath, cfg.JWTSecret)
+	if cfg.StorageMaintenanceIntervalMinutes > 0 {
+		go fileHandler.StartMaintenanceLoop(ctx, time.Duration(cfg.StorageMaintenanceIntervalMinutes)*time.Minute)
+	}
 	functionsHandler := api.NewFunctionsHandler(h.DB, "./functions")
 	webhookHandler := api.NewWebhookHandler(h.DB)
 	cronHandler := api.NewCronHandler(h.DB, cronMgr)
@@ -598,6 +605,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.POST("/project/security/notifications", h.AddNotificationRecipient, authRequired, adminOnly)
 		apiGroup.DELETE("/project/security/notifications/:id", h.DeleteNotificationRecipient, authRequired, adminOnly)
 		apiGroup.GET("/project/observability/slo", h.GetSLOStatus, authRequired, adminOnly)
+		apiGroup.GET("/project/observability/storage", h.GetStorageObservability, authRequired, adminOnly)
 		apiGroup.GET("/project/security/alert-routing", h.GetAlertRouting, authRequired, adminOnly)
 		apiGroup.POST("/project/security/alert-routing", h.UpdateAlertRouting, authRequired, adminOnly)
 		apiGroup.GET("/project/security/rls/coverage", h.GetRLSPolicyCoverage, authRequired, adminOnly)

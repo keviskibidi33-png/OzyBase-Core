@@ -16,7 +16,12 @@ param(
   [int]$LargeFileSizeMB = 96,
   [int]$BucketLimitMB = 100,
   [int]$BucketQuotaMB = 220,
-  [int]$LifecycleRetentionDays = 1
+  [int]$LifecycleRetentionDays = 1,
+  [string]$StorageWorkspaceRoot = "",
+  [int]$StorageMaintenanceIntervalMinutes = 60,
+  [switch]$RestartDuringMultipart,
+  [switch]$ValidateAutoLifecycle,
+  [switch]$SkipBenchmark
 )
 
 $ErrorActionPreference = "Stop"
@@ -83,6 +88,34 @@ function Wait-Check {
   throw "Timeout waiting for $Label"
 }
 
+function Start-ValidationAPI {
+  param(
+    [string]$BinaryPath,
+    [string]$WorkingDirectory,
+    [string]$StdOutPath,
+    [string]$StdErrPath
+  )
+
+  return Start-Process -FilePath $BinaryPath -WorkingDirectory $WorkingDirectory -PassThru -RedirectStandardOutput $StdOutPath -RedirectStandardError $StdErrPath
+}
+
+function Assert-ExternalAPIReady {
+  param(
+    [int]$ApiPort,
+    [System.Diagnostics.Process]$Process,
+    [string]$ApiLogPath
+  )
+
+  Wait-HttpHealthy -Url "http://127.0.0.1:$ApiPort/api/health" -Process $Process
+  $apiStdout = if (Test-Path $ApiLogPath) { Get-Content $ApiLogPath -Raw } else { "" }
+  if ($apiStdout -notmatch "Using S3-compatible storage") {
+    throw "API did not report S3-compatible storage startup"
+  }
+  if ($apiStdout -notmatch "Using Redis PubSub") {
+    throw "API did not report Redis PubSub startup"
+  }
+}
+
 function Ensure-DockerReady {
   $dockerDesktop = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
   try {
@@ -125,7 +158,8 @@ function Remove-ContainerSafe {
 function Start-CurlProcess {
   param(
     [string[]]$Arguments,
-    [string]$Label
+    [string]$Label,
+    [string[]]$ExpectedStatuses = @()
   )
 
   $safeLabel = ($Label -replace '[^A-Za-z0-9_.-]', '_')
@@ -140,10 +174,11 @@ function Start-CurlProcess {
   }) -join ' '
   $process = Start-Process -FilePath "curl.exe" -ArgumentList $argumentLine -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
   return [pscustomobject]@{
-    Label   = $Label
-    Process = $process
-    StdOut  = $stdout
-    StdErr  = $stderr
+    Label            = $Label
+    Process          = $process
+    StdOut           = $stdout
+    StdErr           = $stderr
+    ExpectedStatuses = $ExpectedStatuses
   }
 }
 
@@ -182,6 +217,11 @@ function Wait-CurlProcesses {
     $stderr = if (Test-Path $job.StdErr) { Get-Content $job.StdErr -Raw } else { "" }
     if (-not [string]::IsNullOrWhiteSpace($stderr)) {
       throw "curl job '$($job.Label)' failed: $stderr"
+    }
+    $status = if ($null -ne $stdout) { [string]$stdout } else { "" }
+    $status = $status.Trim()
+    if ($job.ExpectedStatuses.Count -gt 0 -and $status -notin $job.ExpectedStatuses) {
+      throw "curl job '$($job.Label)' returned unexpected HTTP status '$status'"
     }
     if ($stdout -match '"error"\s*:') {
       throw "curl job '$($job.Label)' returned API error payload: $stdout"
@@ -291,13 +331,15 @@ function Start-StreamingUploadJob {
 
   return Start-CurlProcess -Label $Label -Arguments @(
     "-sS",
+    "-o", "NUL",
+    "-w", "%{http_code}",
     "-X", "PUT",
     $UploadUrl,
     "-H", "Authorization: Bearer $BearerToken",
     "-H", "X-Workspace-Id: $WorkspaceId",
     "-H", "X-Ozy-Upload-Token: $UploadToken",
     "--data-binary", "@$FilePath"
-  )
+  ) -ExpectedStatuses @("200", "201")
 }
 
 function Upload-MultipartFile {
@@ -327,13 +369,16 @@ function Upload-MultipartFile {
         } else {
           [System.IO.File]::WriteAllBytes($chunkPath, $buffer[0..($bytesRead - 1)])
         }
-        & curl.exe -sS -X PUT "http://127.0.0.1:$ApiPort/api/files/uploads/multipart/$SessionId/parts/$partNumber" `
+        $status = (& curl.exe -sS -o NUL -w "%{http_code}" -X PUT "http://127.0.0.1:$ApiPort/api/files/uploads/multipart/$SessionId/parts/$partNumber" `
           -H "Authorization: Bearer $Token" `
           -H "X-Workspace-Id: $WorkspaceId" `
           -H "Content-Type: application/octet-stream" `
-          --data-binary "@$chunkPath" *> $null
+          --data-binary "@$chunkPath")
         if ($LASTEXITCODE -ne 0) {
           throw "multipart upload failed for part $partNumber"
+        }
+        if ([string]$status -notin @("200", "201")) {
+          throw "multipart upload returned HTTP status '$status' for part $partNumber"
         }
       } finally {
         if (Test-Path $chunkPath) {
@@ -348,6 +393,7 @@ function Upload-MultipartFile {
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$storageWorkspace = if ([string]::IsNullOrWhiteSpace($StorageWorkspaceRoot)) { $env:TEMP } else { $StorageWorkspaceRoot }
 $network = "ozy-validate-net"
 $pgName = "ozy-validate-pg"
 $redisName = "ozy-validate-redis"
@@ -359,7 +405,7 @@ $dbName = "ozybase"
 $apiLog = Join-Path $env:TEMP "ozybase-external-api.out.log"
 $apiErr = Join-Path $env:TEMP "ozybase-external-api.err.log"
 $apiBinary = Join-Path $env:TEMP "ozybase-external-validation.exe"
-$storageDir = Join-Path $env:TEMP "ozybase-external-storage-test"
+$storageDir = Join-Path $storageWorkspace "ozybase-external-storage-test"
 $apiProc = $null
 $rng = $null
 
@@ -429,17 +475,10 @@ try {
   $env:REDIS_ADDR = "127.0.0.1:$RedisPort"
   $env:REDIS_PASSWORD = ""
   $env:REDIS_DB = "0"
+  $env:OZY_STORAGE_MAINTENANCE_INTERVAL_MINUTES = [string]$StorageMaintenanceIntervalMinutes
 
-  $apiProc = Start-Process -FilePath $apiBinary -WorkingDirectory $repoRoot -PassThru -RedirectStandardOutput $apiLog -RedirectStandardError $apiErr
-  Wait-HttpHealthy -Url "http://127.0.0.1:$ApiPort/api/health" -Process $apiProc
-
-  $apiStdout = if (Test-Path $apiLog) { Get-Content $apiLog -Raw } else { "" }
-  if ($apiStdout -notmatch "Using S3-compatible storage") {
-    throw "API did not report S3-compatible storage startup"
-  }
-  if ($apiStdout -notmatch "Using Redis PubSub") {
-    throw "API did not report Redis PubSub startup"
-  }
+  $apiProc = Start-ValidationAPI -BinaryPath $apiBinary -WorkingDirectory $repoRoot -StdOutPath $apiLog -StdErrPath $apiErr
+  Assert-ExternalAPIReady -ApiPort $ApiPort -Process $apiProc -ApiLogPath $apiLog
 
   $env:BASE_URL = "http://127.0.0.1:$ApiPort"
   & "C:/Program Files/Git/bin/bash.exe" "$repoRoot/scripts/smoke_api.sh"
@@ -464,6 +503,8 @@ try {
     Write-RandomFile -Path $path -SizeBytes $largeBytesLength -Random $rng
     $largePaths += $path
   }
+  $mismatchPath = Join-Path $storageDir "declared-size-mismatch-source.bin"
+  Write-RandomFile -Path $mismatchPath -SizeBytes (2MB) -Random $rng
 
   $loginResponse = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ApiPort/api/auth/login" -ContentType "application/json" -Body (@{ email = $AdminEmail; password = $AdminPassword } | ConvertTo-Json)
   $token = [string]$loginResponse.token
@@ -520,13 +561,16 @@ try {
       $firstChunkStream.Dispose()
     }
     try {
-      & curl.exe -sS -X PUT "http://127.0.0.1:$ApiPort/api/files/uploads/multipart/$($multipartSession.session_id)/parts/1" `
+      $firstPartStatus = (& curl.exe -sS -o NUL -w "%{http_code}" -X PUT "http://127.0.0.1:$ApiPort/api/files/uploads/multipart/$($multipartSession.session_id)/parts/1" `
         -H "Authorization: Bearer $token" `
         -H "X-Workspace-Id: $workspaceId" `
         -H "Content-Type: application/octet-stream" `
-        --data-binary "@$firstChunkPath" *> $null
+        --data-binary "@$firstChunkPath")
       if ($LASTEXITCODE -ne 0) {
         throw "failed to upload the first multipart chunk"
+      }
+      if ([string]$firstPartStatus -notin @("200", "201")) {
+        throw "failed to upload the first multipart chunk, HTTP status '$firstPartStatus'"
       }
     } finally {
       if (Test-Path $firstChunkPath) {
@@ -539,8 +583,22 @@ try {
       throw "multipart status did not report the uploaded first chunk"
     }
 
+    if ($RestartDuringMultipart) {
+      Stop-ProcessSafe -Process $apiProc
+      Start-Sleep -Seconds 2
+      $apiProc = Start-ValidationAPI -BinaryPath $apiBinary -WorkingDirectory $repoRoot -StdOutPath $apiLog -StdErrPath $apiErr
+      Assert-ExternalAPIReady -ApiPort $ApiPort -Process $apiProc -ApiLogPath $apiLog
+      $multipartStatusAfterRestart = Get-MultipartUploadSession -ApiPort $ApiPort -Token $token -WorkspaceId $workspaceId -SessionId $multipartSession.session_id
+      if ($multipartStatusAfterRestart.uploaded_parts.Count -lt 1) {
+        throw "multipart upload session did not preserve uploaded parts after API restart"
+      }
+    }
+
     Upload-MultipartFile -ApiPort $ApiPort -Token $token -WorkspaceId $workspaceId -SessionId $multipartSession.session_id -FilePath $multipartLargePath -ChunkSizeBytes $multipartSession.chunk_size_bytes -StartPart 2
-    Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ApiPort/api/files/uploads/multipart/$($multipartSession.session_id)/complete" -Headers ($headers + @{ "Content-Type" = "application/json" }) -Body "{}" | Out-Null
+    $completeResponse = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ApiPort/api/files/uploads/multipart/$($multipartSession.session_id)/complete" -Headers ($headers + @{ "Content-Type" = "application/json" }) -Body "{}"
+    if ($null -eq $completeResponse -or [string]::IsNullOrWhiteSpace([string]$completeResponse.name)) {
+      throw "multipart completion did not return the stored object payload"
+    }
   }
 
   $largeUploadJobs = @()
@@ -597,22 +655,15 @@ try {
   }
 
   $mismatchSession = New-StorageUploadSession -ApiPort $ApiPort -Token $token -WorkspaceId $workspaceId -BucketName $bucketName -FileName "declared-size-mismatch.bin" -FileSize (1MB) -ContentType "application/octet-stream"
-  $mismatchStdout = Join-Path $storageDir "mismatch.stdout.log"
-  $mismatchStderr = Join-Path $storageDir "mismatch.stderr.log"
-  $mismatchArguments = @(
-    "-sS",
-    "-o", "NUL",
-    "-w", "%{http_code}",
-    "-X", "PUT",
-    "http://127.0.0.1:$ApiPort$($mismatchSession.upload_url)",
-    "-H", "Authorization: Bearer $token",
-    "-H", "X-Workspace-Id: $workspaceId",
-    "-H", "X-Ozy-Upload-Token: $($mismatchSession.upload_token)",
-    "--data-binary", "@$($largePaths[0])"
-  )
-  $mismatchProcess = Start-CurlProcess -Label "ozybase-upload-mismatch" -Arguments $mismatchArguments
-  $mismatchProcess.Process.WaitForExit()
-  $mismatchStatus = if (Test-Path $mismatchProcess.StdOut) { (Get-Content $mismatchProcess.StdOut -Raw).Trim() } else { "" }
+  $mismatchStatus = (& curl.exe -sS -o NUL -w "%{http_code}" -X PUT "http://127.0.0.1:$ApiPort$($mismatchSession.upload_url)" `
+    -H "Authorization: Bearer $token" `
+    -H "X-Workspace-Id: $workspaceId" `
+    -H "X-Ozy-Upload-Token: $($mismatchSession.upload_token)" `
+    --data-binary "@$mismatchPath")
+  if ($LASTEXITCODE -ne 0) {
+    throw "upload size mismatch check failed"
+  }
+  $mismatchStatus = ([string]$mismatchStatus).Trim()
   if ($mismatchStatus -ne "400") {
     throw "expected upload size mismatch to return 400, got '$mismatchStatus'"
   }
@@ -629,9 +680,19 @@ SET created_at = NOW() - INTERVAL '2 days'
 WHERE bucket_id IN (SELECT id FROM _v_buckets WHERE name = '$bucketName')
   AND name = '$lifecycleName'
 "@ | Out-Null
-  $lifecycleSweep = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ApiPort/api/files/buckets/$bucketName/lifecycle/sweep" -Headers ($headers + @{ "Content-Type" = "application/json" }) -Body "{}"
-  if ([int]$lifecycleSweep.deleted_objects -lt 1) {
-    throw "expected lifecycle sweep to delete at least one object"
+  if ($ValidateAutoLifecycle) {
+    Wait-Check -Label "automatic lifecycle sweep" -Attempts 45 -DelaySeconds 2 -Check {
+      $remaining = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:$ApiPort/api/files?bucket=$bucketName" -Headers $headers
+      $matches = @($remaining | Where-Object { $_.name -eq $lifecycleName })
+      if ($matches.Count -gt 0) {
+        throw "lifecycle candidate still present"
+      }
+    }
+  } else {
+    $lifecycleSweep = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ApiPort/api/files/buckets/$bucketName/lifecycle/sweep" -Headers ($headers + @{ "Content-Type" = "application/json" }) -Body "{}"
+    if ([int]$lifecycleSweep.deleted_objects -lt 1) {
+      throw "expected lifecycle sweep to delete at least one object"
+    }
   }
 
   $files = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:$ApiPort/api/files?bucket=$bucketName" -Headers $headers
@@ -650,10 +711,11 @@ WHERE bucket_id IN (SELECT id FROM _v_buckets WHERE name = '$bucketName')
     $downloadJobs += Start-CurlProcess -Label ("ozybase-download-" + $entry.name) -Arguments @(
       "-sS",
       "-o", $target,
+      "-w", "%{http_code}",
       "-H", "Authorization: Bearer $token",
       "-H", "X-Workspace-Id: $workspaceId",
       "http://127.0.0.1:$ApiPort$($entry.path)"
-    )
+    ) -ExpectedStatuses @("200")
   }
   Wait-CurlProcesses -Jobs $downloadJobs
 
@@ -679,7 +741,9 @@ WHERE bucket_id IN (SELECT id FROM _v_buckets WHERE name = '$bucketName')
   }
   Write-Host "==> Redis realtime status passed"
 
-  go run ./cmd/ozybase-bench -base-url "http://127.0.0.1:$ApiPort" -email $AdminEmail -password $AdminPassword -rows $Rows -iterations $Iterations -workers $Workers
+  if (-not $SkipBenchmark) {
+    go run ./cmd/ozybase-bench -base-url "http://127.0.0.1:$ApiPort" -email $AdminEmail -password $AdminPassword -rows $Rows -iterations $Iterations -workers $Workers
+  }
 }
 finally {
   if ($null -ne $rng) {

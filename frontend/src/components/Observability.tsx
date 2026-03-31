@@ -16,6 +16,7 @@ const Observability = ({ onViewSelect }: any) => {
     const [logs, setLogs] = useState<any[]>([]);
     const [sloStatus, setSloStatus] = useState<any>(null);
     const [alertRouting, setAlertRouting] = useState<any>(null);
+    const [storageStatus, setStorageStatus] = useState<any>(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -30,10 +31,11 @@ const Observability = ({ onViewSelect }: any) => {
 
     const fetchInfo = async () => {
         try {
-            const [infoRes, sloRes, routingRes] = await Promise.all([
+            const [infoRes, sloRes, routingRes, storageRes] = await Promise.all([
                 fetchWithAuth('/api/project/info'),
                 fetchWithAuth('/api/project/observability/slo'),
                 fetchWithAuth('/api/project/security/alert-routing'),
+                fetchWithAuth('/api/project/observability/storage'),
             ]);
 
             if (infoRes.ok) {
@@ -47,6 +49,10 @@ const Observability = ({ onViewSelect }: any) => {
             if (routingRes.ok) {
                 const data = await routingRes.json();
                 setAlertRouting(data);
+            }
+            if (storageRes.ok) {
+                const data = await storageRes.json();
+                setStorageStatus(data);
             }
         } catch (error) {
             console.error('Failed to fetch info:', error);
@@ -80,6 +86,13 @@ const Observability = ({ onViewSelect }: any) => {
     const rules = Array.isArray(alertRouting?.rules) ? alertRouting.rules : [];
     const routes = Array.isArray(alertRouting?.routes) ? alertRouting.routes : [];
     const warnings = Array.isArray(alertRouting?.warnings) ? alertRouting.warnings : [];
+    const storageSummary = storageStatus?.summary || null;
+    const storageBuckets = Array.isArray(storageStatus?.buckets) ? storageStatus.buckets : [];
+    const storageAlerts = Array.isArray(storageStatus?.alerts) ? storageStatus.alerts : [];
+    const storageHistory = Array.isArray(storageStatus?.history) ? storageStatus.history : [];
+    const maxStorageHistoryBytes = storageHistory.length > 0
+        ? Math.max(...storageHistory.map((point: any) => Number(point.created_bytes || 0)), 1)
+        : 1;
 
     return (
         <div className="flex flex-col h-full bg-[#111111] animate-in fade-in duration-500 overflow-y-auto custom-scrollbar">
@@ -137,17 +150,78 @@ const Observability = ({ onViewSelect }: any) => {
 
                 <div className="bg-[#171717] border border-[#2e2e2e] rounded-2xl p-6 h-80 flex flex-col">
                     <div className="flex items-center justify-between mb-8">
-                        <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white">Storage Utilization</h4>
-                        <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
+                        <div>
+                            <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white">Storage Pressure</h4>
+                            <p className="text-[9px] text-zinc-600 uppercase font-black tracking-widest mt-0.5">Quota, lifecycle and multipart activity</p>
+                        </div>
+                        <div className="px-2 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-[9px] font-black uppercase tracking-widest text-zinc-400">
+                            {storageSummary?.provider || 'local'}
+                        </div>
                     </div>
-                    <div className="flex-1 flex items-center justify-center relative">
-                        <div className="w-40 h-40 rounded-full border-[8px] border-zinc-900 flex items-center justify-center">
-                            <div className="text-center">
-                                <p className="text-2xl font-black text-white italic tracking-tighter">{info?.db_size || '...'}</p>
-                                <p className="text-[8px] font-black text-zinc-600 uppercase tracking-widest leading-none">Database Size</p>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
+                            <p className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Stored Data</p>
+                            <p className="mt-2 text-2xl font-black italic tracking-tighter text-white">{storageSummary?.total_size_human || '0 B'}</p>
+                            <p className="mt-1 text-[10px] text-zinc-500">{storageSummary?.object_count || 0} objects across {storageSummary?.bucket_count || 0} buckets</p>
+                        </div>
+                        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
+                            <p className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Recent 24h</p>
+                            <p className="mt-2 text-2xl font-black italic tracking-tighter text-white">{storageSummary?.recent_upload_bytes_24h_human || '0 B'}</p>
+                            <p className="mt-1 text-[10px] text-zinc-500">{storageSummary?.recent_uploads_24h || 0} uploads in the last day</p>
+                        </div>
+                    </div>
+                    <div className="mt-4 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+                        <div className="flex items-center justify-between text-[9px] font-black uppercase tracking-widest text-zinc-500">
+                            <span>Tracked Quota Usage</span>
+                            <span>{storageSummary?.quota_usage_pct?.toFixed?.(2) || '0.00'}%</span>
+                        </div>
+                        <div className="mt-3 h-2 overflow-hidden rounded-full bg-zinc-900">
+                            <div
+                                className={`h-full rounded-full ${
+                                    (storageSummary?.quota_usage_pct || 0) >= 95 ? 'bg-red-500' :
+                                        (storageSummary?.quota_usage_pct || 0) >= 80 ? 'bg-amber-500' :
+                                            'bg-primary'
+                                }`}
+                                style={{ width: `${Math.min(100, Number(storageSummary?.quota_usage_pct || 0))}%` }}
+                            />
+                        </div>
+                        <div className="mt-3 flex items-center justify-between text-[10px] text-zinc-500">
+                            <span>{storageSummary?.quota_enabled_buckets || 0} quota-enabled buckets</span>
+                            <span>{storageSummary?.total_quota_human || '0 B'} tracked</span>
+                        </div>
+                    </div>
+                    <div className="mt-4 flex-1 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+                        <div className="flex items-center justify-between">
+                            <p className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Upload History 24h</p>
+                            <p className="text-[9px] font-black uppercase tracking-widest text-zinc-700">Maintenance {storageSummary?.maintenance_interval_minutes || 0}m</p>
+                        </div>
+                        <div className="mt-4 flex h-24 items-end gap-1">
+                            {storageHistory.slice(-12).map((point: any, index: number) => (
+                                <div key={index} className="group relative flex-1 rounded-t-sm bg-primary/30">
+                                    <div
+                                        className="w-full rounded-t-sm bg-primary transition-all"
+                                        style={{ height: `${Math.max(6, (Number(point.created_bytes || 0) / maxStorageHistoryBytes) * 100)}%` }}
+                                    />
+                                    <div className="absolute -top-10 left-1/2 z-10 hidden -translate-x-1/2 rounded-lg border border-zinc-800 bg-black px-2 py-1 text-[8px] font-black uppercase tracking-widest text-zinc-300 group-hover:block">
+                                        {point.created_bytes_human}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="mt-4 grid grid-cols-3 gap-2 text-[10px] text-zinc-500">
+                            <div className="rounded-xl border border-zinc-800 bg-[#111111] px-3 py-2">
+                                <p className="font-black uppercase tracking-widest text-zinc-600">Open Multipart</p>
+                                <p className="mt-1 text-sm font-black text-white">{storageSummary?.open_multipart_sessions || 0}</p>
+                            </div>
+                            <div className="rounded-xl border border-zinc-800 bg-[#111111] px-3 py-2">
+                                <p className="font-black uppercase tracking-widest text-zinc-600">Expired Sessions</p>
+                                <p className="mt-1 text-sm font-black text-white">{storageSummary?.expired_upload_sessions || 0}</p>
+                            </div>
+                            <div className="rounded-xl border border-zinc-800 bg-[#111111] px-3 py-2">
+                                <p className="font-black uppercase tracking-widest text-zinc-600">Reclaimable</p>
+                                <p className="mt-1 text-sm font-black text-white">{storageSummary?.reclaimable_human || '0 B'}</p>
                             </div>
                         </div>
-                        <div className="absolute inset-0 w-40 h-40 m-auto rounded-full border-[8px] border-transparent border-t-primary border-l-primary rotate-[120deg]" />
                     </div>
                 </div>
             </div>
@@ -236,6 +310,86 @@ const Observability = ({ onViewSelect }: any) => {
                 </div>
             </div>
 
+            <div className="px-8 pb-8 grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div className="bg-[#171717] border border-[#2e2e2e] rounded-2xl p-6">
+                    <div className="flex items-center justify-between mb-6">
+                        <div>
+                            <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white">Top Buckets</h4>
+                            <p className="text-[9px] text-zinc-600 uppercase font-black tracking-widest mt-0.5">Quota visibility by namespace</p>
+                        </div>
+                        <span className="text-[9px] font-black uppercase tracking-widest text-zinc-700">{storageBuckets.length} loaded</span>
+                    </div>
+                    <div className="space-y-3">
+                        {storageBuckets.slice(0, 5).map((bucket: any) => (
+                            <div key={bucket.name} className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-white">{bucket.name}</p>
+                                        <p className="mt-1 text-[10px] text-zinc-500">{bucket.object_count} objects • {bucket.total_size_human}</p>
+                                    </div>
+                                    <div className={`rounded-lg px-2 py-1 text-[9px] font-black uppercase tracking-widest ${
+                                        bucket.usage_ratio_pct >= 95 ? 'bg-red-500/10 text-red-500' :
+                                            bucket.usage_ratio_pct >= 80 ? 'bg-amber-500/10 text-amber-500' :
+                                                'bg-zinc-800 text-zinc-400'
+                                    }`}>
+                                        {bucket.max_total_size_bytes > 0 ? `${bucket.usage_ratio_pct.toFixed(2)}%` : 'Open'}
+                                    </div>
+                                </div>
+                                <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#111111]">
+                                    <div
+                                        className={`h-full rounded-full ${
+                                            bucket.usage_ratio_pct >= 95 ? 'bg-red-500' :
+                                                bucket.usage_ratio_pct >= 80 ? 'bg-amber-500' :
+                                                    'bg-primary'
+                                        }`}
+                                        style={{ width: `${Math.min(100, Number(bucket.usage_ratio_pct || 0))}%` }}
+                                    />
+                                </div>
+                                <div className="mt-3 flex items-center justify-between text-[10px] text-zinc-500">
+                                    <span>Quota {bucket.max_total_size_human}</span>
+                                    <span>Lifecycle {bucket.lifecycle_delete_after_days > 0 ? `${bucket.lifecycle_delete_after_days}d` : 'off'}</span>
+                                </div>
+                            </div>
+                        ))}
+                        {storageBuckets.length === 0 ? (
+                            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 text-[10px] font-black uppercase tracking-widest text-zinc-600">
+                                No storage buckets detected yet
+                            </div>
+                        ) : null}
+                    </div>
+                </div>
+
+                <div className="bg-[#171717] border border-[#2e2e2e] rounded-2xl p-6">
+                    <div className="flex items-center justify-between mb-6">
+                        <div>
+                            <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white">Storage Alerts</h4>
+                            <p className="text-[9px] text-zinc-600 uppercase font-black tracking-widest mt-0.5">Actionable signals before storage becomes a support incident</p>
+                        </div>
+                        <AlertTriangle size={16} className="text-zinc-500" />
+                    </div>
+                    <div className="space-y-3">
+                        {storageAlerts.map((alert: any, index: number) => (
+                            <div key={`${alert.scope}-${index}`} className={`rounded-2xl border p-4 ${
+                                alert.severity === 'critical' ? 'border-red-500/30 bg-red-500/10' :
+                                    alert.severity === 'warning' ? 'border-amber-500/30 bg-amber-500/10' :
+                                        'border-zinc-800 bg-zinc-900/50'
+                            }`}>
+                                <div className="flex items-center justify-between gap-3">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-white">{alert.title}</p>
+                                    <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">{alert.scope}</span>
+                                </div>
+                                <p className="mt-2 text-[11px] leading-relaxed text-zinc-400">{alert.detail}</p>
+                            </div>
+                        ))}
+                        {storageAlerts.length === 0 ? (
+                            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 text-[10px] font-black uppercase tracking-widest text-zinc-600">
+                                No storage alerts. Buckets, multipart sessions and lifecycle look healthy.
+                            </div>
+                        ) : null}
+                    </div>
+                </div>
+            </div>
+
             {/* API Gateway Logs */}
             <div className="px-8 pb-12">
                 <div className="bg-[#111111] border border-[#2e2e2e] rounded-2xl overflow-hidden shadow-2xl">
@@ -295,4 +449,3 @@ const Observability = ({ onViewSelect }: any) => {
 };
 
 export default Observability;
-

@@ -94,6 +94,14 @@ test('storage self-host hardening: multipart upload + lifecycle sweep via UI', a
     expect(bucketRes.body?.max_total_size_bytes).toBe(90 * 1024 * 1024);
     expect(bucketRes.body?.lifecycle_delete_after_days).toBe(1);
 
+    await page.getByRole('button', { name: 'Observability', exact: true }).click();
+    await expect(page.getByText('Storage Pressure')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Top Buckets')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(bucketName, { exact: true }).first()).toBeVisible({ timeout: 15000 });
+    await page.getByRole('button', { name: 'Storage', exact: true }).click();
+    await expect(bucketButton).toBeVisible({ timeout: 15000 });
+    await bucketButton.click();
+
     const backdateRes = await runSQL(page, `
       UPDATE _v_storage_objects
       SET created_at = NOW() - INTERVAL '2 days'
