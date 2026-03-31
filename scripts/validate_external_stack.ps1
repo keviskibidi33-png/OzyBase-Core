@@ -14,7 +14,9 @@ param(
   [int]$SmallFileSizeKB = 256,
   [int]$LargeFiles = 2,
   [int]$LargeFileSizeMB = 96,
-  [int]$BucketLimitMB = 100
+  [int]$BucketLimitMB = 100,
+  [int]$BucketQuotaMB = 220,
+  [int]$LifecycleRetentionDays = 1
 )
 
 $ErrorActionPreference = "Stop"
@@ -145,6 +147,29 @@ function Start-CurlProcess {
   }
 }
 
+function Write-RandomFile {
+  param(
+    [string]$Path,
+    [long]$SizeBytes,
+    [System.Security.Cryptography.RandomNumberGenerator]$Random,
+    [int]$ChunkSizeBytes = 8MB
+  )
+
+  $stream = [System.IO.File]::Create($Path)
+  try {
+    $remaining = $SizeBytes
+    $buffer = New-Object byte[]($ChunkSizeBytes)
+    while ($remaining -gt 0) {
+      $writeCount = [int][Math]::Min([long]$buffer.Length, $remaining)
+      $Random.GetBytes($buffer)
+      $stream.Write($buffer, 0, $writeCount)
+      $remaining -= $writeCount
+    }
+  } finally {
+    $stream.Dispose()
+  }
+}
+
 function Wait-CurlProcesses {
   param([object[]]$Jobs)
 
@@ -162,6 +187,15 @@ function Wait-CurlProcesses {
       throw "curl job '$($job.Label)' returned API error payload: $stdout"
     }
   }
+}
+
+function Get-StatusCodeFromErrorRecord {
+  param($Record)
+
+  if ($null -ne $Record.Exception -and $null -ne $Record.Exception.Response) {
+    return [int]$Record.Exception.Response.StatusCode.value__
+  }
+  return $null
 }
 
 function New-StorageUploadSession {
@@ -190,6 +224,61 @@ function New-StorageUploadSession {
   return Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ApiPort/api/files/uploads/session" -Headers $headers -Body $body
 }
 
+function New-MultipartUploadSession {
+  param(
+    [int]$ApiPort,
+    [string]$Token,
+    [string]$WorkspaceId,
+    [string]$BucketName,
+    [string]$FileName,
+    [long]$FileSize,
+    [string]$ContentType
+  )
+
+  $headers = @{
+    Authorization    = "Bearer $Token"
+    "X-Workspace-Id" = $WorkspaceId
+    "Content-Type"   = "application/json"
+  }
+  $body = @{
+    bucket       = $BucketName
+    filename     = $FileName
+    size         = $FileSize
+    content_type = $ContentType
+  } | ConvertTo-Json
+
+  return Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ApiPort/api/files/uploads/multipart/session" -Headers $headers -Body $body
+}
+
+function Get-MultipartUploadSession {
+  param(
+    [int]$ApiPort,
+    [string]$Token,
+    [string]$WorkspaceId,
+    [string]$SessionId
+  )
+
+  return Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:$ApiPort/api/files/uploads/multipart/$SessionId" -Headers @{
+    Authorization    = "Bearer $Token"
+    "X-Workspace-Id" = $WorkspaceId
+  }
+}
+
+function Invoke-SqlJSON {
+  param(
+    [int]$ApiPort,
+    [string]$Token,
+    [string]$WorkspaceId,
+    [string]$Query
+  )
+
+  return Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ApiPort/api/sql" -Headers @{
+    Authorization    = "Bearer $Token"
+    "X-Workspace-Id" = $WorkspaceId
+    "Content-Type"   = "application/json"
+  } -Body (@{ query = $Query } | ConvertTo-Json)
+}
+
 function Start-StreamingUploadJob {
   param(
     [string]$Label,
@@ -209,6 +298,53 @@ function Start-StreamingUploadJob {
     "-H", "X-Ozy-Upload-Token: $UploadToken",
     "--data-binary", "@$FilePath"
   )
+}
+
+function Upload-MultipartFile {
+  param(
+    [int]$ApiPort,
+    [string]$Token,
+    [string]$WorkspaceId,
+    [string]$SessionId,
+    [string]$FilePath,
+    [int]$ChunkSizeBytes,
+    [int]$StartPart = 1
+  )
+
+  $stream = [System.IO.File]::OpenRead($FilePath)
+  try {
+    if ($StartPart -gt 1) {
+      $offset = [int64]($StartPart - 1) * [int64]$ChunkSizeBytes
+      $null = $stream.Seek($offset, [System.IO.SeekOrigin]::Begin)
+    }
+    $partNumber = $StartPart
+    $buffer = New-Object byte[]($ChunkSizeBytes)
+    while (($bytesRead = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+      $chunkPath = Join-Path $env:TEMP ("ozy-multipart-$SessionId-part-$partNumber.bin")
+      try {
+        if ($bytesRead -eq $buffer.Length) {
+          [System.IO.File]::WriteAllBytes($chunkPath, $buffer)
+        } else {
+          [System.IO.File]::WriteAllBytes($chunkPath, $buffer[0..($bytesRead - 1)])
+        }
+        & curl.exe -sS -X PUT "http://127.0.0.1:$ApiPort/api/files/uploads/multipart/$SessionId/parts/$partNumber" `
+          -H "Authorization: Bearer $Token" `
+          -H "X-Workspace-Id: $WorkspaceId" `
+          -H "Content-Type: application/octet-stream" `
+          --data-binary "@$chunkPath" *> $null
+        if ($LASTEXITCODE -ne 0) {
+          throw "multipart upload failed for part $partNumber"
+        }
+      } finally {
+        if (Test-Path $chunkPath) {
+          Remove-Item -Force $chunkPath -ErrorAction SilentlyContinue
+        }
+      }
+      $partNumber++
+    }
+  } finally {
+    $stream.Dispose()
+  }
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -318,18 +454,14 @@ try {
   $smallBytesLength = $SmallFileSizeKB * 1024
   for ($i = 1; $i -le $SmallFiles; $i++) {
     $path = Join-Path $storageDir ("doc-{0:00}.bin" -f $i)
-    $bytes = New-Object byte[]($smallBytesLength)
-    $rng.GetBytes($bytes)
-    [System.IO.File]::WriteAllBytes($path, $bytes)
+    Write-RandomFile -Path $path -SizeBytes $smallBytesLength -Random $rng
     $smallPaths += $path
   }
   $largePaths = @()
   $largeBytesLength = $LargeFileSizeMB * 1024 * 1024
   for ($i = 1; $i -le $LargeFiles; $i++) {
     $path = Join-Path $storageDir ("large-doc-{0:00}.bin" -f $i)
-    $bytes = New-Object byte[]($largeBytesLength)
-    $rng.GetBytes($bytes)
-    [System.IO.File]::WriteAllBytes($path, $bytes)
+    Write-RandomFile -Path $path -SizeBytes $largeBytesLength -Random $rng
     $largePaths += $path
   }
 
@@ -344,7 +476,15 @@ try {
 
   $bucketName = "s3mass$((Get-Date).ToString('HHmmss'))"
   $bucketLimitBytes = $BucketLimitMB * 1024 * 1024
-  $bucketBody = @{ name = $bucketName; public = $false; rls_enabled = $false; max_file_size_bytes = $bucketLimitBytes } | ConvertTo-Json
+  $bucketQuotaBytes = $BucketQuotaMB * 1024 * 1024
+  $bucketBody = @{
+    name                        = $bucketName
+    public                      = $false
+    rls_enabled                 = $false
+    max_file_size_bytes         = $bucketLimitBytes
+    max_total_size_bytes        = $bucketQuotaBytes
+    lifecycle_delete_after_days = $LifecycleRetentionDays
+  } | ConvertTo-Json
   Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ApiPort/api/files/buckets" -Headers ($headers + @{ "Content-Type" = "application/json" }) -Body $bucketBody | Out-Null
 
   foreach ($filePath in $smallPaths) {
@@ -357,8 +497,54 @@ try {
       throw "upload failed for $filePath"
     }
   }
+
+  $multipartLargePath = if ($largePaths.Count -gt 0) { $largePaths[0] } else { $null }
+  if ($null -ne $multipartLargePath) {
+    $multipartFileName = [IO.Path]::GetFileName($multipartLargePath)
+    $multipartFileSize = (Get-Item $multipartLargePath).Length
+    $multipartSession = New-MultipartUploadSession -ApiPort $ApiPort -Token $token -WorkspaceId $workspaceId -BucketName $bucketName -FileName $multipartFileName -FileSize $multipartFileSize -ContentType "application/octet-stream"
+    $firstChunkPath = Join-Path $storageDir "multipart-first-chunk.bin"
+    $firstChunkBytes = New-Object byte[]($multipartSession.chunk_size_bytes)
+    $firstChunkStream = [System.IO.File]::OpenRead($multipartLargePath)
+    try {
+      $bytesRead = $firstChunkStream.Read($firstChunkBytes, 0, $firstChunkBytes.Length)
+      if ($bytesRead -lt 1) {
+        throw "failed to read the first multipart chunk"
+      }
+      if ($bytesRead -eq $firstChunkBytes.Length) {
+        [System.IO.File]::WriteAllBytes($firstChunkPath, $firstChunkBytes)
+      } else {
+        [System.IO.File]::WriteAllBytes($firstChunkPath, $firstChunkBytes[0..($bytesRead - 1)])
+      }
+    } finally {
+      $firstChunkStream.Dispose()
+    }
+    try {
+      & curl.exe -sS -X PUT "http://127.0.0.1:$ApiPort/api/files/uploads/multipart/$($multipartSession.session_id)/parts/1" `
+        -H "Authorization: Bearer $token" `
+        -H "X-Workspace-Id: $workspaceId" `
+        -H "Content-Type: application/octet-stream" `
+        --data-binary "@$firstChunkPath" *> $null
+      if ($LASTEXITCODE -ne 0) {
+        throw "failed to upload the first multipart chunk"
+      }
+    } finally {
+      if (Test-Path $firstChunkPath) {
+        Remove-Item -Force $firstChunkPath -ErrorAction SilentlyContinue
+      }
+    }
+
+    $multipartStatus = Get-MultipartUploadSession -ApiPort $ApiPort -Token $token -WorkspaceId $workspaceId -SessionId $multipartSession.session_id
+    if ($multipartStatus.uploaded_parts.Count -lt 1) {
+      throw "multipart status did not report the uploaded first chunk"
+    }
+
+    Upload-MultipartFile -ApiPort $ApiPort -Token $token -WorkspaceId $workspaceId -SessionId $multipartSession.session_id -FilePath $multipartLargePath -ChunkSizeBytes $multipartSession.chunk_size_bytes -StartPart 2
+    Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ApiPort/api/files/uploads/multipart/$($multipartSession.session_id)/complete" -Headers ($headers + @{ "Content-Type" = "application/json" }) -Body "{}" | Out-Null
+  }
+
   $largeUploadJobs = @()
-  foreach ($filePath in $largePaths) {
+  foreach ($filePath in $largePaths | Select-Object -Skip 1) {
     $fileName = [IO.Path]::GetFileName($filePath)
     $fileSize = (Get-Item $filePath).Length
     $session = New-StorageUploadSession -ApiPort $ApiPort -Token $token -WorkspaceId $workspaceId -BucketName $bucketName -FileName $fileName -FileSize $fileSize -ContentType "application/octet-stream"
@@ -367,6 +553,8 @@ try {
     $largeUploadJobs += Start-StreamingUploadJob -Label $label -UploadUrl $uploadUrl -UploadToken $session.upload_token -FilePath $filePath -BearerToken $token -WorkspaceId $workspaceId
   }
   Wait-CurlProcesses -Jobs $largeUploadJobs
+
+  $uploadedBytes = [long](($smallPaths | ForEach-Object { (Get-Item $_).Length } | Measure-Object -Sum).Sum + ($largePaths | ForEach-Object { (Get-Item $_).Length } | Measure-Object -Sum).Sum)
 
   $oversizeBody = @{
     bucket       = $bucketName
@@ -378,9 +566,33 @@ try {
     Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ApiPort/api/files/uploads/session" -Headers ($headers + @{ "Content-Type" = "application/json" }) -Body $oversizeBody | Out-Null
     throw "oversize upload session should have been rejected"
   } catch {
-    $statusCode = $_.Exception.Response.StatusCode.value__
+    $statusCode = Get-StatusCodeFromErrorRecord -Record $_
+    if ($null -eq $statusCode) {
+      throw
+    }
     if ($statusCode -ne 413) {
       throw "expected oversize session rejection 413, got $statusCode"
+    }
+  }
+
+  $remainingQuotaBytes = [Math]::Max([long]0, $bucketQuotaBytes - $uploadedBytes)
+  $quotaProbeBytes = [Math]::Max([long](16MB), $remainingQuotaBytes + 1MB)
+  $quotaBody = @{
+    bucket       = $bucketName
+    filename     = "quota-check.bin"
+    size         = $quotaProbeBytes
+    content_type = "application/octet-stream"
+  } | ConvertTo-Json
+  try {
+    Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ApiPort/api/files/uploads/session" -Headers ($headers + @{ "Content-Type" = "application/json" }) -Body $quotaBody | Out-Null
+    throw "bucket quota should have been rejected"
+  } catch {
+    $statusCode = Get-StatusCodeFromErrorRecord -Record $_
+    if ($null -eq $statusCode) {
+      throw
+    }
+    if ($statusCode -ne 413) {
+      throw "expected bucket quota rejection 413, got $statusCode"
     }
   }
 
@@ -405,9 +617,26 @@ try {
     throw "expected upload size mismatch to return 400, got '$mismatchStatus'"
   }
 
+  $filesResForLifecycle = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:$ApiPort/api/files?bucket=$bucketName" -Headers $headers
+  $lifecycleCandidate = @($filesResForLifecycle | Where-Object { $_.name -like "doc-*.bin" } | Select-Object -First 1)
+  if ($lifecycleCandidate.Count -lt 1) {
+    throw "expected a small storage object for lifecycle validation"
+  }
+  $lifecycleName = [string]$lifecycleCandidate[0].name
+  Invoke-SqlJSON -ApiPort $ApiPort -Token $token -WorkspaceId $workspaceId -Query @"
+UPDATE _v_storage_objects
+SET created_at = NOW() - INTERVAL '2 days'
+WHERE bucket_id IN (SELECT id FROM _v_buckets WHERE name = '$bucketName')
+  AND name = '$lifecycleName'
+"@ | Out-Null
+  $lifecycleSweep = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ApiPort/api/files/buckets/$bucketName/lifecycle/sweep" -Headers ($headers + @{ "Content-Type" = "application/json" }) -Body "{}"
+  if ([int]$lifecycleSweep.deleted_objects -lt 1) {
+    throw "expected lifecycle sweep to delete at least one object"
+  }
+
   $files = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:$ApiPort/api/files?bucket=$bucketName" -Headers $headers
   $expectedFileCount = $SmallFiles + $LargeFiles
-  if ($files.Count -lt $expectedFileCount) {
+  if ($files.Count -lt ($expectedFileCount - 1)) {
     throw "expected at least $expectedFileCount files in bucket, got $($files.Count)"
   }
   $largeEntries = @($files | Where-Object { $_.name -like "large-doc-*.bin" })
@@ -439,10 +668,10 @@ try {
     }
   }
   $deleteBucket = Invoke-RestMethod -Method Delete -Uri "http://127.0.0.1:$ApiPort/api/files/buckets/$bucketName" -Headers $headers
-  if ([int]$deleteBucket.deleted_files -lt $expectedFileCount) {
-    throw "bucket cleanup removed fewer objects than expected: $($deleteBucket.deleted_files) < $expectedFileCount"
+  if ([int]$deleteBucket.deleted_files -lt ($expectedFileCount - 1)) {
+    throw "bucket cleanup removed fewer objects than expected: $($deleteBucket.deleted_files) < $($expectedFileCount - 1)"
   }
-  Write-Host "==> S3-compatible storage upload/list/parallel-download/cleanup passed"
+  Write-Host "==> S3-compatible storage upload/list/multipart/quota/lifecycle passed"
 
   $realtimeStatus = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:$ApiPort/api/project/realtime/status" -Headers $headers
   if ([string]$realtimeStatus.mode -ne "redis") {

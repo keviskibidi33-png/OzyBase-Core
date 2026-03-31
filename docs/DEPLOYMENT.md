@@ -76,7 +76,7 @@ Recommended for production:
 - `SMTP_FROM`
 - `ALLOWED_ORIGINS`
 - `OZY_STORAGE_PROVIDER` / `S3_*` when files must survive node loss
-- `BODY_LIMIT` for normal JSON/multipart traffic; large Storage uploads now use signed same-origin streaming sessions and are no longer capped by this middleware limit
+- `BODY_LIMIT` for normal JSON/multipart traffic; large Storage uploads now use signed same-origin sessions and switch to multipart chunks above the large-file threshold, so they are no longer capped by this middleware limit
 - `OZY_REALTIME_BROKER` / `REDIS_*` when realtime must fan out across multiple app instances
 
 Profile mapping:
@@ -112,9 +112,14 @@ curl -i http://localhost:8090/api/health
 ```
 
 Validation helpers:
-- `powershell -File scripts/validate_external_stack.ps1` validates external Postgres + S3 + Redis + storage pressure + benchmark, including streaming uploads above the normal `BODY_LIMIT`.
+- `powershell -File scripts/validate_external_stack.ps1` validates external Postgres + S3 + Redis + storage pressure + benchmark, including multipart uploads, bucket quota enforcement, and lifecycle sweeps above the normal `BODY_LIMIT`.
 - `powershell -File scripts/validate_multinode_stack.ps1` validates two app nodes, distributed realtime fan-out, and single-node failover behavior.
 - `powershell -File scripts/validate_https_smtp_stack.ps1` validates HTTPS reverse proxy and SMTP password reset delivery.
+
+Storage policy notes:
+- Buckets can now enforce both `max_file_size_bytes` and `max_total_size_bytes`.
+- Buckets can also set `lifecycle_delete_after_days` and trigger an immediate cleanup sweep from the dashboard or API.
+- The dashboard uses the same signed upload session flow as the API, so UI validation covers local storage and S3-compatible backends consistently.
 
 Expected:
 - Both containers healthy.

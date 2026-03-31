@@ -34,6 +34,8 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 			rls_enabled BOOLEAN DEFAULT TRUE,
 			rls_rule TEXT DEFAULT 'auth.uid() = owner_id',
 			max_file_size_bytes BIGINT NOT NULL DEFAULT 0 CHECK (max_file_size_bytes >= 0),
+			max_total_size_bytes BIGINT NOT NULL DEFAULT 0 CHECK (max_total_size_bytes >= 0),
+			lifecycle_delete_after_days INTEGER NOT NULL DEFAULT 0 CHECK (lifecycle_delete_after_days >= 0),
 			created_at TIMESTAMPTZ DEFAULT NOW(),
 			updated_at TIMESTAMPTZ DEFAULT NOW()
 		)`,
@@ -59,12 +61,24 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 			size BIGINT NOT NULL CHECK (size >= 0),
 			content_type VARCHAR(255) NOT NULL DEFAULT 'application/octet-stream',
 			storage_key TEXT NOT NULL,
+			mode VARCHAR(20) NOT NULL DEFAULT 'stream' CHECK (mode IN ('stream', 'multipart')),
+			chunk_size_bytes BIGINT NOT NULL DEFAULT 0 CHECK (chunk_size_bytes >= 0),
 			expires_at TIMESTAMPTZ NOT NULL,
 			used_at TIMESTAMPTZ,
+			completed_at TIMESTAMPTZ,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_storage_upload_sessions_storage_key ON _v_storage_upload_sessions(storage_key)`,
 		`CREATE INDEX IF NOT EXISTS idx_storage_upload_sessions_expiry ON _v_storage_upload_sessions(expires_at, used_at)`,
+		`CREATE TABLE IF NOT EXISTS _v_storage_upload_session_parts (
+			session_id UUID NOT NULL REFERENCES _v_storage_upload_sessions(id) ON DELETE CASCADE,
+			part_number INTEGER NOT NULL CHECK (part_number >= 1),
+			size BIGINT NOT NULL CHECK (size >= 0),
+			storage_path TEXT NOT NULL,
+			uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (session_id, part_number)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_storage_upload_session_parts_uploaded_at ON _v_storage_upload_session_parts(uploaded_at DESC)`,
 
 		// Edge Functions
 		`CREATE TABLE IF NOT EXISTS _v_functions (
@@ -385,8 +399,21 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 		`ALTER TABLE _v_security_alerts ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS realtime_enabled BOOLEAN DEFAULT FALSE`,
 		`ALTER TABLE _v_buckets ADD COLUMN IF NOT EXISTS max_file_size_bytes BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE _v_buckets ADD COLUMN IF NOT EXISTS max_total_size_bytes BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE _v_buckets ADD COLUMN IF NOT EXISTS lifecycle_delete_after_days INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE _v_buckets DROP CONSTRAINT IF EXISTS _v_buckets_max_file_size_bytes_check`,
 		`ALTER TABLE _v_buckets ADD CONSTRAINT _v_buckets_max_file_size_bytes_check CHECK (max_file_size_bytes >= 0)`,
+		`ALTER TABLE _v_buckets DROP CONSTRAINT IF EXISTS _v_buckets_max_total_size_bytes_check`,
+		`ALTER TABLE _v_buckets ADD CONSTRAINT _v_buckets_max_total_size_bytes_check CHECK (max_total_size_bytes >= 0)`,
+		`ALTER TABLE _v_buckets DROP CONSTRAINT IF EXISTS _v_buckets_lifecycle_delete_after_days_check`,
+		`ALTER TABLE _v_buckets ADD CONSTRAINT _v_buckets_lifecycle_delete_after_days_check CHECK (lifecycle_delete_after_days >= 0)`,
+		`ALTER TABLE _v_storage_upload_sessions ADD COLUMN IF NOT EXISTS mode VARCHAR(20) NOT NULL DEFAULT 'stream'`,
+		`ALTER TABLE _v_storage_upload_sessions ADD COLUMN IF NOT EXISTS chunk_size_bytes BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE _v_storage_upload_sessions ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`,
+		`ALTER TABLE _v_storage_upload_sessions DROP CONSTRAINT IF EXISTS _v_storage_upload_sessions_mode_check`,
+		`ALTER TABLE _v_storage_upload_sessions ADD CONSTRAINT _v_storage_upload_sessions_mode_check CHECK (mode IN ('stream', 'multipart'))`,
+		`ALTER TABLE _v_storage_upload_sessions DROP CONSTRAINT IF EXISTS _v_storage_upload_sessions_chunk_size_bytes_check`,
+		`ALTER TABLE _v_storage_upload_sessions ADD CONSTRAINT _v_storage_upload_sessions_chunk_size_bytes_check CHECK (chunk_size_bytes >= 0)`,
 
 		// API Keys (Enterprise Phase 1)
 		`CREATE TABLE IF NOT EXISTS _v_api_keys (

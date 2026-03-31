@@ -86,4 +86,5 @@ Before claiming SaaS-grade readiness, extend the run to:
 
 Storage note:
 
-- `scripts/validate_external_stack.ps1` now also exercises signed streaming uploads against the same-origin storage endpoint, so you can validate files larger than the normal `BODY_LIMIT` while still keeping self-host deploys independent from browser-to-S3 CORS assumptions.
+- `scripts/validate_external_stack.ps1` now also exercises signed same-origin storage uploads, multipart chunk assembly, bucket quota enforcement, lifecycle sweeps, and parallel download verification against the same external stack.
+- The helper generates large files in chunks, so it can validate `1 GB+` storage flows without requiring PowerShell to allocate the entire file in memory first.

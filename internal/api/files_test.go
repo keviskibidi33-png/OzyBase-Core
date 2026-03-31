@@ -78,6 +78,25 @@ func TestValidateBucketUploadSize(t *testing.T) {
 	assert.ErrorContains(t, validateBucketUploadSize(bucket, 6*1024*1024), "file exceeds bucket limit")
 }
 
+func TestValidateBucketTotalQuota(t *testing.T) {
+	t.Parallel()
+
+	bucket := bucketRecord{Name: "docs", TotalSize: 9 * 1024 * 1024, MaxTotalSizeBytes: 10 * 1024 * 1024}
+	assert.NoError(t, validateBucketTotalQuota(bucket, 512))
+	assert.ErrorContains(t, validateBucketTotalQuota(bucket, 2*1024*1024), "bucket exceeds total quota")
+}
+
+func TestMultipartPartSize(t *testing.T) {
+	t.Parallel()
+
+	totalSize := int64(25 * 1024 * 1024)
+	chunkSize := int64(8 * 1024 * 1024)
+	assert.Equal(t, 4, multipartTotalParts(totalSize, chunkSize))
+	assert.Equal(t, chunkSize, multipartPartSize(totalSize, chunkSize, 1))
+	assert.Equal(t, chunkSize, multipartPartSize(totalSize, chunkSize, 3))
+	assert.Equal(t, int64(1*1024*1024), multipartPartSize(totalSize, chunkSize, 4))
+}
+
 func TestStorageUploadTokenRoundTrip(t *testing.T) {
 	t.Parallel()
 

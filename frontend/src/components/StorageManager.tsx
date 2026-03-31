@@ -37,6 +37,9 @@ interface StorageBucket {
     rls_enabled: boolean;
     rls_rule: string;
     max_file_size_bytes: number;
+    max_total_size_bytes: number;
+    lifecycle_delete_after_days: number;
+    usage_ratio_pct?: number;
     created_at?: string;
     object_count: number;
     total_size: number;
@@ -59,10 +62,12 @@ interface BucketFormState {
     isRLS: boolean;
     rlsRule: string;
     maxFileSizeMB: string;
+    maxTotalSizeMB: string;
+    lifecycleDeleteAfterDays: string;
 }
 
 const DEFAULT_RLS_RULE = "auth.uid() = owner_id";
-const EMPTY_BUCKET_FORM: BucketFormState = { name: '', isPublic: false, isRLS: false, rlsRule: DEFAULT_RLS_RULE, maxFileSizeMB: '' };
+const EMPTY_BUCKET_FORM: BucketFormState = { name: '', isPublic: false, isRLS: false, rlsRule: DEFAULT_RLS_RULE, maxFileSizeMB: '', maxTotalSizeMB: '', lifecycleDeleteAfterDays: '' };
 
 interface StorageUploadSession {
     upload_url: string;
@@ -74,6 +79,21 @@ interface StorageUploadSession {
     storage_key: string;
     expires_at: string;
     max_file_size_bytes: number;
+}
+
+interface MultipartUploadSession {
+    session_id: string;
+    mode: 'multipart';
+    bucket: string;
+    filename: string;
+    content_type: string;
+    size: number;
+    storage_key: string;
+    chunk_size_bytes: number;
+    total_parts: number;
+    expires_at: string;
+    max_file_size_bytes: number;
+    max_total_size_bytes: number;
 }
 
 const formatSize = (bytes: number): string => {
@@ -92,9 +112,19 @@ const parseMaxFileSizeMB = (value: string): number | null => {
     return Math.round(parsed * 1024 * 1024);
 };
 
+const parsePositiveInt = (value: string): number | null => {
+    const trimmed = value.trim();
+    if (!trimmed) return 0;
+    const parsed = Number.parseInt(trimmed, 10);
+    if (!Number.isFinite(parsed) || parsed < 0) return null;
+    return parsed;
+};
+
 const formatBucketLimit = (bytes: number): string => (
     Number.isFinite(bytes) && bytes > 0 ? formatSize(bytes) : 'Unlimited'
 );
+
+const MULTIPART_THRESHOLD_BYTES = 64 * 1024 * 1024;
 
 const formatDate = (value?: string): string => {
     if (!value) return 'Recently';
@@ -124,6 +154,7 @@ const StorageManager = (_props: StorageManagerProps) => {
     const [filePendingDelete, setFilePendingDelete] = useState<StorageObject | null>(null);
     const [isDeletingBucket, setIsDeletingBucket] = useState(false);
     const [isDeletingFile, setIsDeletingFile] = useState(false);
+    const [isSweepingLifecycle, setIsSweepingLifecycle] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
     const [uploadSummary, setUploadSummary] = useState('');
     const [toast, setToast] = useState<{ message: string; type: ToastTone } | null>(null);
@@ -178,6 +209,9 @@ const StorageManager = (_props: StorageManagerProps) => {
             rls_enabled: false,
             rls_rule: 'true',
             max_file_size_bytes: 0,
+            max_total_size_bytes: 0,
+            lifecycle_delete_after_days: 0,
+            usage_ratio_pct: 0,
             object_count: files.length,
             total_size: files.reduce((sum, file) => sum + file.size, 0),
         }
@@ -192,6 +226,7 @@ const StorageManager = (_props: StorageManagerProps) => {
         { label: selectedBucket.public ? 'public reads allowed' : 'private bucket', tone: selectedBucket.public ? 'accent' : 'neutral' },
         { label: selectedBucket.rls_enabled ? 'rls enforced' : 'rls optional', tone: selectedBucket.rls_enabled ? 'success' : 'warning' },
         { label: `per-file ${formatBucketLimit(selectedBucket.max_file_size_bytes)}`, tone: selectedBucket.max_file_size_bytes > 0 ? 'warning' : 'neutral' },
+        { label: `bucket ${formatBucketLimit(selectedBucket.max_total_size_bytes)}`, tone: selectedBucket.max_total_size_bytes > 0 ? 'warning' : 'neutral' },
         { label: `${selectedBucket.object_count} object${selectedBucket.object_count === 1 ? '' : 's'}`, tone: 'neutral' },
     ] as const;
     const storageHeroStats = [
@@ -219,6 +254,13 @@ const StorageManager = (_props: StorageManagerProps) => {
                 ? 'Session uploads reject files above the bucket ceiling before streaming starts.'
                 : 'Leave the limit empty when you want storage policy to stay open-ended.',
         },
+        {
+            label: 'Bucket Quota',
+            value: formatBucketLimit(selectedBucket.max_total_size_bytes),
+            hint: selectedBucket.max_total_size_bytes > 0
+                ? `Current usage ${formatSize(selectedBucket.total_size)} (${Math.round(selectedBucket.usage_ratio_pct ?? 0)}%).`
+                : 'Optional total-capacity ceiling for self-hosted installs.',
+        },
     ];
 
     const openBucketDialog = (mode: BucketDialogMode) => {
@@ -230,6 +272,8 @@ const StorageManager = (_props: StorageManagerProps) => {
                 isRLS: selectedBucket.rls_enabled,
                 rlsRule: selectedBucket.rls_rule || DEFAULT_RLS_RULE,
                 maxFileSizeMB: selectedBucket.max_file_size_bytes > 0 ? (selectedBucket.max_file_size_bytes / (1024 * 1024)).toString() : '',
+                maxTotalSizeMB: selectedBucket.max_total_size_bytes > 0 ? (selectedBucket.max_total_size_bytes / (1024 * 1024)).toString() : '',
+                lifecycleDeleteAfterDays: selectedBucket.lifecycle_delete_after_days > 0 ? selectedBucket.lifecycle_delete_after_days.toString() : '',
             }
             : EMPTY_BUCKET_FORM);
     };
@@ -245,6 +289,10 @@ const StorageManager = (_props: StorageManagerProps) => {
         if (!trimmedName) return showToast('Bucket name is required', 'error');
         const maxFileSizeBytes = parseMaxFileSizeMB(bucketForm.maxFileSizeMB);
         if (maxFileSizeBytes === null) return showToast('Max file size must be a valid number of MB', 'error');
+        const maxTotalSizeBytes = parseMaxFileSizeMB(bucketForm.maxTotalSizeMB);
+        if (maxTotalSizeBytes === null) return showToast('Bucket quota must be a valid number of MB', 'error');
+        const lifecycleDeleteAfterDays = parsePositiveInt(bucketForm.lifecycleDeleteAfterDays);
+        if (lifecycleDeleteAfterDays === null) return showToast('Lifecycle retention must be a valid number of days', 'error');
 
         setIsSavingBucket(true);
         try {
@@ -259,6 +307,8 @@ const StorageManager = (_props: StorageManagerProps) => {
                     rls_enabled: bucketForm.isRLS,
                     rls_rule: bucketForm.isRLS ? bucketForm.rlsRule.trim() || DEFAULT_RLS_RULE : 'true',
                     max_file_size_bytes: maxFileSizeBytes,
+                    max_total_size_bytes: maxTotalSizeBytes,
+                    lifecycle_delete_after_days: lifecycleDeleteAfterDays,
                 }),
             });
             if (!response.ok) throw new Error(await extractError(response, `Failed to ${isEdit ? 'update' : 'create'} bucket`));
@@ -288,7 +338,21 @@ const StorageManager = (_props: StorageManagerProps) => {
         return await response.json() as StorageUploadSession;
     }, [selectedBucket.name]);
 
-    const uploadViaSession = useCallback(async (file: File) => {
+    const createMultipartUploadSession = useCallback(async (file: File): Promise<MultipartUploadSession> => {
+        const response = await fetchWithAuth('/api/files/uploads/multipart/session', {
+            method: 'POST',
+            body: JSON.stringify({
+                bucket: selectedBucket.name,
+                filename: file.name,
+                content_type: file.type || 'application/octet-stream',
+                size: file.size,
+            }),
+        });
+        if (!response.ok) throw new Error(await extractError(response, `Failed to prepare multipart upload for ${file.name}`));
+        return await response.json() as MultipartUploadSession;
+    }, [selectedBucket.name]);
+
+    const uploadViaStreamSession = useCallback(async (file: File) => {
         const session = await createUploadSession(file);
         const response = await fetchWithAuth(session.upload_url, {
             method: 'PUT',
@@ -302,6 +366,31 @@ const StorageManager = (_props: StorageManagerProps) => {
         return await response.json().catch(() => null);
     }, [createUploadSession]);
 
+    const uploadViaMultipartSession = useCallback(async (file: File) => {
+        const session = await createMultipartUploadSession(file);
+        for (let partNumber = 1; partNumber <= session.total_parts; partNumber += 1) {
+            const start = (partNumber - 1) * session.chunk_size_bytes;
+            const end = Math.min(start + session.chunk_size_bytes, file.size);
+            const chunk = file.slice(start, end);
+            setUploadSummary(`${file.name} · chunk ${partNumber}/${session.total_parts}`);
+            const response = await fetchWithAuth(`/api/files/uploads/multipart/${encodeURIComponent(session.session_id)}/parts/${partNumber}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/octet-stream',
+                },
+                body: chunk,
+            });
+            if (!response.ok) throw new Error(await extractError(response, `Failed to upload chunk ${partNumber} of ${file.name}`));
+        }
+
+        const completeResponse = await fetchWithAuth(`/api/files/uploads/multipart/${encodeURIComponent(session.session_id)}/complete`, {
+            method: 'POST',
+            body: JSON.stringify({}),
+        });
+        if (!completeResponse.ok) throw new Error(await extractError(completeResponse, `Failed to finalize multipart upload for ${file.name}`));
+        return await completeResponse.json().catch(() => null);
+    }, [createMultipartUploadSession]);
+
     const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const selectedFiles = Array.from(event.target.files ?? []);
         if (selectedFiles.length === 0) return;
@@ -310,7 +399,11 @@ const StorageManager = (_props: StorageManagerProps) => {
         setUploadSummary(selectedFiles.length === 1 ? selectedFiles[0].name : `${selectedFiles.length} files`);
         try {
             for (const file of selectedFiles) {
-                await uploadViaSession(file);
+                if (file.size >= MULTIPART_THRESHOLD_BYTES) {
+                    await uploadViaMultipartSession(file);
+                } else {
+                    await uploadViaStreamSession(file);
+                }
             }
             await Promise.all([fetchFiles(selectedBucket.name), fetchBuckets(selectedBucket.name)]);
             showToast(selectedFiles.length === 1 ? 'File uploaded' : `${selectedFiles.length} files uploaded`, 'success');
@@ -321,6 +414,26 @@ const StorageManager = (_props: StorageManagerProps) => {
             setIsUploading(false);
             setUploadSummary('');
             event.target.value = '';
+        }
+    };
+
+    const handleLifecycleSweep = async () => {
+        if (selectedBucket.lifecycle_delete_after_days <= 0) {
+            showToast('Configure retention days first to run lifecycle cleanup', 'warning');
+            return;
+        }
+        setIsSweepingLifecycle(true);
+        try {
+            const response = await fetchWithAuth(`/api/files/buckets/${encodeURIComponent(selectedBucket.name)}/lifecycle/sweep`, { method: 'POST', body: JSON.stringify({}) });
+            if (!response.ok) throw new Error(await extractError(response, 'Failed to run lifecycle cleanup'));
+            const payload = await response.json().catch(() => null) as { deleted_objects?: number; reclaimed_size_human?: string } | null;
+            await Promise.all([fetchFiles(selectedBucket.name), fetchBuckets(selectedBucket.name)]);
+            showToast(`Lifecycle cleanup removed ${payload?.deleted_objects ?? 0} object(s)${payload?.reclaimed_size_human ? ` · ${payload.reclaimed_size_human}` : ''}`, 'success');
+        } catch (error) {
+            console.error(error);
+            showToast(error instanceof Error ? error.message : 'Failed to run lifecycle cleanup', 'error');
+        } finally {
+            setIsSweepingLifecycle(false);
         }
     };
 
@@ -450,7 +563,7 @@ const StorageManager = (_props: StorageManagerProps) => {
                         <div className="rounded-2xl border border-[#2e2e2e] bg-[#111111] px-5 py-4">
                             <p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Upload Runtime</p>
                             <p className="mt-2 text-sm text-zinc-300">
-                                Files stream through a signed same-origin session, so large uploads do not depend on the normal API body limit.
+                                Files stream through signed same-origin sessions, and uploads above 64 MB switch to resumable multipart chunks before assembly.
                             </p>
                             <p className="mt-2 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-600">
                                 {isUploading ? `Uploading ${uploadSummary}` : `Per-file limit: ${formatBucketLimit(selectedBucket.max_file_size_bytes)}`}
@@ -510,6 +623,8 @@ const StorageManager = (_props: StorageManagerProps) => {
                                 <div className="rounded-3xl border border-[#2e2e2e] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Read Access</p><p className="mt-2 text-lg font-black text-white">{selectedBucket.public ? 'Public' : 'Authenticated only'}</p><p className="mt-2 text-sm text-zinc-500">{selectedBucket.public ? 'Anon reads work when RLS does not narrow access.' : 'Objects require a user session or service role key.'}</p></div>
                                 <div className="rounded-3xl border border-[#2e2e2e] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">RLS Rule</p><code className="mt-3 block overflow-x-auto rounded-2xl border border-zinc-800 bg-[#070707] px-4 py-4 text-xs text-primary">{selectedBucket.rls_enabled ? selectedBucket.rls_rule : 'true'}</code></div>
                                 <div className="rounded-3xl border border-[#2e2e2e] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Per-File Limit</p><p className="mt-2 text-lg font-black text-white">{formatBucketLimit(selectedBucket.max_file_size_bytes)}</p><p className="mt-2 text-sm text-zinc-500">Session uploads reject oversize files before the stream starts and keep the limit consistent across local or S3 backends.</p></div>
+                                <div className="rounded-3xl border border-[#2e2e2e] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Bucket Quota</p><p className="mt-2 text-lg font-black text-white">{formatBucketLimit(selectedBucket.max_total_size_bytes)}</p><p className="mt-2 text-sm text-zinc-500">{selectedBucket.max_total_size_bytes > 0 ? `Current usage ${formatSize(selectedBucket.total_size)} · ${Math.round(selectedBucket.usage_ratio_pct ?? 0)}%` : 'Keep this empty when you do not want a total-capacity ceiling.'}</p></div>
+                                <div className="rounded-3xl border border-[#2e2e2e] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Lifecycle Retention</p><p className="mt-2 text-lg font-black text-white">{selectedBucket.lifecycle_delete_after_days > 0 ? `${selectedBucket.lifecycle_delete_after_days} day${selectedBucket.lifecycle_delete_after_days === 1 ? '' : 's'}` : 'Disabled'}</p><p className="mt-2 text-sm text-zinc-500">Use retention to sweep stale objects from self-hosted buckets without manual cleanup.</p><button type="button" onClick={() => void handleLifecycleSweep()} disabled={isSweepingLifecycle || selectedBucket.lifecycle_delete_after_days <= 0} className="mt-4 inline-flex items-center gap-2 rounded-xl border border-zinc-800 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-200 transition-colors hover:border-primary/30 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"><RefreshCw size={14} />{isSweepingLifecycle ? 'Sweeping...' : 'Run sweep'}</button></div>
                             </div>
                         </div>
                         <div className="rounded-[28px] border border-[#2e2e2e] bg-[#111111] p-7">
@@ -517,6 +632,7 @@ const StorageManager = (_props: StorageManagerProps) => {
                             <div className="mt-5 space-y-4">
                                 <div className="rounded-3xl border border-[#202020] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Objects</p><p className="mt-2 text-2xl font-black text-white">{selectedBucket.object_count}</p></div>
                                 <div className="rounded-3xl border border-[#202020] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Capacity</p><p className="mt-2 text-2xl font-black text-white">{formatSize(selectedBucket.total_size)}</p></div>
+                                <div className="rounded-3xl border border-[#202020] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Quota Usage</p><p className="mt-2 text-2xl font-black text-white">{selectedBucket.max_total_size_bytes > 0 ? `${Math.round(selectedBucket.usage_ratio_pct ?? 0)}%` : 'Open'}</p></div>
                                 <div className="rounded-3xl border border-red-500/20 bg-[linear-gradient(180deg,rgba(127,29,29,0.12),rgba(17,17,17,0.92))] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-red-300/80">Danger Zone</p><p className="mt-2 text-sm text-red-100/75">Delete the entire bucket and every object inside it.</p><button type="button" onClick={() => setBucketPendingDelete(selectedBucket)} disabled={selectedBucket.name === 'default'} className="mt-4 inline-flex items-center gap-2 rounded-xl border border-red-500/30 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-red-100 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40"><Trash2 size={14} />Delete bucket</button></div>
                             </div>
                         </div>
@@ -535,6 +651,16 @@ const StorageManager = (_props: StorageManagerProps) => {
                                 <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Per-file limit (MB)</label>
                                 <input type="number" min="0" step="1" value={bucketForm.maxFileSizeMB} onChange={(event) => setBucketForm((current) => ({ ...current, maxFileSizeMB: event.target.value }))} placeholder="Leave empty for unlimited" className="w-full rounded-xl border border-zinc-800 bg-[#0c0c0c] px-4 py-3 text-sm text-white focus:border-primary/50 focus:outline-none" />
                                 <p className="text-[11px] leading-relaxed text-zinc-500">Use this to cap each uploaded file. The limit applies before streaming starts, even when storage runs on S3.</p>
+                            </div>
+                            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Bucket quota (MB)</label>
+                                    <input type="number" min="0" step="1" value={bucketForm.maxTotalSizeMB} onChange={(event) => setBucketForm((current) => ({ ...current, maxTotalSizeMB: event.target.value }))} placeholder="Leave empty for unlimited" className="w-full rounded-xl border border-zinc-800 bg-[#0c0c0c] px-4 py-3 text-sm text-white focus:border-primary/50 focus:outline-none" />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Lifecycle retention (days)</label>
+                                    <input type="number" min="0" step="1" value={bucketForm.lifecycleDeleteAfterDays} onChange={(event) => setBucketForm((current) => ({ ...current, lifecycleDeleteAfterDays: event.target.value }))} placeholder="0 disables cleanup" className="w-full rounded-xl border border-zinc-800 bg-[#0c0c0c] px-4 py-3 text-sm text-white focus:border-primary/50 focus:outline-none" />
+                                </div>
                             </div>
                             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                                 <button type="button" onClick={() => setBucketForm((current) => ({ ...current, isPublic: !current.isPublic }))} className={`rounded-2xl border px-4 py-4 text-left transition-all ${bucketForm.isPublic ? 'border-primary/30 bg-primary/10 text-primary' : 'border-zinc-800 bg-zinc-900/40 text-zinc-400'}`}><p className="text-[10px] font-black uppercase tracking-widest">Public Access</p><p className="mt-2 text-[11px] leading-relaxed text-white/80">Allow anonymous reads when RLS does not narrow access.</p></button>
