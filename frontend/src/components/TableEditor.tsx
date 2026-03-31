@@ -37,9 +37,9 @@ import ConfirmModal from './ConfirmModal';
 import BulkEditModal from './BulkEditModal';
 import InlineCellEditor from './InlineCellEditor';
 import CSVImportModal from './CSVImportModal';
-import TableEditorColumnsPanel from './table-editor/TableEditorColumnsPanel';
 import TableEditorFooter from './table-editor/TableEditorFooter';
 import TableEditorStateBar from './table-editor/TableEditorStateBar';
+import TableEditorToolbar from './table-editor/TableEditorToolbar';
 import { fetchWithAuth } from '../utils/api';
 
 // --- Custom Hooks ---
@@ -306,6 +306,70 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
         searchTerm,
         pageSize
     }), [filters, sorts, searchTerm, pageSize]);
+
+    const handleCreateView = useCallback(async () => {
+        if (!tableName || !viewName.trim()) {
+            return;
+        }
+        const res = await fetchWithAuth(`/api/tables/${tableName}/views`, {
+            method: 'POST',
+            body: JSON.stringify({ name: viewName.trim(), config: currentViewConfig })
+        });
+        if (!res.ok) {
+            return;
+        }
+        setViewName('');
+        fetchViews();
+    }, [currentViewConfig, fetchViews, tableName, viewName]);
+
+    const handleUpdateView = useCallback(async () => {
+        if (!tableName || !activeViewId) {
+            return;
+        }
+        const res = await fetchWithAuth(`/api/tables/${tableName}/views/${activeViewId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ config: currentViewConfig })
+        });
+        if (res.ok) {
+            fetchViews();
+        }
+    }, [activeViewId, currentViewConfig, fetchViews, tableName]);
+
+    const handleSetDefaultView = useCallback(async () => {
+        if (!tableName || !activeViewId) {
+            return;
+        }
+        const res = await fetchWithAuth(`/api/tables/${tableName}/views/${activeViewId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ is_default: true })
+        });
+        if (res.ok) {
+            fetchViews();
+        }
+    }, [activeViewId, fetchViews, tableName]);
+
+    const handleDeleteView = useCallback(async () => {
+        if (!tableName || !activeViewId) {
+            return;
+        }
+        const res = await fetchWithAuth(`/api/tables/${tableName}/views/${activeViewId}`, {
+            method: 'DELETE'
+        });
+        if (!res.ok) {
+            return;
+        }
+        setActiveViewId(null);
+        fetchViews();
+    }, [activeViewId, fetchViews, tableName]);
+
+    const resetViewControls = useCallback(() => {
+        setFilters([]);
+        setSorts([]);
+        setSearchTerm('');
+        setPageSize(100);
+        setCurrentPage(1);
+        setActiveViewId(null);
+    }, []);
 
     const fetchData = useCallback(async () => {
         if (!tableName) return;
@@ -1182,378 +1246,63 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
 
     return (
         <div className="flex flex-col h-full w-full max-w-full overflow-hidden text-zinc-400 font-sans animate-in fade-in duration-500">
-            {/* Table Toolbar */}
-            <div className="border-b border-[#2e2e2e] bg-[#1a1a1a] shrink-0 px-4 py-3 sm:px-6">
-                <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
-                    <div className="min-w-0 2xl:flex-1">
-                        <div className="overflow-x-auto custom-scrollbar pb-1">
-                            <div className="flex min-w-max items-center gap-3 pr-1">
-                    {/* Table Switcher Breadcrumb */}
-                    <div className="relative">
-                        <button
-                            onClick={() => setIsTableSwitcherOpen(!isTableSwitcherOpen)}
-                            className="flex items-center gap-2 px-3 py-1.5 bg-[#111111] border border-[#2e2e2e] rounded-lg hover:border-zinc-500 transition-all group shrink-0"
-                            title={currentTableLabel || ''}
-                        >
-                            <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Table</span>
-                            <span className="max-w-[180px] truncate text-[11px] font-bold text-white group-hover:text-primary transition-colors">{currentTableLabel}</span>
-                            <ChevronDown size={14} className={`text-zinc-600 transition-transform ${isTableSwitcherOpen ? 'rotate-180' : ''}`} />
-                        </button>
-
-                        {isTableSwitcherOpen && (
-                            <>
-                                <div className="fixed inset-0 z-40" onClick={() => setIsTableSwitcherOpen(false)} />
-                                <div className="absolute top-full left-0 mt-2 z-50 w-64 overflow-hidden ozy-floating-panel">
-                                    <div className="max-h-80 overflow-y-auto custom-scrollbar p-1.5 space-y-4">
-                                        <div>
-                                            <p className="px-3 py-1 text-[9px] font-black text-zinc-600 uppercase tracking-widest">User Tables</p>
-                                            {allTables.filter((t: any) => !t.is_system).map((t: any) => (
-                                                <button
-                                                    key={t.name}
-                                                    onClick={() => {
-                                                        onTableSelect(t.name);
-                                                        setIsTableSwitcherOpen(false);
-                                                    }}
-                                                    className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex items-center gap-3 ${tableName === t.name ? 'bg-primary/10 text-primary font-bold' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}
-                                                >
-                                                    <Database size={12} className={tableName === t.name ? 'text-primary' : 'text-zinc-600'} />
-                                                    <span className="truncate">{t.display_name || t.name}</span>
-                                                </button>
-                                            ))}
-                                        </div>
-                                        {allTables.some((t: any) => t.is_system) && (
-                                            <div>
-                                                <p className="px-3 py-1 text-[9px] font-black text-zinc-600 uppercase tracking-widest">System Tables</p>
-                                                {allTables.filter((t: any) => t.is_system).map((t: any) => (
-                                                    <button
-                                                        key={t.name}
-                                                        onClick={() => {
-                                                            onTableSelect(t.name);
-                                                            setIsTableSwitcherOpen(false);
-                                                        }}
-                                                        className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex items-center gap-3 font-mono opacity-80 ${tableName === t.name ? 'bg-primary/10 text-primary font-bold' : 'text-zinc-500 hover:bg-zinc-800 hover:text-white'}`}
-                                                    >
-                                                        <Lock size={12} className={tableName === t.name ? 'text-primary' : 'text-zinc-700'} />
-                                                        <span className="truncate">{t.display_name || t.name}</span>
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            </>
-                        )}
-                    </div>
-
-                    <div className="h-4 w-[1px] bg-[#2e2e2e]" />
-
-                    <div className="relative">
-                        <button
-                            onClick={() => setIsViewsOpen(!isViewsOpen)}
-                            className="flex items-center gap-2 px-3 py-1.5 bg-[#111111] border border-[#2e2e2e] rounded-lg hover:border-zinc-500 transition-all text-[10px] font-black uppercase tracking-widest text-zinc-300 shrink-0"
-                        >
-                            <SlidersHorizontal size={14} />
-                            Views
-                            <ChevronDown size={14} className={`transition-transform ${isViewsOpen ? 'rotate-180' : ''}`} />
-                        </button>
-
-                        {isViewsOpen && (
-                            <>
-                                <div className="fixed inset-0 z-40" onClick={() => setIsViewsOpen(false)} />
-                                <div className="absolute top-full left-0 mt-2 z-50 w-80 overflow-hidden ozy-floating-panel">
-                                    <div className="p-3 space-y-3">
-                                        <div className="space-y-2">
-                                            <p className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Saved Views</p>
-                                            <div className="max-h-40 overflow-y-auto custom-scrollbar space-y-1">
-                                                {views.length === 0 && (
-                                                    <div className="text-[10px] text-zinc-600 px-2 py-2 border border-dashed border-zinc-800 rounded-lg">
-                                                        No saved views yet.
-                                                    </div>
-                                                )}
-                                                {views.map((view: any) => (
-                                                    <button
-                                                        key={view.id}
-                                                        onClick={() => applyView(view)}
-                                                        className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex items-center justify-between ${activeViewId === view.id ? 'bg-primary/10 text-primary font-bold' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}
-                                                    >
-                                                        <span className="truncate">{view.name}</span>
-                                                        {view.is_default && <span className="text-[9px] font-black uppercase tracking-widest">default</span>}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </div>
-
-                                        <div className="h-[1px] bg-[#2e2e2e]" />
-
-                                        <div className="space-y-2">
-                                            <p className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Save Current</p>
-                                            <div className="flex gap-2">
-                                                <input
-                                                    value={viewName}
-                                                    onChange={(e: any) => setViewName(e.target.value)}
-                                                    placeholder="View name"
-                                                    className="flex-1 bg-[#111111] border border-[#2e2e2e] rounded-lg px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-primary/50"
-                                                />
-                                                <button
-                                                    onClick={async () => {
-                                                        if (!viewName.trim()) return;
-                                                        const res = await fetchWithAuth(`/api/tables/${tableName}/views`, {
-                                                            method: 'POST',
-                                                            body: JSON.stringify({ name: viewName.trim(), config: currentViewConfig })
-                                                        });
-                                                        if (res.ok) {
-                                                            setViewName('');
-                                                            fetchViews();
-                                                        }
-                                                    }}
-                                                    className="px-3 py-2 bg-primary text-black rounded-lg text-[10px] font-black uppercase tracking-widest"
-                                                >
-                                                    Save
-                                                </button>
-                                            </div>
-                                            {activeViewId && (
-                                                <div className="flex gap-2">
-                                                    <button
-                                                        onClick={async () => {
-                                                            const res = await fetchWithAuth(`/api/tables/${tableName}/views/${activeViewId}`, {
-                                                                method: 'PATCH',
-                                                                body: JSON.stringify({ config: currentViewConfig })
-                                                            });
-                                                            if (res.ok) fetchViews();
-                                                        }}
-                                                        className="flex-1 px-3 py-2 bg-[#111111] border border-[#2e2e2e] rounded-lg text-[10px] font-black uppercase tracking-widest text-zinc-300"
-                                                    >
-                                                        Update
-                                                    </button>
-                                                    <button
-                                                        onClick={async () => {
-                                                            const res = await fetchWithAuth(`/api/tables/${tableName}/views/${activeViewId}`, {
-                                                                method: 'PATCH',
-                                                                body: JSON.stringify({ is_default: true })
-                                                            });
-                                                            if (res.ok) fetchViews();
-                                                        }}
-                                                        className="flex-1 px-3 py-2 bg-[#111111] border border-[#2e2e2e] rounded-lg text-[10px] font-black uppercase tracking-widest text-zinc-300"
-                                                    >
-                                                        Set Default
-                                                    </button>
-                                                    <button
-                                                        onClick={async () => {
-                                                            const res = await fetchWithAuth(`/api/tables/${tableName}/views/${activeViewId}`, {
-                                                                method: 'DELETE'
-                                                            });
-                                                            if (res.ok) {
-                                                                setActiveViewId(null);
-                                                                fetchViews();
-                                                            }
-                                                        }}
-                                                        className="px-3 py-2 bg-red-500/10 border border-red-500/20 rounded-lg text-[10px] font-black uppercase tracking-widest text-red-400"
-                                                    >
-                                                        Delete
-                                                    </button>
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        <div className="h-[1px] bg-[#2e2e2e]" />
-                                        <button
-                                            onClick={() => {
-                                                setFilters([]);
-                                                setSorts([]);
-                                                setSearchTerm('');
-                                                setPageSize(100);
-                                                setActiveViewId(null);
-                                            }}
-                                            className="w-full px-3 py-2 bg-[#111111] border border-[#2e2e2e] rounded-lg text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-zinc-200"
-                                        >
-                                            Reset View
-                                        </button>
-                                    </div>
-                                </div>
-                            </>
-                        )}
-                    </div>
-
-                    <div className="relative">
-                        <button
-                            onClick={() => setIsInsertDropdownOpen(!isInsertDropdownOpen)}
-                            className="flex items-center gap-2 bg-primary text-black px-4 py-1.5 rounded-lg font-black text-[10px] uppercase tracking-widest hover:bg-[#E6E600] transition-all transform active:scale-95 shadow-[0_0_20px_rgba(254,254,0,0.1) shrink-0"
-                        >
-                            <Plus size={14} strokeWidth={3} />
-                            Insert
-                            <ChevronDown size={14} className={`transition-transform duration-200 ${isInsertDropdownOpen ? 'rotate-180' : ''}`} />
-                        </button>
-
-                        {isInsertDropdownOpen && (
-                            <>
-                                <div
-                                    className="fixed inset-0 z-40 outline-none"
-                                    onClick={() => setIsInsertDropdownOpen(false)}
-                                />
-                                <div className="absolute top-full left-0 mt-2 z-50 w-56 overflow-hidden ozy-floating-panel">
-                                    <div className="p-1.5 space-y-0.5">
-                                        <button
-                                            onClick={() => {
-                                                if (!rowIdentityEnabled) return;
-                                                setEditingRow(null);
-                                                setIsModalOpen(true);
-                                                setIsInsertDropdownOpen(false);
-                                            }}
-                                            disabled={!rowIdentityEnabled}
-                                            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-bold transition-all group ${
-                                                rowIdentityEnabled ? 'text-zinc-400 hover:text-white hover:bg-zinc-800' : 'text-zinc-700 cursor-not-allowed opacity-60'
-                                            }`}
-                                        >
-                                            <div className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0 group-hover:border-primary/50 transition-colors">
-                                                <ListPlus size={16} className="text-zinc-500 group-hover:text-primary" />
-                                            </div>
-                                            <div className="flex flex-col text-left">
-                                                <span className="uppercase tracking-wide">Insert Row</span>
-                                                <span className="text-[9px] text-zinc-600">Add a new record</span>
-                                            </div>
-                                            <ChevronRight size={14} className="ml-auto text-zinc-700" />
-                                        </button>
-
-                                        <button
-                                            onClick={() => { setIsColumnModalOpen(true); setIsInsertDropdownOpen(false); }}
-                                            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-bold text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all group"
-                                        >
-                                            <div className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0 group-hover:border-primary/50 transition-colors">
-                                                <Database size={16} className="text-zinc-500 group-hover:text-primary" />
-                                            </div>
-                                            <div className="flex flex-col text-left">
-                                                <span className="uppercase tracking-wide">Insert Column</span>
-                                                <span className="text-[9px] text-zinc-600">Add a new field</span>
-                                            </div>
-                                            <ChevronRight size={14} className="ml-auto text-zinc-700" />
-                                        </button>
-
-                                        <div className="h-[1px] bg-[#2e2e2e] my-1 mx-2" />
-
-                                        <label className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-bold transition-all group ${
-                                            rowIdentityEnabled ? 'text-zinc-400 hover:text-white hover:bg-zinc-800 cursor-pointer' : 'text-zinc-700 cursor-not-allowed opacity-60'
-                                        }`}>
-                                            <div className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0 group-hover:border-primary/50 transition-colors">
-                                                <FileUp size={16} className="text-zinc-500 group-hover:text-primary" />
-                                            </div>
-                                            <div className="flex flex-col text-left text-zinc-400">
-                                                <span className="uppercase tracking-wide">Import CSV</span>
-                                                <span className="text-[9px] text-zinc-600">Upload bulk data</span>
-                                            </div>
-                                            <input
-                                                ref={csvInputRef}
-                                                type="file"
-                                                accept=".csv"
-                                                onChange={handleCSVImport}
-                                                disabled={!rowIdentityEnabled}
-                                                className="hidden"
-                                            />
-                                            <ChevronRight size={14} className="ml-auto text-zinc-700" />
-                                        </label>
-                                    </div>
-                                </div>
-                            </>
-                        )}
-                    </div>
-
-                    <div className="h-4 w-[1px] bg-[#2e2e2e] mx-2" />
-                    <button
-                        onClick={() => setIsFilterOpen(!isFilterOpen)}
-                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800/50 rounded-md transition-colors text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-zinc-200 shrink-0"
-                    >
-                        <Filter size={14} />
-                        Filter
-                    </button>
-                    <button
-                        onClick={() => setIsSortOpen(!isSortOpen)}
-                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800/50 rounded-md transition-colors text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-zinc-200 shrink-0"
-                    >
-                        <ArrowUpDown size={14} />
-                        Sort
-                        {sorts.length > 0 && (
-                            <span className="rounded-full border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[9px] tracking-[0.15em] text-primary">
-                                {sorts.length}
-                            </span>
-                        )}
-                    </button>
-                    <div className="relative">
-                        <button
-                            onClick={() => setIsColumnsPanelOpen(!isColumnsPanelOpen)}
-                            className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg transition-all text-[10px] font-black uppercase tracking-widest shrink-0 ${
-                                isColumnsPanelOpen
-                                    ? 'bg-primary/10 border-primary/30 text-primary'
-                                    : 'bg-[#111111] border-[#2e2e2e] text-zinc-300 hover:border-zinc-500'
-                            }`}
-                        >
-                            <Columns3 size={14} />
-                            Columns
-                            <span className="rounded-full bg-black/30 px-1.5 py-0.5 text-[9px] tracking-[0.15em]">
-                                {visibleColumnCount}/{totalColumnCount}
-                            </span>
-                        </button>
-                        <TableEditorColumnsPanel
-                            isOpen={isColumnsPanelOpen}
-                            onClose={() => setIsColumnsPanelOpen(false)}
-                            visibleColumnCount={visibleColumnCount}
-                            totalColumnCount={totalColumnCount}
-                            hiddenColumnCount={hiddenColumnCount}
-                            columnSearchTerm={columnSearchTerm}
-                            setColumnSearchTerm={setColumnSearchTerm}
-                            filteredColumnOptions={filteredColumnOptions}
-                            rowIdentityEnabled={rowIdentityEnabled}
-                            hiddenColumnSet={hiddenColumnSet}
-                            pinnedColumnSet={pinnedColumnSet}
-                            getTypeIcon={getTypeIcon}
-                            showAllColumns={showAllColumns}
-                            resetColumnLayout={resetColumnLayout}
-                            toggleColumnVisibility={toggleColumnVisibility}
-                            togglePinnedColumn={togglePinnedColumn}
-                            openAddColumn={() => {
-                                setIsColumnsPanelOpen(false);
-                                setIsColumnModalOpen(true);
-                            }}
-                        />
-                    </div>
-
-                    <div className="h-4 w-[1px] bg-[#2e2e2e] mx-2" />
-                    
-                    <button
-                        onClick={toggleRealtime}
-                        disabled={isRealtimeLoading || !tableName || tableName.startsWith('_v_')}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-[10px] font-black uppercase tracking-widest shrink-0 ${
-                            realtimeEnabled 
-                                ? 'bg-primary/10 border-primary/30 text-primary' 
-                                : 'bg-[#111111] border-[#2e2e2e] text-zinc-500 hover:text-zinc-300'
-                        } ${(isRealtimeLoading || tableName?.startsWith('_v_')) ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    >
-                        <Wifi size={14} className={realtimeEnabled ? "animate-pulse" : ""} />
-                        Realtime {realtimeEnabled ? 'On' : 'Off'}
-                    </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="flex min-w-0 items-center gap-3 2xl:w-auto">
-                        <div className="relative min-w-0 flex-1 group 2xl:w-72">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600 group-focus-within:text-primary transition-colors" size={14} />
-                        <input
-                            type="text"
-                            placeholder="Search records..."
-                            value={searchTerm}
-                            onChange={(e: any) => setSearchTerm(e.target.value)}
-                            className="w-full bg-[#111111] border border-[#2e2e2e] rounded-lg pl-9 pr-4 py-1.5 text-[11px] font-bold focus:outline-none focus:border-primary/50 text-zinc-200 placeholder:text-zinc-700 transition-all focus:ring-1 focus:ring-primary/10"
-                        />
-                        </div>
-                        <button
-                            onClick={fetchData}
-                            disabled={loading}
-                            className="shrink-0 p-2 border border-[#2e2e2e] rounded-lg hover:bg-zinc-800 transition-colors disabled:opacity-50 group"
-                        >
-                            <RefreshCw size={14} className={`${loading ? "animate-spin text-primary" : "text-zinc-500 group-hover:text-zinc-200"}`} />
-                        </button>
-                    </div>
-                </div>
-            </div>
+            <TableEditorToolbar
+                currentTableLabel={currentTableLabel}
+                tableName={tableName}
+                allTables={allTables}
+                onTableSelect={onTableSelect}
+                isTableSwitcherOpen={isTableSwitcherOpen}
+                setIsTableSwitcherOpen={setIsTableSwitcherOpen}
+                isViewsOpen={isViewsOpen}
+                setIsViewsOpen={setIsViewsOpen}
+                views={views}
+                activeViewId={activeViewId}
+                applyView={applyView}
+                viewName={viewName}
+                setViewName={setViewName}
+                onCreateView={handleCreateView}
+                onUpdateView={handleUpdateView}
+                onSetDefaultView={handleSetDefaultView}
+                onDeleteView={handleDeleteView}
+                onResetViewControls={resetViewControls}
+                isInsertDropdownOpen={isInsertDropdownOpen}
+                setIsInsertDropdownOpen={setIsInsertDropdownOpen}
+                rowIdentityEnabled={rowIdentityEnabled}
+                onOpenInsertRow={() => {
+                    setEditingRow(null);
+                    setIsModalOpen(true);
+                }}
+                onOpenAddColumn={() => setIsColumnModalOpen(true)}
+                handleCSVImport={handleCSVImport}
+                csvInputRef={csvInputRef}
+                isFilterOpen={isFilterOpen}
+                setIsFilterOpen={setIsFilterOpen}
+                isSortOpen={isSortOpen}
+                setIsSortOpen={setIsSortOpen}
+                sorts={sorts}
+                isColumnsPanelOpen={isColumnsPanelOpen}
+                setIsColumnsPanelOpen={setIsColumnsPanelOpen}
+                visibleColumnCount={visibleColumnCount}
+                totalColumnCount={totalColumnCount}
+                hiddenColumnCount={hiddenColumnCount}
+                columnSearchTerm={columnSearchTerm}
+                setColumnSearchTerm={setColumnSearchTerm}
+                filteredColumnOptions={filteredColumnOptions}
+                hiddenColumnSet={hiddenColumnSet}
+                pinnedColumnSet={pinnedColumnSet}
+                getTypeIcon={getTypeIcon}
+                showAllColumns={showAllColumns}
+                resetColumnLayout={resetColumnLayout}
+                toggleColumnVisibility={toggleColumnVisibility}
+                togglePinnedColumn={togglePinnedColumn}
+                realtimeEnabled={realtimeEnabled}
+                isRealtimeLoading={isRealtimeLoading}
+                onToggleRealtime={toggleRealtime}
+                searchTerm={searchTerm}
+                setSearchTerm={setSearchTerm}
+                fetchData={fetchData}
+                loading={loading}
+            />
 
             {readOnlyCompatibilityMessage && (
                 <div className="border-b border-amber-500/20 bg-amber-500/5 px-4 py-3 text-[10px] font-bold tracking-wide text-amber-200 sm:px-6">
@@ -2084,4 +1833,3 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
 };
 
 export default TableEditor;
-
