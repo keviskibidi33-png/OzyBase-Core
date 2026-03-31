@@ -36,6 +36,7 @@ interface StorageBucket {
     public: boolean;
     rls_enabled: boolean;
     rls_rule: string;
+    max_file_size_bytes: number;
     created_at?: string;
     object_count: number;
     total_size: number;
@@ -57,10 +58,23 @@ interface BucketFormState {
     isPublic: boolean;
     isRLS: boolean;
     rlsRule: string;
+    maxFileSizeMB: string;
 }
 
 const DEFAULT_RLS_RULE = "auth.uid() = owner_id";
-const EMPTY_BUCKET_FORM: BucketFormState = { name: '', isPublic: false, isRLS: false, rlsRule: DEFAULT_RLS_RULE };
+const EMPTY_BUCKET_FORM: BucketFormState = { name: '', isPublic: false, isRLS: false, rlsRule: DEFAULT_RLS_RULE, maxFileSizeMB: '' };
+
+interface StorageUploadSession {
+    upload_url: string;
+    upload_token: string;
+    bucket: string;
+    filename: string;
+    content_type: string;
+    size: number;
+    storage_key: string;
+    expires_at: string;
+    max_file_size_bytes: number;
+}
 
 const formatSize = (bytes: number): string => {
     if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
@@ -69,6 +83,18 @@ const formatSize = (bytes: number): string => {
     const value = bytes / 1024 ** index;
     return `${value.toFixed(value >= 100 || index === 0 ? 0 : 1)} ${units[index]}`;
 };
+
+const parseMaxFileSizeMB = (value: string): number | null => {
+    const trimmed = value.trim();
+    if (!trimmed) return 0;
+    const parsed = Number.parseFloat(trimmed);
+    if (!Number.isFinite(parsed) || parsed < 0) return null;
+    return Math.round(parsed * 1024 * 1024);
+};
+
+const formatBucketLimit = (bytes: number): string => (
+    Number.isFinite(bytes) && bytes > 0 ? formatSize(bytes) : 'Unlimited'
+);
 
 const formatDate = (value?: string): string => {
     if (!value) return 'Recently';
@@ -98,6 +124,8 @@ const StorageManager = (_props: StorageManagerProps) => {
     const [filePendingDelete, setFilePendingDelete] = useState<StorageObject | null>(null);
     const [isDeletingBucket, setIsDeletingBucket] = useState(false);
     const [isDeletingFile, setIsDeletingFile] = useState(false);
+    const [isUploading, setIsUploading] = useState(false);
+    const [uploadSummary, setUploadSummary] = useState('');
     const [toast, setToast] = useState<{ message: string; type: ToastTone } | null>(null);
     const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
@@ -149,6 +177,7 @@ const StorageManager = (_props: StorageManagerProps) => {
             public: true,
             rls_enabled: false,
             rls_rule: 'true',
+            max_file_size_bytes: 0,
             object_count: files.length,
             total_size: files.reduce((sum, file) => sum + file.size, 0),
         }
@@ -162,6 +191,7 @@ const StorageManager = (_props: StorageManagerProps) => {
     const storageHeroPills = [
         { label: selectedBucket.public ? 'public reads allowed' : 'private bucket', tone: selectedBucket.public ? 'accent' : 'neutral' },
         { label: selectedBucket.rls_enabled ? 'rls enforced' : 'rls optional', tone: selectedBucket.rls_enabled ? 'success' : 'warning' },
+        { label: `per-file ${formatBucketLimit(selectedBucket.max_file_size_bytes)}`, tone: selectedBucket.max_file_size_bytes > 0 ? 'warning' : 'neutral' },
         { label: `${selectedBucket.object_count} object${selectedBucket.object_count === 1 ? '' : 's'}`, tone: 'neutral' },
     ] as const;
     const storageHeroStats = [
@@ -173,7 +203,7 @@ const StorageManager = (_props: StorageManagerProps) => {
         {
             label: 'Stored Size',
             value: formatSize(selectedBucket.total_size),
-            hint: 'Use list or grid view depending on whether you are auditing or browsing files.',
+            hint: 'Uploads now stream through the same origin, so large files do not depend on the normal API body limit.',
         },
         {
             label: 'Search Scope',
@@ -182,12 +212,25 @@ const StorageManager = (_props: StorageManagerProps) => {
                 ? `Filtering by "${deferredSearch.trim()}".`
                 : 'Search by file name or MIME type inside the current bucket.',
         },
+        {
+            label: 'Per-File Limit',
+            value: formatBucketLimit(selectedBucket.max_file_size_bytes),
+            hint: selectedBucket.max_file_size_bytes > 0
+                ? 'Session uploads reject files above the bucket ceiling before streaming starts.'
+                : 'Leave the limit empty when you want storage policy to stay open-ended.',
+        },
     ];
 
     const openBucketDialog = (mode: BucketDialogMode) => {
         setBucketDialogMode(mode);
         setBucketForm(mode === 'edit'
-            ? { name: selectedBucket.name, isPublic: selectedBucket.public, isRLS: selectedBucket.rls_enabled, rlsRule: selectedBucket.rls_rule || DEFAULT_RLS_RULE }
+            ? {
+                name: selectedBucket.name,
+                isPublic: selectedBucket.public,
+                isRLS: selectedBucket.rls_enabled,
+                rlsRule: selectedBucket.rls_rule || DEFAULT_RLS_RULE,
+                maxFileSizeMB: selectedBucket.max_file_size_bytes > 0 ? (selectedBucket.max_file_size_bytes / (1024 * 1024)).toString() : '',
+            }
             : EMPTY_BUCKET_FORM);
     };
 
@@ -200,6 +243,8 @@ const StorageManager = (_props: StorageManagerProps) => {
     const handleBucketSave = async () => {
         const trimmedName = bucketForm.name.trim().toLowerCase();
         if (!trimmedName) return showToast('Bucket name is required', 'error');
+        const maxFileSizeBytes = parseMaxFileSizeMB(bucketForm.maxFileSizeMB);
+        if (maxFileSizeBytes === null) return showToast('Max file size must be a valid number of MB', 'error');
 
         setIsSavingBucket(true);
         try {
@@ -213,6 +258,7 @@ const StorageManager = (_props: StorageManagerProps) => {
                     public: bucketForm.isPublic,
                     rls_enabled: bucketForm.isRLS,
                     rls_rule: bucketForm.isRLS ? bucketForm.rlsRule.trim() || DEFAULT_RLS_RULE : 'true',
+                    max_file_size_bytes: maxFileSizeBytes,
                 }),
             });
             if (!response.ok) throw new Error(await extractError(response, `Failed to ${isEdit ? 'update' : 'create'} bucket`));
@@ -228,20 +274,52 @@ const StorageManager = (_props: StorageManagerProps) => {
         }
     };
 
+    const createUploadSession = useCallback(async (file: File): Promise<StorageUploadSession> => {
+        const response = await fetchWithAuth('/api/files/uploads/session', {
+            method: 'POST',
+            body: JSON.stringify({
+                bucket: selectedBucket.name,
+                filename: file.name,
+                content_type: file.type || 'application/octet-stream',
+                size: file.size,
+            }),
+        });
+        if (!response.ok) throw new Error(await extractError(response, `Failed to prepare upload for ${file.name}`));
+        return await response.json() as StorageUploadSession;
+    }, [selectedBucket.name]);
+
+    const uploadViaSession = useCallback(async (file: File) => {
+        const session = await createUploadSession(file);
+        const response = await fetchWithAuth(session.upload_url, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': session.content_type || file.type || 'application/octet-stream',
+                'X-Ozy-Upload-Token': session.upload_token,
+            },
+            body: file,
+        });
+        if (!response.ok) throw new Error(await extractError(response, `Failed to upload ${file.name}`));
+        return await response.json().catch(() => null);
+    }, [createUploadSession]);
+
     const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        if (!file) return;
-        const formData = new FormData();
-        formData.append('file', file);
+        const selectedFiles = Array.from(event.target.files ?? []);
+        if (selectedFiles.length === 0) return;
+
+        setIsUploading(true);
+        setUploadSummary(selectedFiles.length === 1 ? selectedFiles[0].name : `${selectedFiles.length} files`);
         try {
-            const response = await fetchWithAuth(`/api/files?bucket=${encodeURIComponent(selectedBucket.name)}`, { method: 'POST', body: formData });
-            if (!response.ok) throw new Error(await extractError(response, 'Failed to upload file'));
+            for (const file of selectedFiles) {
+                await uploadViaSession(file);
+            }
             await Promise.all([fetchFiles(selectedBucket.name), fetchBuckets(selectedBucket.name)]);
-            showToast('File uploaded', 'success');
+            showToast(selectedFiles.length === 1 ? 'File uploaded' : `${selectedFiles.length} files uploaded`, 'success');
         } catch (error) {
             console.error(error);
             showToast(error instanceof Error ? error.message : 'Failed to upload file', 'error');
         } finally {
+            setIsUploading(false);
+            setUploadSummary('');
             event.target.value = '';
         }
     };
@@ -313,7 +391,7 @@ const StorageManager = (_props: StorageManagerProps) => {
                         <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Buckets</p>
                         <p className="mt-2 text-xs text-zinc-600">Create, inspect and manage storage namespaces.</p>
                     </div>
-                    <button type="button" onClick={() => openBucketDialog('create')} className="rounded-xl border border-primary/20 bg-primary/10 p-2 text-primary transition-colors hover:bg-primary/15">
+                    <button type="button" onClick={() => openBucketDialog('create')} aria-label="Create bucket" title="Create bucket" className="rounded-xl border border-primary/20 bg-primary/10 p-2 text-primary transition-colors hover:bg-primary/15">
                         <Plus size={16} />
                     </button>
                 </div>
@@ -351,8 +429,8 @@ const StorageManager = (_props: StorageManagerProps) => {
                             <>
                                 <button type="button" onClick={() => { void fetchBuckets(selectedBucket.name); void fetchFiles(selectedBucket.name); }} className="inline-flex items-center gap-2 rounded-xl border border-zinc-800 px-4 py-2.5 text-[10px] font-black uppercase tracking-widest text-zinc-300 transition-colors hover:border-primary/30 hover:text-primary"><RefreshCw size={14} />Refresh</button>
                                 <button type="button" onClick={() => openBucketDialog('edit')} className="inline-flex items-center gap-2 rounded-xl border border-zinc-800 px-4 py-2.5 text-[10px] font-black uppercase tracking-widest text-zinc-300 transition-colors hover:border-primary/30 hover:text-primary"><Settings size={14} />Edit bucket</button>
-                                <button type="button" onClick={() => fileInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-[10px] font-black uppercase tracking-widest text-black transition-colors hover:bg-[#E6E600]"><Upload size={14} />Upload file</button>
-                                <input ref={fileInputRef} type="file" className="hidden" onChange={handleUpload} />
+                                <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-[10px] font-black uppercase tracking-widest text-black transition-colors hover:bg-[#E6E600] disabled:cursor-not-allowed disabled:opacity-60"><Upload size={14} />{isUploading ? 'Uploading...' : 'Upload file'}</button>
+                                <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleUpload} />
                             </>
                         }
                     />
@@ -369,6 +447,15 @@ const StorageManager = (_props: StorageManagerProps) => {
                                 <button type="button" onClick={() => setViewMode('list')} className={`rounded-lg p-2 transition-colors ${viewMode === 'list' ? 'bg-primary text-black' : 'text-zinc-600 hover:text-zinc-200'}`}><List size={16} /></button>
                             </div>
                         </div>
+                        <div className="rounded-2xl border border-[#2e2e2e] bg-[#111111] px-5 py-4">
+                            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Upload Runtime</p>
+                            <p className="mt-2 text-sm text-zinc-300">
+                                Files stream through a signed same-origin session, so large uploads do not depend on the normal API body limit.
+                            </p>
+                            <p className="mt-2 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-600">
+                                {isUploading ? `Uploading ${uploadSummary}` : `Per-file limit: ${formatBucketLimit(selectedBucket.max_file_size_bytes)}`}
+                            </p>
+                        </div>
 
                         {loadingFiles ? (
                             <div className="flex h-72 flex-col items-center justify-center gap-4 rounded-[28px] border border-[#2e2e2e] bg-[#111111]">
@@ -379,7 +466,7 @@ const StorageManager = (_props: StorageManagerProps) => {
                             <div className="flex h-72 flex-col items-center justify-center gap-4 rounded-[28px] border-2 border-dashed border-zinc-900 bg-[#111111]/70">
                                 <FolderOpen size={44} className="text-zinc-800" />
                                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">This bucket is empty</p>
-                                <button type="button" onClick={() => fileInputRef.current?.click()} className="rounded-xl bg-primary px-5 py-2.5 text-[10px] font-black uppercase tracking-widest text-black transition-colors hover:bg-[#E6E600]">Upload object</button>
+                                <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="rounded-xl bg-primary px-5 py-2.5 text-[10px] font-black uppercase tracking-widest text-black transition-colors hover:bg-[#E6E600] disabled:cursor-not-allowed disabled:opacity-60">{isUploading ? 'Uploading...' : 'Upload object'}</button>
                             </div>
                         ) : viewMode === 'list' ? (
                             <div className="overflow-hidden rounded-[28px] border border-[#2e2e2e] bg-[#111111]">
@@ -422,6 +509,7 @@ const StorageManager = (_props: StorageManagerProps) => {
                             <div className="mt-5 grid gap-4">
                                 <div className="rounded-3xl border border-[#2e2e2e] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Read Access</p><p className="mt-2 text-lg font-black text-white">{selectedBucket.public ? 'Public' : 'Authenticated only'}</p><p className="mt-2 text-sm text-zinc-500">{selectedBucket.public ? 'Anon reads work when RLS does not narrow access.' : 'Objects require a user session or service role key.'}</p></div>
                                 <div className="rounded-3xl border border-[#2e2e2e] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">RLS Rule</p><code className="mt-3 block overflow-x-auto rounded-2xl border border-zinc-800 bg-[#070707] px-4 py-4 text-xs text-primary">{selectedBucket.rls_enabled ? selectedBucket.rls_rule : 'true'}</code></div>
+                                <div className="rounded-3xl border border-[#2e2e2e] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Per-File Limit</p><p className="mt-2 text-lg font-black text-white">{formatBucketLimit(selectedBucket.max_file_size_bytes)}</p><p className="mt-2 text-sm text-zinc-500">Session uploads reject oversize files before the stream starts and keep the limit consistent across local or S3 backends.</p></div>
                             </div>
                         </div>
                         <div className="rounded-[28px] border border-[#2e2e2e] bg-[#111111] p-7">
@@ -442,7 +530,12 @@ const StorageManager = (_props: StorageManagerProps) => {
                     <div className="ozy-dialog-panel relative w-full max-w-lg overflow-hidden">
                         <div className="flex items-center justify-between border-b border-[#2e2e2e] bg-[#171717] px-8 py-6"><div><h3 className="text-xl font-black tracking-tight text-white">{bucketDialogMode === 'create' ? 'Create bucket' : 'Edit bucket'}</h3><p className="mt-1 text-[10px] font-black uppercase tracking-widest text-zinc-500">{bucketDialogMode === 'create' ? 'Provision a new storage namespace' : 'Adjust visibility and policy enforcement'}</p></div><button type="button" onClick={closeBucketDialog} className="text-zinc-500 transition-colors hover:text-white"><Plus className="rotate-45" size={18} /></button></div>
                         <div className="space-y-5 p-8">
-                            <div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Bucket Name</label><input autoFocus={bucketDialogMode === 'create'} type="text" value={bucketForm.name} onChange={(event) => setBucketForm((current) => ({ ...current, name: event.target.value }))} disabled={bucketDialogMode === 'edit'} className="w-full rounded-xl border border-zinc-800 bg-[#0c0c0c] px-4 py-3 text-sm text-white focus:border-primary/50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60" /></div>
+                            <div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Bucket Name</label><input autoFocus={bucketDialogMode === 'create'} type="text" value={bucketForm.name} onChange={(event) => setBucketForm((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. customer-assets" disabled={bucketDialogMode === 'edit'} className="w-full rounded-xl border border-zinc-800 bg-[#0c0c0c] px-4 py-3 text-sm text-white focus:border-primary/50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60" /></div>
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Per-file limit (MB)</label>
+                                <input type="number" min="0" step="1" value={bucketForm.maxFileSizeMB} onChange={(event) => setBucketForm((current) => ({ ...current, maxFileSizeMB: event.target.value }))} placeholder="Leave empty for unlimited" className="w-full rounded-xl border border-zinc-800 bg-[#0c0c0c] px-4 py-3 text-sm text-white focus:border-primary/50 focus:outline-none" />
+                                <p className="text-[11px] leading-relaxed text-zinc-500">Use this to cap each uploaded file. The limit applies before streaming starts, even when storage runs on S3.</p>
+                            </div>
                             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                                 <button type="button" onClick={() => setBucketForm((current) => ({ ...current, isPublic: !current.isPublic }))} className={`rounded-2xl border px-4 py-4 text-left transition-all ${bucketForm.isPublic ? 'border-primary/30 bg-primary/10 text-primary' : 'border-zinc-800 bg-zinc-900/40 text-zinc-400'}`}><p className="text-[10px] font-black uppercase tracking-widest">Public Access</p><p className="mt-2 text-[11px] leading-relaxed text-white/80">Allow anonymous reads when RLS does not narrow access.</p></button>
                                 <button type="button" onClick={() => setBucketForm((current) => ({ ...current, isRLS: !current.isRLS }))} className={`rounded-2xl border px-4 py-4 text-left transition-all ${bucketForm.isRLS ? 'border-primary/30 bg-primary/10 text-primary' : 'border-zinc-800 bg-zinc-900/40 text-zinc-400'}`}><p className="text-[10px] font-black uppercase tracking-widest">RLS Policy</p><p className="mt-2 text-[11px] leading-relaxed text-white/80">Filter reads and deletes with a Supabase-style rule.</p></button>

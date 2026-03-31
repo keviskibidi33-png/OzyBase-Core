@@ -3,6 +3,7 @@ package api
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -67,4 +68,36 @@ func TestBuildObjectStorageKey(t *testing.T) {
 
 	assert.True(t, strings.HasSuffix(key, "_my-report-2026.pdf"))
 	assert.Len(t, strings.SplitN(key, "_", 2), 2)
+}
+
+func TestValidateBucketUploadSize(t *testing.T) {
+	t.Parallel()
+
+	bucket := bucketRecord{Name: "docs", MaxFileSizeBytes: 5 * 1024 * 1024}
+	assert.NoError(t, validateBucketUploadSize(bucket, 1024))
+	assert.ErrorContains(t, validateBucketUploadSize(bucket, 6*1024*1024), "file exceeds bucket limit")
+}
+
+func TestStorageUploadTokenRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.March, 31, 10, 0, 0, 0, time.UTC)
+	token, err := issueStorageUploadToken("test-secret", "session-123", now, now.Add(10*time.Minute))
+	assert.NoError(t, err)
+
+	claims, err := validateStorageUploadToken("test-secret", token, now.Add(5*time.Minute))
+	assert.NoError(t, err)
+	assert.Equal(t, "session-123", claims.SessionID)
+	assert.Equal(t, "storage-upload", claims.Scope)
+}
+
+func TestStorageUploadTokenRejectsExpired(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.March, 31, 10, 0, 0, 0, time.UTC)
+	token, err := issueStorageUploadToken("test-secret", "session-123", now, now.Add(1*time.Minute))
+	assert.NoError(t, err)
+
+	_, err = validateStorageUploadToken("test-secret", token, now.Add(2*time.Minute))
+	assert.Error(t, err)
 }

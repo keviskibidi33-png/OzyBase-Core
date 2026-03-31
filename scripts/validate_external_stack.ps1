@@ -12,8 +12,9 @@ param(
   [int]$Workers = 8,
   [int]$SmallFiles = 20,
   [int]$SmallFileSizeKB = 256,
-  [int]$LargeFiles = 3,
-  [int]$LargeFileSizeMB = 20
+  [int]$LargeFiles = 2,
+  [int]$LargeFileSizeMB = 96,
+  [int]$BucketLimitMB = 100
 )
 
 $ErrorActionPreference = "Stop"
@@ -163,6 +164,53 @@ function Wait-CurlProcesses {
   }
 }
 
+function New-StorageUploadSession {
+  param(
+    [int]$ApiPort,
+    [string]$Token,
+    [string]$WorkspaceId,
+    [string]$BucketName,
+    [string]$FileName,
+    [long]$FileSize,
+    [string]$ContentType
+  )
+
+  $headers = @{
+    Authorization  = "Bearer $Token"
+    "X-Workspace-Id" = $WorkspaceId
+    "Content-Type" = "application/json"
+  }
+  $body = @{
+    bucket       = $BucketName
+    filename     = $FileName
+    size         = $FileSize
+    content_type = $ContentType
+  } | ConvertTo-Json
+
+  return Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ApiPort/api/files/uploads/session" -Headers $headers -Body $body
+}
+
+function Start-StreamingUploadJob {
+  param(
+    [string]$Label,
+    [string]$UploadUrl,
+    [string]$UploadToken,
+    [string]$FilePath,
+    [string]$BearerToken,
+    [string]$WorkspaceId
+  )
+
+  return Start-CurlProcess -Label $Label -Arguments @(
+    "-sS",
+    "-X", "PUT",
+    $UploadUrl,
+    "-H", "Authorization: Bearer $BearerToken",
+    "-H", "X-Workspace-Id: $WorkspaceId",
+    "-H", "X-Ozy-Upload-Token: $UploadToken",
+    "--data-binary", "@$FilePath"
+  )
+}
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $network = "ozy-validate-net"
 $pgName = "ozy-validate-pg"
@@ -295,30 +343,67 @@ try {
   $headers = @{ Authorization = "Bearer $token"; "X-Workspace-Id" = $workspaceId }
 
   $bucketName = "s3mass$((Get-Date).ToString('HHmmss'))"
-  $bucketBody = @{ name = $bucketName; public = $false; rls_enabled = $false } | ConvertTo-Json
+  $bucketLimitBytes = $BucketLimitMB * 1024 * 1024
+  $bucketBody = @{ name = $bucketName; public = $false; rls_enabled = $false; max_file_size_bytes = $bucketLimitBytes } | ConvertTo-Json
   Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ApiPort/api/files/buckets" -Headers ($headers + @{ "Content-Type" = "application/json" }) -Body $bucketBody | Out-Null
 
   foreach ($filePath in $smallPaths) {
-    $uploadUrl = "http://127.0.0.1:$ApiPort/api/files?bucket=$bucketName"
-    & curl.exe -sS -X POST $uploadUrl -H "Authorization: Bearer $token" -H "X-Workspace-Id: $workspaceId" -F "file=@$filePath" *> $null
+    $fileName = [IO.Path]::GetFileName($filePath)
+    $fileSize = (Get-Item $filePath).Length
+    $session = New-StorageUploadSession -ApiPort $ApiPort -Token $token -WorkspaceId $workspaceId -BucketName $bucketName -FileName $fileName -FileSize $fileSize -ContentType "application/octet-stream"
+    $uploadUrl = "http://127.0.0.1:$ApiPort$($session.upload_url)"
+    & curl.exe -sS -X PUT $uploadUrl -H "Authorization: Bearer $token" -H "X-Workspace-Id: $workspaceId" -H "X-Ozy-Upload-Token: $($session.upload_token)" --data-binary "@$filePath" *> $null
     if ($LASTEXITCODE -ne 0) {
       throw "upload failed for $filePath"
     }
   }
   $largeUploadJobs = @()
   foreach ($filePath in $largePaths) {
-    $uploadUrl = "http://127.0.0.1:$ApiPort/api/files?bucket=$bucketName"
+    $fileName = [IO.Path]::GetFileName($filePath)
+    $fileSize = (Get-Item $filePath).Length
+    $session = New-StorageUploadSession -ApiPort $ApiPort -Token $token -WorkspaceId $workspaceId -BucketName $bucketName -FileName $fileName -FileSize $fileSize -ContentType "application/octet-stream"
+    $uploadUrl = "http://127.0.0.1:$ApiPort$($session.upload_url)"
     $label = "ozybase-upload-$([IO.Path]::GetFileNameWithoutExtension($filePath))"
-    $largeUploadJobs += Start-CurlProcess -Label $label -Arguments @(
-      "-sS",
-      "-X", "POST",
-      $uploadUrl,
-      "-H", "Authorization: Bearer $token",
-      "-H", "X-Workspace-Id: $workspaceId",
-      "-F", "file=@$filePath"
-    )
+    $largeUploadJobs += Start-StreamingUploadJob -Label $label -UploadUrl $uploadUrl -UploadToken $session.upload_token -FilePath $filePath -BearerToken $token -WorkspaceId $workspaceId
   }
   Wait-CurlProcesses -Jobs $largeUploadJobs
+
+  $oversizeBody = @{
+    bucket       = $bucketName
+    filename     = "oversize-check.bin"
+    size         = ($bucketLimitBytes + 1MB)
+    content_type = "application/octet-stream"
+  } | ConvertTo-Json
+  try {
+    Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ApiPort/api/files/uploads/session" -Headers ($headers + @{ "Content-Type" = "application/json" }) -Body $oversizeBody | Out-Null
+    throw "oversize upload session should have been rejected"
+  } catch {
+    $statusCode = $_.Exception.Response.StatusCode.value__
+    if ($statusCode -ne 413) {
+      throw "expected oversize session rejection 413, got $statusCode"
+    }
+  }
+
+  $mismatchSession = New-StorageUploadSession -ApiPort $ApiPort -Token $token -WorkspaceId $workspaceId -BucketName $bucketName -FileName "declared-size-mismatch.bin" -FileSize (1MB) -ContentType "application/octet-stream"
+  $mismatchStdout = Join-Path $storageDir "mismatch.stdout.log"
+  $mismatchStderr = Join-Path $storageDir "mismatch.stderr.log"
+  $mismatchArguments = @(
+    "-sS",
+    "-o", "NUL",
+    "-w", "%{http_code}",
+    "-X", "PUT",
+    "http://127.0.0.1:$ApiPort$($mismatchSession.upload_url)",
+    "-H", "Authorization: Bearer $token",
+    "-H", "X-Workspace-Id: $workspaceId",
+    "-H", "X-Ozy-Upload-Token: $($mismatchSession.upload_token)",
+    "--data-binary", "@$($largePaths[0])"
+  )
+  $mismatchProcess = Start-CurlProcess -Label "ozybase-upload-mismatch" -Arguments $mismatchArguments
+  $mismatchProcess.Process.WaitForExit()
+  $mismatchStatus = if (Test-Path $mismatchProcess.StdOut) { (Get-Content $mismatchProcess.StdOut -Raw).Trim() } else { "" }
+  if ($mismatchStatus -ne "400") {
+    throw "expected upload size mismatch to return 400, got '$mismatchStatus'"
+  }
 
   $files = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:$ApiPort/api/files?bucket=$bucketName" -Headers $headers
   $expectedFileCount = $SmallFiles + $LargeFiles

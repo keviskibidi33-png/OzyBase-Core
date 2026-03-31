@@ -33,6 +33,7 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 			public BOOLEAN DEFAULT FALSE,
 			rls_enabled BOOLEAN DEFAULT TRUE,
 			rls_rule TEXT DEFAULT 'auth.uid() = owner_id',
+			max_file_size_bytes BIGINT NOT NULL DEFAULT 0 CHECK (max_file_size_bytes >= 0),
 			created_at TIMESTAMPTZ DEFAULT NOW(),
 			updated_at TIMESTAMPTZ DEFAULT NOW()
 		)`,
@@ -50,6 +51,20 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 			updated_at TIMESTAMPTZ DEFAULT NOW(),
 			UNIQUE(bucket_id, name)
 		)`,
+		`CREATE TABLE IF NOT EXISTS _v_storage_upload_sessions (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			bucket_id UUID NOT NULL REFERENCES _v_buckets(id) ON DELETE CASCADE,
+			owner_id UUID REFERENCES _v_users(id) ON DELETE SET NULL,
+			name TEXT NOT NULL,
+			size BIGINT NOT NULL CHECK (size >= 0),
+			content_type VARCHAR(255) NOT NULL DEFAULT 'application/octet-stream',
+			storage_key TEXT NOT NULL,
+			expires_at TIMESTAMPTZ NOT NULL,
+			used_at TIMESTAMPTZ,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_storage_upload_sessions_storage_key ON _v_storage_upload_sessions(storage_key)`,
+		`CREATE INDEX IF NOT EXISTS idx_storage_upload_sessions_expiry ON _v_storage_upload_sessions(expires_at, used_at)`,
 
 		// Edge Functions
 		`CREATE TABLE IF NOT EXISTS _v_functions (
@@ -369,6 +384,9 @@ func (db *DB) RunMigrations(ctx context.Context) error {
 		`ALTER TABLE _v_security_alerts ADD COLUMN IF NOT EXISTS message TEXT`,
 		`ALTER TABLE _v_security_alerts ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE _v_collections ADD COLUMN IF NOT EXISTS realtime_enabled BOOLEAN DEFAULT FALSE`,
+		`ALTER TABLE _v_buckets ADD COLUMN IF NOT EXISTS max_file_size_bytes BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE _v_buckets DROP CONSTRAINT IF EXISTS _v_buckets_max_file_size_bytes_check`,
+		`ALTER TABLE _v_buckets ADD CONSTRAINT _v_buckets_max_file_size_bytes_check CHECK (max_file_size_bytes >= 0)`,
 
 		// API Keys (Enterprise Phase 1)
 		`CREATE TABLE IF NOT EXISTS _v_api_keys (

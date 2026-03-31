@@ -397,7 +397,12 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		},
 	)))
 	e.Use(api.SecurityHeadersDefault())
-	e.Use(middleware.BodyLimit(cfg.BodyLimit))
+	e.Use(middleware.BodyLimitWithConfig(middleware.BodyLimitConfig{
+		Limit: cfg.BodyLimit,
+		Skipper: func(c echo.Context) bool {
+			return c.Request().Method == http.MethodPut && c.Request().URL.Path == "/api/files/uploads"
+		},
+	}))
 	e.Use(api.PrometheusMiddleware()) // 📊 Stats
 	e.Use(api.APIKeyMiddleware(h.DB)) // 🔐 API Key Auth (Enterprise Phase 1)
 	e.Use(api.RLSMiddleware(h.DB))    // 🛡️ RLS Context Injection
@@ -440,7 +445,7 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 	twoFactorService := core.NewTwoFactorService(h.DB)
 	twoFactorHandler := api.NewTwoFactorHandler(twoFactorService, authService)
 	realtimeHandler := api.NewRealtimeHandler(h.Broker)
-	fileHandler := api.NewFileHandler(h.DB, h.Storage, cfg.StoragePath)
+	fileHandler := api.NewFileHandler(h.DB, h.Storage, cfg.StoragePath, cfg.JWTSecret)
 	functionsHandler := api.NewFunctionsHandler(h.DB, "./functions")
 	webhookHandler := api.NewWebhookHandler(h.DB)
 	cronHandler := api.NewCronHandler(h.DB, cronMgr)
@@ -540,6 +545,8 @@ func setupEcho(h *api.Handler, cfg *config.Config, cronMgr *realtime.CronManager
 		apiGroup.POST("/files/buckets", fileHandler.CreateBucket, authRequired, adminOnly)
 		apiGroup.PATCH("/files/buckets/:name", fileHandler.UpdateBucket, authRequired, adminOnly)
 		apiGroup.DELETE("/files/buckets/:name", fileHandler.DeleteBucket, authRequired, adminOnly)
+		apiGroup.POST("/files/uploads/session", fileHandler.CreateUploadSession, authRequired)
+		apiGroup.PUT("/files/uploads", fileHandler.UploadStream)
 		apiGroup.POST("/files", fileHandler.Upload, authRequired)
 		apiGroup.GET("/files", fileHandler.List, authOptional)
 		apiGroup.GET("/files/:bucket/*", fileHandler.Download, authOptional)

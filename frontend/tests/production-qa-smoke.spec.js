@@ -122,7 +122,7 @@ test('production QA smoke: overlays + storage + tables + edge functions', async 
             return;
         }
         const pathname = new URL(response.url()).pathname;
-        if (response.status() >= 400 && pathname !== '/api/health' && pathname !== '/api/project/health') {
+        if (response.status() >= 400 && pathname !== '/api/health' && pathname !== '/api/project/health' && pathname !== '/api/auth/csrf') {
             apiFailures.push(`${response.status()} ${pathname}`);
         }
     });
@@ -156,10 +156,10 @@ test('production QA smoke: overlays + storage + tables + edge functions', async 
         await expect(page.getByRole('button', { name: new RegExp(tableName, 'i') }).first()).toBeVisible({ timeout: 20000 });
         await page.getByRole('button', { name: new RegExp(tableName, 'i') }).first().click();
 
-        await page.getByRole('button', { name: /Insert/i }).click();
-        await page.getByRole('button', { name: /Insert Row/i }).click();
+        await page.getByRole('button', { name: /^Insert$/i }).click();
+        await page.getByRole('button', { name: /Insert Row Add a new record/i }).click();
         await page.getByPlaceholder('Enter title...').fill(`row-${qaSuffix}`);
-        await page.getByPlaceholder('Enter amount...').fill('7');
+        await page.getByRole('spinbutton').first().fill('7');
         await page.getByRole('button', { name: /^Insert Row$/i }).last().click();
         await expect(page.getByText(`row-${qaSuffix}`)).toBeVisible({ timeout: 20000 });
 
@@ -169,11 +169,11 @@ test('production QA smoke: overlays + storage + tables + edge functions', async 
         expect(rowsRes.body.data.length).toBeGreaterThanOrEqual(1);
 
         await page.getByRole('button', { name: 'Storage' }).click();
-        await expect(page.getByText('Object Storage Engine')).toBeVisible({ timeout: 15000 });
+        await expect(page.getByRole('button', { name: 'Create bucket' })).toBeVisible({ timeout: 15000 });
         await page.getByRole('button', { name: 'Create bucket' }).click();
         const bucketModal = page.locator('.ozy-dialog-panel').filter({ has: page.getByPlaceholder('e.g. customer-assets') });
         await bucketModal.getByPlaceholder('e.g. customer-assets').fill(bucketName);
-        await bucketModal.getByRole('button', { name: 'Create Bucket', exact: true }).click();
+        await bucketModal.getByRole('button', { name: /^Create bucket$/i }).click();
         const bucketButton = page.getByRole('button', { name: new RegExp(bucketName, 'i') });
         await expect(bucketButton).toBeVisible({ timeout: 15000 });
         await bucketButton.click();

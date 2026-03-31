@@ -83,3 +83,7 @@ Before claiming SaaS-grade readiness, extend the run to:
 - sustained concurrency beyond the default 4 workers
 - external Postgres with direct `DATABASE_URL` plus `DB_POOLER_URL`
 - shared object storage and Redis-backed realtime when those modes are enabled
+
+Storage note:
+
+- `scripts/validate_external_stack.ps1` now also exercises signed streaming uploads against the same-origin storage endpoint, so you can validate files larger than the normal `BODY_LIMIT` while still keeping self-host deploys independent from browser-to-S3 CORS assumptions.

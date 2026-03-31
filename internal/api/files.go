@@ -12,16 +12,19 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/Xangel0s/OzyBase/internal/data"
 	ozystorage "github.com/Xangel0s/OzyBase/internal/storage"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 )
 
 const defaultBucketRLSRule = "auth.uid() = owner_id"
+const storageUploadSessionTTL = 15 * time.Minute
 
 var bucketNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._-]{1,61}[a-z0-9])?$`)
 
@@ -34,14 +37,15 @@ const (
 )
 
 type bucketRecord struct {
-	ID          string
-	Name        string
-	Public      bool
-	RLSEnabled  bool
-	RLSRule     string
-	CreatedAt   any
-	ObjectCount int64
-	TotalSize   int64
+	ID               string
+	Name             string
+	Public           bool
+	RLSEnabled       bool
+	RLSRule          string
+	MaxFileSizeBytes int64
+	CreatedAt        any
+	ObjectCount      int64
+	TotalSize        int64
 }
 
 type storedObject struct {
@@ -53,19 +57,40 @@ type storedObject struct {
 	CreatedAt   any
 }
 
+type storageUploadSession struct {
+	ID          string
+	BucketID    string
+	BucketName  string
+	OwnerID     *string
+	Name        string
+	Size        int64
+	ContentType string
+	StorageKey  string
+	ExpiresAt   time.Time
+	UsedAt      *time.Time
+}
+
+type storageUploadClaims struct {
+	SessionID string `json:"sid"`
+	Scope     string `json:"scope"`
+	jwt.RegisteredClaims
+}
+
 // FileHandler handles file uploads and storage policies.
 type FileHandler struct {
 	DB         *data.DB
 	Storage    ozystorage.Provider
 	StorageDir string
+	UploadKey  string
 }
 
 // NewFileHandler creates a new instance of FileHandler.
-func NewFileHandler(db *data.DB, storageSvc ozystorage.Provider, storageDir string) *FileHandler {
+func NewFileHandler(db *data.DB, storageSvc ozystorage.Provider, storageDir string, uploadKey string) *FileHandler {
 	return &FileHandler{
 		DB:         db,
 		Storage:    storageSvc,
 		StorageDir: storageDir,
+		UploadKey:  strings.TrimSpace(uploadKey),
 	}
 }
 
@@ -103,47 +128,165 @@ func (h *FileHandler) Upload(c echo.Context) error {
 		contentType = "application/octet-stream"
 	}
 
-	objectACL := ozystorage.ACLPrivate
-	if bucket.Public && !bucket.RLSEnabled {
-		objectACL = ozystorage.ACLPublicRead
-	} else if bucket.RLSEnabled {
-		objectACL = ozystorage.ACLAuthRead
+	if err := validateBucketUploadSize(bucket, fileHeader.Size); err != nil {
+		return c.JSON(http.StatusRequestEntityTooLarge, map[string]string{"error": err.Error()})
 	}
 
-	if err := h.Storage.Upload(c.Request().Context(), bucket.Name, objectKey, source, fileHeader.Size, contentType, objectACL); err != nil {
+	if err := h.Storage.Upload(c.Request().Context(), bucket.Name, objectKey, source, fileHeader.Size, contentType, storageObjectACL(bucket)); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": "Failed to store file: " + err.Error(),
 		})
 	}
 
-	ownerID := uuidPointerFromContext(c)
-	var objectID string
-	err = h.DB.Pool.QueryRow(c.Request().Context(), `
-		INSERT INTO _v_storage_objects (bucket_id, owner_id, name, size, content_type, path)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id
-	`, bucket.ID, ownerID, displayName, fileHeader.Size, contentType, objectKey).Scan(&objectID)
+	payload, err := h.createStoredObjectRecord(c.Request().Context(), bucket, uuidPointerFromContext(c), displayName, objectKey, fileHeader.Size, contentType)
 	if err != nil {
 		_ = h.Storage.Delete(c.Request().Context(), bucket.Name, objectKey)
-		if isDuplicateConstraintError(err) {
-			return c.JSON(http.StatusConflict, map[string]string{"error": "A file with this name already exists in the bucket"})
-		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{
-			"error": "Failed to save file metadata: " + err.Error(),
+		return storageUploadMetadataError(c, err)
+	}
+
+	return c.JSON(http.StatusCreated, payload)
+}
+
+// CreateUploadSession handles POST /api/files/uploads/session
+func (h *FileHandler) CreateUploadSession(c echo.Context) error {
+	var req struct {
+		BucketName  string `json:"bucket"`
+		FileName    string `json:"filename"`
+		ContentType string `json:"content_type"`
+		Size        int64  `json:"size"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid upload session request"})
+	}
+
+	bucketName := normalizeBucketName(req.BucketName)
+	bucket, err := h.getBucket(c.Request().Context(), bucketName)
+	if err != nil {
+		return storageErrorResponse(c, err)
+	}
+	if _, err := h.authorizeBucket(c, bucket, storageActionWrite); err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": err.Error()})
+	}
+	if req.Size < 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "File size must be zero or greater"})
+	}
+	if err := validateBucketUploadSize(bucket, req.Size); err != nil {
+		return c.JSON(http.StatusRequestEntityTooLarge, map[string]string{"error": err.Error()})
+	}
+
+	displayName := cleanObjectName(req.FileName)
+	if strings.TrimSpace(displayName) == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Filename is required"})
+	}
+	contentType := strings.TrimSpace(req.ContentType)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	ownerID := uuidPointerFromContext(c)
+	expiresAt := time.Now().UTC().Add(storageUploadSessionTTL)
+	objectKey := buildObjectStorageKey(displayName)
+	var sessionID string
+	err = h.DB.Pool.QueryRow(c.Request().Context(), `
+		INSERT INTO _v_storage_upload_sessions (bucket_id, owner_id, name, size, content_type, storage_key, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id
+	`, bucket.ID, ownerID, displayName, req.Size, contentType, objectKey, expiresAt).Scan(&sessionID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create upload session: " + err.Error()})
+	}
+
+	token, err := issueStorageUploadToken(h.UploadKey, sessionID, time.Now().UTC(), expiresAt)
+	if err != nil {
+		_, _ = h.DB.Pool.Exec(c.Request().Context(), `DELETE FROM _v_storage_upload_sessions WHERE id = $1`, sessionID)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to sign upload session"})
+	}
+
+	return c.JSON(http.StatusCreated, map[string]any{
+		"upload_url":           "/api/files/uploads",
+		"upload_token":         token,
+		"bucket":               bucket.Name,
+		"filename":             displayName,
+		"content_type":         contentType,
+		"size":                 req.Size,
+		"storage_key":          objectKey,
+		"expires_at":           expiresAt,
+		"max_file_size_bytes":  bucket.MaxFileSizeBytes,
+		"streaming":            true,
+		"body_limit_bypassed":  true,
+		"recommended_protocol": "same-origin-put",
+	})
+}
+
+// UploadStream handles PUT /api/files/uploads
+func (h *FileHandler) UploadStream(c echo.Context) error {
+	token := strings.TrimSpace(c.Request().Header.Get("X-Ozy-Upload-Token"))
+	if token == "" {
+		token = strings.TrimSpace(c.QueryParam("token"))
+	}
+	if token == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Upload token is required"})
+	}
+
+	claims, err := validateStorageUploadToken(h.UploadKey, token, time.Now().UTC())
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Upload token is invalid or expired"})
+	}
+
+	session, err := h.getStorageUploadSession(c.Request().Context(), claims.SessionID)
+	if err != nil {
+		return storageErrorResponse(c, err)
+	}
+	if session.UsedAt != nil {
+		return c.JSON(http.StatusConflict, map[string]string{"error": "Upload session was already used"})
+	}
+	if time.Now().UTC().After(session.ExpiresAt) {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Upload session expired"})
+	}
+
+	bucket, err := h.getBucket(c.Request().Context(), session.BucketName)
+	if err != nil {
+		return storageErrorResponse(c, err)
+	}
+	if err := validateBucketUploadSize(bucket, session.Size); err != nil {
+		return c.JSON(http.StatusRequestEntityTooLarge, map[string]string{"error": err.Error()})
+	}
+
+	contentLength := c.Request().ContentLength
+	if contentLength >= 0 && contentLength != session.Size {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("Content length mismatch: expected %d bytes, got %d", session.Size, contentLength),
 		})
 	}
 
-	downloadURL := buildObjectURL(bucket.Name, objectKey)
-	return c.JSON(http.StatusCreated, map[string]any{
-		"id":           objectID,
-		"name":         displayName,
-		"filename":     displayName,
-		"storage_key":  objectKey,
-		"content_type": contentType,
-		"url":          downloadURL,
-		"path":         downloadURL,
-		"download_url": downloadURL,
-	})
+	if err := h.ensureUploadObjectDoesNotExist(c.Request().Context(), session); err != nil {
+		return storageUploadMetadataError(c, err)
+	}
+
+	commandTag, err := h.DB.Pool.Exec(c.Request().Context(), `
+		UPDATE _v_storage_upload_sessions
+		SET used_at = NOW()
+		WHERE id = $1 AND used_at IS NULL AND expires_at > NOW()
+	`, session.ID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to claim upload session: " + err.Error()})
+	}
+	if commandTag.RowsAffected() == 0 {
+		return c.JSON(http.StatusConflict, map[string]string{"error": "Upload session is no longer available"})
+	}
+
+	if err := h.Storage.Upload(c.Request().Context(), bucket.Name, session.StorageKey, c.Request().Body, session.Size, session.ContentType, storageObjectACL(bucket)); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to stream file into storage: " + err.Error()})
+	}
+
+	payload, err := h.createStoredObjectRecord(c.Request().Context(), bucket, session.OwnerID, session.Name, session.StorageKey, session.Size, session.ContentType)
+	if err != nil {
+		_ = h.Storage.Delete(c.Request().Context(), bucket.Name, session.StorageKey)
+		return storageUploadMetadataError(c, err)
+	}
+
+	_, _ = h.DB.Pool.Exec(c.Request().Context(), `DELETE FROM _v_storage_upload_sessions WHERE id = $1`, session.ID)
+	return c.JSON(http.StatusCreated, payload)
 }
 
 // List handles GET /api/files
@@ -301,12 +444,13 @@ func (h *FileHandler) ListBuckets(c echo.Context) error {
 			b.public,
 			b.rls_enabled,
 			b.rls_rule,
+			b.max_file_size_bytes,
 			b.created_at,
 			COUNT(o.id) AS object_count,
 			COALESCE(SUM(o.size), 0) AS total_size
 		FROM _v_buckets b
 		LEFT JOIN _v_storage_objects o ON o.bucket_id = b.id
-		GROUP BY b.id, b.name, b.public, b.rls_enabled, b.rls_rule, b.created_at
+		GROUP BY b.id, b.name, b.public, b.rls_enabled, b.rls_rule, b.max_file_size_bytes, b.created_at
 		ORDER BY b.created_at ASC
 	`)
 	if err != nil {
@@ -323,6 +467,7 @@ func (h *FileHandler) ListBuckets(c echo.Context) error {
 			&bucket.Public,
 			&bucket.RLSEnabled,
 			&bucket.RLSRule,
+			&bucket.MaxFileSizeBytes,
 			&bucket.CreatedAt,
 			&bucket.ObjectCount,
 			&bucket.TotalSize,
@@ -347,10 +492,11 @@ func (h *FileHandler) GetBucket(c echo.Context) error {
 // CreateBucket handles POST /api/files/buckets
 func (h *FileHandler) CreateBucket(c echo.Context) error {
 	var req struct {
-		Name       string `json:"name"`
-		Public     bool   `json:"public"`
-		RLSEnabled bool   `json:"rls_enabled"`
-		RLSRule    string `json:"rls_rule"`
+		Name             string `json:"name"`
+		Public           bool   `json:"public"`
+		RLSEnabled       bool   `json:"rls_enabled"`
+		RLSRule          string `json:"rls_rule"`
+		MaxFileSizeBytes int64  `json:"max_file_size_bytes"`
 	}
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
@@ -362,18 +508,22 @@ func (h *FileHandler) CreateBucket(c echo.Context) error {
 	}
 
 	req.RLSRule = normalizeRLSRule(req.RLSEnabled, req.RLSRule)
+	if req.MaxFileSizeBytes < 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "max_file_size_bytes must be zero or greater"})
+	}
 
 	var bucket bucketRecord
 	err := h.DB.Pool.QueryRow(c.Request().Context(), `
-		INSERT INTO _v_buckets (name, public, rls_enabled, rls_rule)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, name, public, rls_enabled, rls_rule, created_at
-	`, req.Name, req.Public, req.RLSEnabled, req.RLSRule).Scan(
+		INSERT INTO _v_buckets (name, public, rls_enabled, rls_rule, max_file_size_bytes)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, name, public, rls_enabled, rls_rule, max_file_size_bytes, created_at
+	`, req.Name, req.Public, req.RLSEnabled, req.RLSRule, req.MaxFileSizeBytes).Scan(
 		&bucket.ID,
 		&bucket.Name,
 		&bucket.Public,
 		&bucket.RLSEnabled,
 		&bucket.RLSRule,
+		&bucket.MaxFileSizeBytes,
 		&bucket.CreatedAt,
 	)
 	if err != nil {
@@ -394,15 +544,16 @@ func (h *FileHandler) UpdateBucket(c echo.Context) error {
 	}
 
 	var req struct {
-		Public     *bool   `json:"public"`
-		RLSEnabled *bool   `json:"rls_enabled"`
-		RLSRule    *string `json:"rls_rule"`
+		Public           *bool   `json:"public"`
+		RLSEnabled       *bool   `json:"rls_enabled"`
+		RLSRule          *string `json:"rls_rule"`
+		MaxFileSizeBytes *int64  `json:"max_file_size_bytes"`
 	}
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
 	}
 
-	if req.Public == nil && req.RLSEnabled == nil && req.RLSRule == nil {
+	if req.Public == nil && req.RLSEnabled == nil && req.RLSRule == nil && req.MaxFileSizeBytes == nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "No bucket updates provided"})
 	}
 
@@ -422,17 +573,26 @@ func (h *FileHandler) UpdateBucket(c echo.Context) error {
 	}
 	rlsRuleValue = normalizeRLSRule(rlsEnabledValue, rlsRuleValue)
 
+	maxFileSizeBytes := bucket.MaxFileSizeBytes
+	if req.MaxFileSizeBytes != nil {
+		if *req.MaxFileSizeBytes < 0 {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "max_file_size_bytes must be zero or greater"})
+		}
+		maxFileSizeBytes = *req.MaxFileSizeBytes
+	}
+
 	err = h.DB.Pool.QueryRow(c.Request().Context(), `
 		UPDATE _v_buckets
-		SET public = $2, rls_enabled = $3, rls_rule = $4, updated_at = NOW()
+		SET public = $2, rls_enabled = $3, rls_rule = $4, max_file_size_bytes = $5, updated_at = NOW()
 		WHERE id = $1
-		RETURNING id, name, public, rls_enabled, rls_rule, created_at
-	`, bucket.ID, publicValue, rlsEnabledValue, rlsRuleValue).Scan(
+		RETURNING id, name, public, rls_enabled, rls_rule, max_file_size_bytes, created_at
+	`, bucket.ID, publicValue, rlsEnabledValue, rlsRuleValue, maxFileSizeBytes).Scan(
 		&bucket.ID,
 		&bucket.Name,
 		&bucket.Public,
 		&bucket.RLSEnabled,
 		&bucket.RLSRule,
+		&bucket.MaxFileSizeBytes,
 		&bucket.CreatedAt,
 	)
 	if err != nil {
@@ -577,19 +737,21 @@ func (h *FileHandler) getBucket(ctx context.Context, bucketName string) (bucketR
 			b.public,
 			b.rls_enabled,
 			b.rls_rule,
+			b.max_file_size_bytes,
 			b.created_at,
 			COUNT(o.id) AS object_count,
 			COALESCE(SUM(o.size), 0) AS total_size
 		FROM _v_buckets b
 		LEFT JOIN _v_storage_objects o ON o.bucket_id = b.id
 		WHERE b.name = $1
-		GROUP BY b.id, b.name, b.public, b.rls_enabled, b.rls_rule, b.created_at
+		GROUP BY b.id, b.name, b.public, b.rls_enabled, b.rls_rule, b.max_file_size_bytes, b.created_at
 	`, bucketName).Scan(
 		&bucket.ID,
 		&bucket.Name,
 		&bucket.Public,
 		&bucket.RLSEnabled,
 		&bucket.RLSRule,
+		&bucket.MaxFileSizeBytes,
 		&bucket.CreatedAt,
 		&bucket.ObjectCount,
 		&bucket.TotalSize,
@@ -606,13 +768,14 @@ func (h *FileHandler) getBucket(ctx context.Context, bucketName string) (bucketR
 
 func (h *FileHandler) ensureDefaultBucket(ctx context.Context) error {
 	_, err := h.DB.Pool.Exec(ctx, `
-		INSERT INTO _v_buckets (name, public, rls_enabled, rls_rule)
-		VALUES ('default', true, false, 'true')
+		INSERT INTO _v_buckets (name, public, rls_enabled, rls_rule, max_file_size_bytes)
+		VALUES ('default', true, false, 'true', 0)
 		ON CONFLICT (name) DO UPDATE
 		SET
 			public = EXCLUDED.public,
 			rls_enabled = EXCLUDED.rls_enabled,
 			rls_rule = EXCLUDED.rls_rule,
+			max_file_size_bytes = EXCLUDED.max_file_size_bytes,
 			updated_at = NOW()
 		WHERE
 			_v_buckets.name = 'default'
@@ -700,16 +863,197 @@ func (h *FileHandler) deleteStoredObject(ctx context.Context, bucketName, stored
 	return nil
 }
 
+func storageObjectACL(bucket bucketRecord) ozystorage.ACL {
+	objectACL := ozystorage.ACLPrivate
+	if bucket.Public && !bucket.RLSEnabled {
+		objectACL = ozystorage.ACLPublicRead
+	} else if bucket.RLSEnabled {
+		objectACL = ozystorage.ACLAuthRead
+	}
+	return objectACL
+}
+
+func (h *FileHandler) createStoredObjectRecord(ctx context.Context, bucket bucketRecord, ownerID *string, displayName, objectKey string, size int64, contentType string) (map[string]any, error) {
+	var objectID string
+	err := h.DB.Pool.QueryRow(ctx, `
+		INSERT INTO _v_storage_objects (bucket_id, owner_id, name, size, content_type, path)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id
+	`, bucket.ID, ownerID, displayName, size, contentType, objectKey).Scan(&objectID)
+	if err != nil {
+		return nil, err
+	}
+	return buildStoredObjectPayload(bucket.Name, objectID, displayName, objectKey, size, contentType), nil
+}
+
+func buildStoredObjectPayload(bucketName, objectID, displayName, objectKey string, size int64, contentType string) map[string]any {
+	downloadURL := buildObjectURL(bucketName, objectKey)
+	return map[string]any{
+		"id":           objectID,
+		"name":         displayName,
+		"filename":     displayName,
+		"size":         size,
+		"storage_key":  objectKey,
+		"content_type": contentType,
+		"url":          downloadURL,
+		"path":         downloadURL,
+		"download_url": downloadURL,
+	}
+}
+
+func validateBucketUploadSize(bucket bucketRecord, size int64) error {
+	if size < 0 {
+		return fmt.Errorf("file size must be zero or greater")
+	}
+	if bucket.MaxFileSizeBytes > 0 && size > bucket.MaxFileSizeBytes {
+		return fmt.Errorf("file exceeds bucket limit of %s", humanizeBytes(bucket.MaxFileSizeBytes))
+	}
+	return nil
+}
+
+func humanizeBytes(bytes int64) string {
+	if bytes <= 0 {
+		return "0 B"
+	}
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	value := float64(bytes)
+	unitIndex := 0
+	for value >= 1024 && unitIndex < len(units)-1 {
+		value /= 1024
+		unitIndex++
+	}
+	if value >= 100 || unitIndex == 0 {
+		return fmt.Sprintf("%.0f %s", value, units[unitIndex])
+	}
+	return fmt.Sprintf("%.1f %s", value, units[unitIndex])
+}
+
+func storageUploadMetadataError(c echo.Context, err error) error {
+	if isDuplicateConstraintError(err) {
+		return c.JSON(http.StatusConflict, map[string]string{"error": "A file with this name already exists in the bucket"})
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "already exists") {
+		return c.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusInternalServerError, map[string]string{
+		"error": "Failed to save file metadata: " + err.Error(),
+	})
+}
+
+func issueStorageUploadToken(secret, sessionID string, now time.Time, expiresAt time.Time) (string, error) {
+	if strings.TrimSpace(secret) == "" {
+		return "", errors.New("upload signing key is required")
+	}
+	claims := storageUploadClaims{
+		SessionID: sessionID,
+		Scope:     "storage-upload",
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   sessionID,
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(secret))
+}
+
+func validateStorageUploadToken(secret, tokenString string, now time.Time) (storageUploadClaims, error) {
+	claims := storageUploadClaims{}
+	if strings.TrimSpace(secret) == "" {
+		return claims, errors.New("upload signing key is required")
+	}
+	token, err := jwt.ParseWithClaims(tokenString, &claims, func(token *jwt.Token) (any, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method %v", token.Header["alg"])
+		}
+		return []byte(secret), nil
+	}, jwt.WithTimeFunc(func() time.Time { return now }))
+	if err != nil {
+		return claims, err
+	}
+	if !token.Valid {
+		return claims, errors.New("upload token is invalid")
+	}
+	if claims.Scope != "storage-upload" {
+		return claims, errors.New("upload token scope is invalid")
+	}
+	if strings.TrimSpace(claims.SessionID) == "" {
+		return claims, errors.New("upload token session is missing")
+	}
+	return claims, nil
+}
+
+func (h *FileHandler) getStorageUploadSession(ctx context.Context, sessionID string) (storageUploadSession, error) {
+	var session storageUploadSession
+	var ownerID string
+	err := h.DB.Pool.QueryRow(ctx, `
+		SELECT
+			s.id,
+			s.bucket_id,
+			b.name,
+			COALESCE(s.owner_id::text, ''),
+			s.name,
+			s.size,
+			s.content_type,
+			s.storage_key,
+			s.expires_at,
+			s.used_at
+		FROM _v_storage_upload_sessions s
+		JOIN _v_buckets b ON b.id = s.bucket_id
+		WHERE s.id = $1
+	`, sessionID).Scan(
+		&session.ID,
+		&session.BucketID,
+		&session.BucketName,
+		&ownerID,
+		&session.Name,
+		&session.Size,
+		&session.ContentType,
+		&session.StorageKey,
+		&session.ExpiresAt,
+		&session.UsedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return storageUploadSession{}, fmt.Errorf("upload session not found")
+		}
+		return storageUploadSession{}, err
+	}
+	if strings.TrimSpace(ownerID) != "" {
+		session.OwnerID = &ownerID
+	}
+	return session, nil
+}
+
+func (h *FileHandler) ensureUploadObjectDoesNotExist(ctx context.Context, session storageUploadSession) error {
+	var existingID string
+	err := h.DB.Pool.QueryRow(ctx, `
+		SELECT id
+		FROM _v_storage_objects
+		WHERE bucket_id = $1
+		  AND (name = $2 OR path = $3)
+		LIMIT 1
+	`, session.BucketID, session.Name, session.StorageKey).Scan(&existingID)
+	if err == nil {
+		return fmt.Errorf("A file with this name already exists in the bucket")
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	return err
+}
+
 func serializeBucket(bucket bucketRecord) map[string]any {
 	return map[string]any{
-		"id":           bucket.ID,
-		"name":         bucket.Name,
-		"public":       bucket.Public,
-		"rls_enabled":  bucket.RLSEnabled,
-		"rls_rule":     bucket.RLSRule,
-		"created_at":   bucket.CreatedAt,
-		"object_count": bucket.ObjectCount,
-		"total_size":   bucket.TotalSize,
+		"id":                  bucket.ID,
+		"name":                bucket.Name,
+		"public":              bucket.Public,
+		"rls_enabled":         bucket.RLSEnabled,
+		"rls_rule":            bucket.RLSRule,
+		"max_file_size_bytes": bucket.MaxFileSizeBytes,
+		"created_at":          bucket.CreatedAt,
+		"object_count":        bucket.ObjectCount,
+		"total_size":          bucket.TotalSize,
 	}
 }
 

@@ -35,10 +35,19 @@ func (l *LocalProvider) Upload(ctx context.Context, bucket, key string, reader i
 		if closeErr := f.Close(); closeErr != nil && err == nil {
 			err = fmt.Errorf("close local upload file: %w", closeErr)
 		}
+		if err != nil {
+			_ = os.Remove(path)
+		}
 	}()
 
-	_, err = io.Copy(f, reader)
-	return err
+	written, err := io.Copy(f, reader)
+	if err != nil {
+		return err
+	}
+	if size >= 0 && written != size {
+		return fmt.Errorf("local upload size mismatch: wrote %d bytes, expected %d", written, size)
+	}
+	return nil
 }
 
 func (l *LocalProvider) Download(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
