@@ -52,7 +52,7 @@ const TableEditorColumnsPanel: React.FC<TableEditorColumnsPanelProps> = ({
     return (
         <>
             <div className="fixed inset-0 z-40 outline-none" onClick={onClose} />
-            <div className="absolute top-full left-0 mt-2 z-50 w-[360px] overflow-hidden ozy-floating-panel">
+            <div className="absolute right-0 top-full z-50 mt-2 w-[360px] max-w-[calc(100vw-1.5rem)] overflow-hidden ozy-floating-panel sm:left-0 sm:right-auto">
                 <div className="border-b border-[#2e2e2e] px-4 py-3">
                     <div className="flex items-center justify-between gap-3">
                         <div>

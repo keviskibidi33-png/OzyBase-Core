@@ -341,8 +341,10 @@ func (h *Handler) renameCollectionMetadataForTable(ctx context.Context, oldTable
 	}
 
 	var pgErr *pgconn.PgError
-	if err != nil && !(errors.As(err, &pgErr) && pgErr.Code == "42703") {
-		return fmt.Errorf("failed to rename collection metadata from %s to %s: %w", oldTableName, newTableName, err)
+	if err != nil {
+		if !errors.As(err, &pgErr) || pgErr.Code != "42703" {
+			return fmt.Errorf("failed to rename collection metadata from %s to %s: %w", oldTableName, newTableName, err)
+		}
 	}
 
 	if errors.As(err, &pgErr) && pgErr.Code == "42703" {
@@ -1372,6 +1374,70 @@ func isRLSHealthFixIssue(issueType, issue string) bool {
 		strings.Contains(issueLower, " rls ")
 }
 
+func normalizeAllowedCountries(raw any) []string {
+	switch value := raw.(type) {
+	case []string:
+		next := make([]string, 0, len(value))
+		for _, country := range value {
+			trimmed := strings.TrimSpace(country)
+			if trimmed != "" {
+				next = append(next, trimmed)
+			}
+		}
+		return next
+	case []any:
+		next := make([]string, 0, len(value))
+		for _, item := range value {
+			trimmed := strings.TrimSpace(fmt.Sprint(item))
+			if trimmed != "" && trimmed != "<nil>" {
+				next = append(next, trimmed)
+			}
+		}
+		return next
+	default:
+		return []string{}
+	}
+}
+
+func containsFold(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(target)) {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveLatestUnresolvedGeoBreachCountry(ctx context.Context, tx pgx.Tx) (string, error) {
+	var rawMetadata []byte
+	err := tx.QueryRow(ctx, `
+		SELECT metadata
+		FROM _v_security_alerts
+		WHERE type = 'geo_breach' AND is_resolved = false
+		ORDER BY created_at DESC
+		LIMIT 1
+	`).Scan(&rawMetadata)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+
+	var metadata map[string]any
+	if len(rawMetadata) > 0 {
+		if err := json.Unmarshal(rawMetadata, &metadata); err != nil {
+			return "", err
+		}
+	}
+
+	country := strings.TrimSpace(fmt.Sprint(metadata["country"]))
+	if country == "" || country == "<nil>" || strings.EqualFold(country, "unknown") {
+		return "", nil
+	}
+	return country, nil
+}
+
 func inferRLSAutoFixRuleFromColumns(tableName string, available map[string]struct{}) string {
 	for _, candidate := range []string{"owner_id", "user_id", "created_by"} {
 		if _, ok := available[candidate]; ok {
@@ -1562,6 +1628,74 @@ func (h *Handler) FixHealthIssues(c echo.Context) error {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update collection rules: " + err.Error()})
 		}
 		return c.JSON(http.StatusOK, map[string]string{"message": "Public collections updated to Auth-only access"})
+	}
+
+	if typeLower == "security" && strings.Contains(issueLower, "geographic access breach") {
+		tx, err := h.DB.Pool.Begin(ctx)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Transaction failed"})
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		country, err := resolveLatestUnresolvedGeoBreachCountry(ctx, tx)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to inspect geo breach details: " + err.Error()})
+		}
+		if country == "" {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "No unresolved geo-breach alert with a valid country was found"})
+		}
+
+		policy := map[string]any{
+			"enabled":           true,
+			"allowed_countries": []string{},
+		}
+
+		var rawConfig []byte
+		err = tx.QueryRow(ctx, "SELECT config FROM _v_security_policies WHERE type = 'geo_fencing'").Scan(&rawConfig)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to load geo-fencing policy: " + err.Error()})
+		}
+		if len(rawConfig) > 0 {
+			if err := json.Unmarshal(rawConfig, &policy); err != nil {
+				return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to parse geo-fencing policy: " + err.Error()})
+			}
+		}
+
+		allowedCountries := normalizeAllowedCountries(policy["allowed_countries"])
+		if !containsFold(allowedCountries, country) {
+			allowedCountries = append(allowedCountries, country)
+		}
+		policy["enabled"] = true
+		policy["allowed_countries"] = allowedCountries
+
+		configJSON, marshalErr := json.Marshal(policy)
+		if marshalErr != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to serialize geo-fencing policy: " + marshalErr.Error()})
+		}
+
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO _v_security_policies (type, config, updated_at)
+			VALUES ('geo_fencing', $1, NOW())
+			ON CONFLICT (type) DO UPDATE SET config = $1, updated_at = NOW()
+		`, configJSON); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update geo-fencing policy: " + err.Error()})
+		}
+
+		if _, err := tx.Exec(ctx, `
+			UPDATE _v_security_alerts
+			SET is_resolved = true
+			WHERE type = 'geo_breach' AND is_resolved = false
+		`); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to resolve geo-breach alerts: " + err.Error()})
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to commit geo-breach fix"})
+		}
+
+		h.Geo.InvalidatePolicy()
+		h.invalidateHealthIssuesCache()
+		return c.JSON(http.StatusOK, map[string]string{"message": "Geo-fencing allowlist updated and geo-breach alerts resolved"})
 	}
 
 	if typeLower == "performance" && strings.Contains(issueLower, "missing an index") {

@@ -1154,29 +1154,6 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
         { label: activeViewId ? 'saved view applied' : 'live grid view', tone: activeViewId ? 'accent' : 'neutral' },
         { label: realtimeEnabled ? 'realtime active' : 'realtime optional', tone: realtimeEnabled ? 'accent' : 'neutral' },
     ] as const;
-    const tableHeroStats = [
-        {
-            label: 'Current Table',
-            value: currentTableLabel || 'Select a table',
-            hint: tableName
-                ? 'Browse and edit rows here before dropping into SQL for advanced work.'
-                : 'Choose a table from the switcher to start exploring your data.',
-        },
-        {
-            label: 'Visible Columns',
-            value: `${visibleColumnCount}/${totalColumnCount}`,
-            hint: hiddenColumnCount > 0
-                ? `${hiddenColumnCount} hidden column${hiddenColumnCount === 1 ? '' : 's'} can be restored from Columns.`
-                : 'All current columns are visible in this layout.',
-        },
-        {
-            label: 'Rows In View',
-            value: isTotalExact ? `${totalRecords}` : `${pageEndRecord}${hasMoreRecords ? '+' : ''}`,
-            hint: hasQueryModifiers
-                ? 'Filters, sorting, and search are shaping this live slice.'
-                : 'Use filters, views, and search to narrow large datasets quickly.',
-        },
-    ];
     const frozenColumnNames = useMemo(() => {
         const names = visibleColumns
             .filter((col: any) => (rowIdentityEnabled && col.name === 'id') || pinnedColumnSet.has(col.name))
@@ -1350,7 +1327,6 @@ const TableEditor: React.FC<TableEditorProps> = ({ tableName, onTableSelect, onO
                         : 'Inspect rows and schema safely from the grid. This table stays read-only here until it exposes a standard id column for reliable row actions.'}
                     icon={Database}
                     pills={tableHeroPills}
-                    stats={tableHeroStats}
                 />
             </div>
 

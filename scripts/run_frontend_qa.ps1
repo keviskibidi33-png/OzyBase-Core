@@ -7,7 +7,8 @@ param(
     "tests/essential-keys-mcp.spec.js",
     "tests/auth-scroll-audit.spec.js",
     "tests/production-qa-smoke.spec.js",
-    "tests/data-grid-massive.spec.js"
+    "tests/data-grid-massive.spec.js",
+    "tests/table-import.spec.js"
   ),
   [int]$PlaywrightGlobalTimeoutMs = 420000
 )
@@ -84,11 +85,17 @@ function Wait-HttpHealthy {
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $frontendDir = Join-Path $repoRoot "frontend"
 $normalizedSpecs = @($Specs | ForEach-Object {
-  $spec = $_
-  if ($spec -match '^[Ff]rontend[\\/](.+)$') {
-    $spec = $Matches[1]
+  $rawSpec = $_
+  foreach ($candidate in ($rawSpec -split ',')) {
+    $spec = $candidate.Trim()
+    if ([string]::IsNullOrWhiteSpace($spec)) {
+      continue
+    }
+    if ($spec -match '^[Ff]rontend[\\/](.+)$') {
+      $spec = $Matches[1]
+    }
+    ($spec -replace '\\', '/')
   }
-  return ($spec -replace '\\', '/')
 })
 $runId = Get-Date -Format "yyyyMMddHHmmss"
 $embeddedRootName = "ozybase-qa-embedded"

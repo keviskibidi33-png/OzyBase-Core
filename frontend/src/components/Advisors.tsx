@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import AutoFixModal from './AutoFixModal';
 import { fetchWithAuth } from '../utils/api';
+import { supportsHealthAutoFix } from '../utils/healthIssues';
 
 type IssueType = 'security' | 'performance' | string;
 type ToastType = 'success' | 'error' | 'warning';
@@ -270,14 +271,17 @@ const Advisors: React.FC = () => {
                                         <div className="flex items-center gap-3">
                                             <button
                                                 onClick={() => {
+                                                    if (!supportsHealthAutoFix(issue)) {
+                                                        return;
+                                                    }
                                                     setSelectedFixIssue(issue);
                                                     setIsAutoFixModalOpen(true);
                                                 }}
-                                                disabled={fixingId !== null}
-                                                className="px-4 py-2 bg-zinc-100 text-black border border-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-primary hover:border-primary transition-all flex items-center gap-2 disabled:opacity-50"
+                                                disabled={fixingId !== null || !supportsHealthAutoFix(issue)}
+                                                className="px-4 py-2 bg-zinc-100 text-black border border-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-primary hover:border-primary transition-all flex items-center gap-2 disabled:opacity-50 disabled:hover:bg-zinc-100 disabled:hover:border-white"
                                             >
                                                 {fixingId === issue.id ? <RefreshCw size={12} className="animate-spin" /> : <Zap size={12} fill="currentColor" />}
-                                                {fixingId === issue.id ? 'Fixing...' : 'Auto-Fix'}
+                                                {fixingId === issue.id ? 'Fixing...' : supportsHealthAutoFix(issue) ? 'Auto-Fix' : 'Review'}
                                             </button>
                                         </div>
                                     </div>

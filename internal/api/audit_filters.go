@@ -40,7 +40,7 @@ func buildPerformanceSignalExclusionSQL(column string) string {
 	for _, prefix := range performanceSignalExcludedAuditPathPrefixes {
 		builder.WriteString("\n  AND ")
 		builder.WriteString(column)
-		builder.WriteString(fmt.Sprintf(" NOT LIKE '%s%%'", prefix))
+		fmt.Fprintf(&builder, " NOT LIKE '%s%%'", prefix)
 	}
 	return builder.String()
 }

@@ -388,9 +388,12 @@ func (svc *httpClient) request(ctx context.Context, method, path string, payload
 		}
 
 		rawBody, readErr := io.ReadAll(response.Body)
-		response.Body.Close()
+		closeErr := response.Body.Close()
 		if readErr != nil {
 			return nil, readErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
 		}
 		if response.StatusCode >= 400 {
 			lastErr = fmt.Errorf("%s %s failed with %d: %s", method, path, response.StatusCode, strings.TrimSpace(string(rawBody)))

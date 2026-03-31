@@ -5,6 +5,7 @@ interface NotificationIssue {
     type?: string;
     title?: string;
     description?: string;
+    canAutoFix?: boolean;
     [key: string]: unknown;
 }
 
@@ -19,7 +20,7 @@ interface NotificationCenterProps {
 const NotificationCenter = ({ isOpen, onClose, issues, onIssueAction, onViewLogs }: NotificationCenterProps) => {
     return (
         <div
-            className={`absolute top-16 right-6 z-[100] w-[420px] overflow-hidden origin-top-right transition-all duration-200 ozy-floating-panel ${
+            className={`absolute right-0 top-full z-[100] mt-3 w-[420px] max-w-[calc(100vw-1.5rem)] overflow-hidden origin-top-right transition-all duration-200 ozy-floating-panel ${
                 isOpen
                     ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto'
                     : 'opacity-0 -translate-y-2 scale-95 pointer-events-none'
@@ -53,8 +54,18 @@ const NotificationCenter = ({ isOpen, onClose, issues, onIssueAction, onViewLogs
                         {issues.map((issue: any, idx: any) => (
                             <div
                                 key={idx}
-                                onClick={() => onIssueAction(issue)}
-                                className="p-5 hover:bg-zinc-900/60 transition-all group cursor-pointer border-l-2 border-transparent hover:border-primary"
+                                onClick={() => {
+                                    if (issue.canAutoFix) {
+                                        onIssueAction(issue);
+                                        return;
+                                    }
+                                    onViewLogs();
+                                }}
+                                className={`p-5 transition-all group border-l-2 border-transparent ${
+                                    issue.canAutoFix
+                                        ? 'cursor-pointer hover:bg-zinc-900/60 hover:border-primary'
+                                        : 'cursor-pointer hover:bg-zinc-900/40 hover:border-zinc-700'
+                                }`}
                             >
                                 <div className="flex items-start gap-5">
                                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-lg ${issue.type === 'security' ? 'bg-red-500/10 text-red-500 border border-red-500/20' : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
@@ -76,10 +87,16 @@ const NotificationCenter = ({ isOpen, onClose, issues, onIssueAction, onViewLogs
                                                 }`}>
                                                 {issue.type}
                                             </span>
-                                            <span className="flex items-center gap-1.5 text-[8px] font-black text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0">
-                                                <Zap size={10} fill="currentColor" />
-                                                Auto-Fix Now
-                                            </span>
+                                            {issue.canAutoFix ? (
+                                                <span className="flex items-center gap-1.5 text-[8px] font-black text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0">
+                                                    <Zap size={10} fill="currentColor" />
+                                                    Auto-Fix Now
+                                                </span>
+                                            ) : (
+                                                <span className="flex items-center gap-1.5 text-[8px] font-black text-zinc-500 bg-zinc-900 border border-zinc-800 px-2 py-0.5 rounded uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0">
+                                                    Review
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
                                 </div>

@@ -13,7 +13,7 @@ async function login(page) {
 
 async function openAuthSubmodule(page, name) {
     await page.getByRole('button', { name: 'Authentication' }).click();
-    await page.getByRole('button', { name, exact: true }).click();
+    await page.getByRole('button', { name, exact: true }).first().click();
     await expect(page.locator('[data-module-scroll-root]')).toBeVisible({ timeout: 15000 });
 }
 

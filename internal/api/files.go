@@ -136,7 +136,9 @@ func (h *FileHandler) Upload(c echo.Context) error {
 			"error": "Failed to open uploaded file: " + err.Error(),
 		})
 	}
-	defer source.Close()
+	defer func() {
+		_ = source.Close()
+	}()
 
 	displayName := cleanObjectName(fileHeader.Filename)
 	objectKey := buildObjectStorageKey(displayName)
@@ -694,7 +696,9 @@ func (h *FileHandler) Download(c echo.Context) error {
 	if err != nil {
 		return storageErrorResponse(c, err)
 	}
-	defer reader.Close()
+	defer func() {
+		_ = reader.Close()
+	}()
 
 	contentType := strings.TrimSpace(object.ContentType)
 	if contentType == "" {
@@ -1546,7 +1550,7 @@ func (h *FileHandler) ensureUploadObjectDoesNotExist(ctx context.Context, sessio
 		LIMIT 1
 	`, session.BucketID, session.Name, session.StorageKey).Scan(&existingID)
 	if err == nil {
-		return fmt.Errorf("A file with this name already exists in the bucket")
+		return fmt.Errorf("a file with this name already exists in the bucket")
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -1581,10 +1585,10 @@ func normalizeBucketName(name string) string {
 
 func validateBucketName(name string) error {
 	if name == "" {
-		return fmt.Errorf("Bucket name is required")
+		return fmt.Errorf("bucket name is required")
 	}
 	if !bucketNamePattern.MatchString(name) {
-		return fmt.Errorf("Bucket names must be 3-63 chars and use lowercase letters, numbers, dots, dashes or underscores")
+		return fmt.Errorf("bucket names must be 3-63 chars and use lowercase letters, numbers, dots, dashes or underscores")
 	}
 	return nil
 }

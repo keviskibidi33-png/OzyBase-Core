@@ -205,12 +205,26 @@ if is_true "$AUTO_START_STACK"; then
   compose_cmd up -d "$DB_SERVICE" >/dev/null
 fi
 
-db_container_id="$(compose_cmd ps -q "$DB_SERVICE" | head -n1 | tr -d '\r')"
+db_container_id=""
+for _attempt in $(seq 1 30); do
+  db_container_id="$(compose_cmd ps -q "$DB_SERVICE" | head -n1 | tr -d '\r')"
+  if [[ -n "$db_container_id" ]]; then
+    break
+  fi
+  sleep 1
+done
 if [[ -z "$db_container_id" ]]; then
   fail "No running container found for DB service '$DB_SERVICE'."
 fi
 
-db_health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$db_container_id" | tr -d '\r')"
+db_health=""
+for _attempt in $(seq 1 60); do
+  db_health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$db_container_id" | tr -d '\r')"
+  if [[ "$db_health" == "healthy" || "$db_health" == "running" ]]; then
+    break
+  fi
+  sleep 2
+done
 if [[ "$db_health" != "healthy" && "$db_health" != "running" ]]; then
   fail "DB container is not healthy/running (status=$db_health)."
 fi

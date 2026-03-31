@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -464,7 +465,8 @@ func rowsToMaps(rows pgx.Rows) ([]map[string]any, error) {
 	return results, rows.Err()
 }
 
-// BulkInsertRecord inserts multiple records using high-performance pgx.CopyFrom
+// BulkInsertRecord inserts multiple records in chunks while preserving
+// PostgreSQL type coercion and surfacing row-level errors when a chunk fails.
 func (db *DB) BulkInsertRecord(ctx context.Context, collectionName string, records []map[string]any) error {
 	if len(records) == 0 {
 		return nil
@@ -474,37 +476,129 @@ func (db *DB) BulkInsertRecord(ctx context.Context, collectionName string, recor
 		return fmt.Errorf("invalid collection name: %s", collectionName)
 	}
 
-	// 1. Identify common columns (consistent across batch)
-	// We use the first record as a template
-	var columns []string
-	template := records[0]
-	for col := range template {
-		if !IsValidIdentifier(col) || col == "id" || col == "created_at" || col == "updated_at" {
-			continue
-		}
-		columns = append(columns, col)
+	validCols, err := db.GetTableColumns(ctx, collectionName)
+	if err != nil {
+		return err
 	}
+
+	columns := collectBulkInsertColumns(validCols, records)
 
 	if len(columns) == 0 {
 		return fmt.Errorf("no valid columns found for import")
 	}
 
-	// 2. Prepare data for CopyFrom
-	var rows [][]any
-	for _, data := range records {
-		var row []any
-		for _, col := range columns {
-			row = append(row, data[col])
+	return db.WithTransactionAndRLS(ctx, func(tx pgx.Tx) error {
+		chunkSize := bulkInsertChunkSize(len(columns))
+		for start := 0; start < len(records); start += chunkSize {
+			end := start + chunkSize
+			if end > len(records) {
+				end = len(records)
+			}
+			if err := execBulkInsertChunk(ctx, tx, collectionName, columns, records[start:end], start); err != nil {
+				return err
+			}
 		}
-		rows = append(rows, row)
+		return nil
+	})
+}
+
+func collectBulkInsertColumns(validCols map[string]bool, records []map[string]any) []string {
+	columnSet := make(map[string]struct{})
+	for _, record := range records {
+		for col := range record {
+			if !IsValidIdentifier(col) || !validCols[col] {
+				continue
+			}
+			if col == "id" || col == "created_at" || col == "updated_at" || col == "deleted_at" {
+				continue
+			}
+			columnSet[col] = struct{}{}
+		}
 	}
 
-	// 3. Execute CopyFrom
-	_, err := db.Pool.CopyFrom(
-		ctx,
-		pgx.Identifier{collectionName},
-		columns,
-		pgx.CopyFromRows(rows),
-	)
-	return err
+	columns := make([]string, 0, len(columnSet))
+	for col := range columnSet {
+		columns = append(columns, col)
+	}
+	sort.Strings(columns)
+	return columns
+}
+
+func bulkInsertChunkSize(columnCount int) int {
+	if columnCount <= 0 {
+		return 1
+	}
+
+	const maxParams = 65535
+	const maxRowsPerChunk = 250
+
+	chunkSize := maxParams / columnCount
+	if chunkSize < 1 {
+		return 1
+	}
+	if chunkSize > maxRowsPerChunk {
+		return maxRowsPerChunk
+	}
+	return chunkSize
+}
+
+func execBulkInsertChunk(ctx context.Context, tx pgx.Tx, collectionName string, columns []string, records []map[string]any, rowOffset int) error {
+	query, values := buildBulkInsertStatement(collectionName, columns, records)
+	if _, err := tx.Exec(ctx, query, values...); err != nil {
+		if len(records) == 1 {
+			return fmt.Errorf("row %d import failed: %w", rowOffset+1, err)
+		}
+		for index, record := range records {
+			if rowErr := execBulkInsertChunk(ctx, tx, collectionName, columns, []map[string]any{record}, rowOffset+index); rowErr != nil {
+				return rowErr
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+func buildBulkInsertStatement(collectionName string, columns []string, records []map[string]any) (string, []any) {
+	var builder strings.Builder
+	builder.Grow(len(collectionName) + len(columns)*16 + len(records)*len(columns)*6)
+	builder.WriteString("INSERT INTO ")
+	builder.WriteString(collectionName)
+	builder.WriteString(" (")
+	builder.WriteString(strings.Join(columns, ", "))
+	builder.WriteString(") VALUES ")
+
+	values := make([]any, 0, len(records)*len(columns))
+	argIndex := 1
+
+	for rowIndex, record := range records {
+		if rowIndex > 0 {
+			builder.WriteString(", ")
+		}
+		builder.WriteString("(")
+		for colIndex, col := range columns {
+			if colIndex > 0 {
+				builder.WriteString(", ")
+			}
+			builder.WriteString("$")
+			builder.WriteString(strconv.Itoa(argIndex))
+			values = append(values, normalizeBulkInsertValue(record[col]))
+			argIndex++
+		}
+		builder.WriteString(")")
+	}
+
+	return builder.String(), values
+}
+
+func normalizeBulkInsertValue(value any) any {
+	raw, ok := value.(string)
+	if !ok {
+		return value
+	}
+
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	return trimmed
 }

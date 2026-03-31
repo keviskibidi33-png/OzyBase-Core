@@ -95,6 +95,18 @@ const AutoFixModal = ({ isOpen, onClose, issue, onConfirm }: AutoFixModalProps) 
                                     </>
                                 )}
 
+                                {issue.type === 'security' && issueTitle.includes('Geographic Access Breach') && (
+                                    <>
+                                        <div className="flex gap-3 text-xs">
+                                            <div className="mt-1 shrink-0"><Check size={14} className="text-green-500" /></div>
+                                            <p className="text-zinc-400">Adds the latest reported country to the geo-fencing allowlist and resolves open geo-breach alerts.</p>
+                                        </div>
+                                        <div className="p-3 bg-black/40 rounded-lg border border-white/5 font-mono text-[9px] text-zinc-500 leading-tight">
+                                            <span className="text-primary">UPDATE</span> geo_fencing_policy <span className="text-primary">SET</span> allowed_countries = allowed_countries + latest_alert_country;
+                                        </div>
+                                    </>
+                                )}
+
                                 {issue.type === 'performance' && issueTitle.includes('missing an index') && (
                                     <>
                                         <div className="flex gap-3 text-xs">

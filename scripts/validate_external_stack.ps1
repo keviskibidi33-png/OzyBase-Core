@@ -118,12 +118,8 @@ function Assert-ExternalAPIReady {
 
 function Ensure-DockerReady {
   $dockerDesktop = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
-  try {
-    docker info *> $null
-    if ($LASTEXITCODE -eq 0) {
-      return
-    }
-  } catch {
+  if (Test-DockerResponsive) {
+    return
   }
 
   try {
@@ -136,21 +132,55 @@ function Ensure-DockerReady {
 
   for ($i = 0; $i -lt 180; $i++) {
     Start-Sleep -Seconds 2
-    try {
-      docker info *> $null
-      if ($LASTEXITCODE -eq 0) {
-        return
-      }
-    } catch {
+    if (Test-DockerResponsive) {
+      return
     }
   }
   throw "Docker engine did not become ready in time"
 }
 
+function Test-DockerResponsive {
+  param([int]$TimeoutSeconds = 20)
+
+  $stdout = Join-Path $env:TEMP "ozy-docker-info.stdout.log"
+  $stderr = Join-Path $env:TEMP "ozy-docker-info.stderr.log"
+
+  try {
+    $process = Start-Process -FilePath "docker.exe" -ArgumentList @("info") -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+      Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+      return $false
+    }
+    return ($process.ExitCode -eq 0)
+  } catch {
+    return $false
+  }
+}
+
 function Remove-ContainerSafe {
   param([string]$Name)
   try {
-    docker rm -f $Name 2>$null | Out-Null
+    $safeName = ($Name -replace '[^A-Za-z0-9_.-]', '_')
+    $stdout = Join-Path $env:TEMP "$safeName.docker-rm.stdout.log"
+    $stderr = Join-Path $env:TEMP "$safeName.docker-rm.stderr.log"
+    $process = Start-Process -FilePath "docker.exe" -ArgumentList @("rm", "-f", $Name) -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    if (-not $process.WaitForExit(30000)) {
+      Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    }
+  } catch {
+  }
+}
+
+function Remove-NetworkSafe {
+  param([string]$Name)
+  try {
+    $safeName = ($Name -replace '[^A-Za-z0-9_.-]', '_')
+    $stdout = Join-Path $env:TEMP "$safeName.docker-network-rm.stdout.log"
+    $stderr = Join-Path $env:TEMP "$safeName.docker-network-rm.stderr.log"
+    $process = Start-Process -FilePath "docker.exe" -ArgumentList @("network", "rm", $Name) -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    if (-not $process.WaitForExit(30000)) {
+      Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    }
   } catch {
   }
 }
@@ -180,6 +210,15 @@ function Start-CurlProcess {
     StdErr           = $stderr
     ExpectedStatuses = $ExpectedStatuses
   }
+}
+
+function ConvertTo-SingleQuotedPowerShellString {
+  param([string]$Value)
+
+  if ($null -eq $Value) {
+    return "''"
+  }
+  return "'" + ($Value -replace "'", "''") + "'"
 }
 
 function Write-RandomFile {
@@ -329,17 +368,149 @@ function Start-StreamingUploadJob {
     [string]$WorkspaceId
   )
 
-  return Start-CurlProcess -Label $Label -Arguments @(
-    "-sS",
-    "-o", "NUL",
-    "-w", "%{http_code}",
-    "-X", "PUT",
-    $UploadUrl,
-    "-H", "Authorization: Bearer $BearerToken",
-    "-H", "X-Workspace-Id: $WorkspaceId",
-    "-H", "X-Ozy-Upload-Token: $UploadToken",
-    "--data-binary", "@$FilePath"
-  ) -ExpectedStatuses @("200", "201")
+  $safeLabel = ($Label -replace '[^A-Za-z0-9_.-]', '_')
+  $stdout = Join-Path $env:TEMP "$safeLabel.stdout.log"
+  $stderr = Join-Path $env:TEMP "$safeLabel.stderr.log"
+
+  $quotedUploadUrl = ConvertTo-SingleQuotedPowerShellString -Value $UploadUrl
+  $quotedUploadToken = ConvertTo-SingleQuotedPowerShellString -Value $UploadToken
+  $quotedFilePath = ConvertTo-SingleQuotedPowerShellString -Value $FilePath
+  $quotedBearerToken = ConvertTo-SingleQuotedPowerShellString -Value $BearerToken
+  $quotedWorkspaceId = ConvertTo-SingleQuotedPowerShellString -Value $WorkspaceId
+
+  $uploadScript = @'
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Net.Http
+
+$handler = [System.Net.Http.HttpClientHandler]::new()
+$client = [System.Net.Http.HttpClient]::new($handler)
+$client.Timeout = [TimeSpan]::FromHours(4)
+
+$request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Put, __UPLOAD_URL__)
+$request.Headers.ExpectContinue = $false
+$request.Headers.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer', __BEARER_TOKEN__)
+if (-not [string]::IsNullOrWhiteSpace(__WORKSPACE_ID__)) {
+  $request.Headers.Add('X-Workspace-Id', __WORKSPACE_ID__)
+}
+$request.Headers.Add('X-Ozy-Upload-Token', __UPLOAD_TOKEN__)
+
+$fileStream = [System.IO.File]::OpenRead(__FILE_PATH__)
+try {
+  $content = [System.Net.Http.StreamContent]::new($fileStream)
+  $content.Headers.ContentLength = $fileStream.Length
+  $content.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::new('application/octet-stream')
+  $request.Content = $content
+
+  $response = $client.SendAsync($request, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+  $body = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+  [Console]::Out.Write([int]$response.StatusCode)
+  if (-not $response.IsSuccessStatusCode) {
+    [Console]::Error.Write("HTTP $([int]$response.StatusCode): $body")
+    exit 1
+  }
+} finally {
+  if ($request -and $request.Content) {
+    $request.Content.Dispose()
+  }
+  if ($request) {
+    $request.Dispose()
+  }
+  if ($client) {
+    $client.Dispose()
+  }
+  if ($fileStream) {
+    $fileStream.Dispose()
+  }
+}
+'@
+  $uploadScript = $uploadScript.Replace('__UPLOAD_URL__', $quotedUploadUrl)
+  $uploadScript = $uploadScript.Replace('__UPLOAD_TOKEN__', $quotedUploadToken)
+  $uploadScript = $uploadScript.Replace('__FILE_PATH__', $quotedFilePath)
+  $uploadScript = $uploadScript.Replace('__BEARER_TOKEN__', $quotedBearerToken)
+  $uploadScript = $uploadScript.Replace('__WORKSPACE_ID__', $quotedWorkspaceId)
+
+  $encodedCommand = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($uploadScript))
+  $process = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-EncodedCommand", $encodedCommand) -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+  return [pscustomobject]@{
+    Label            = $Label
+    Process          = $process
+    StdOut           = $stdout
+    StdErr           = $stderr
+    ExpectedStatuses = @("200", "201")
+  }
+}
+
+function Assert-StreamDownloadMatchesSource {
+  param(
+    [string]$Url,
+    [string]$BearerToken,
+    [string]$WorkspaceId,
+    [string]$SourcePath
+  )
+
+  Add-Type -AssemblyName System.Net.Http
+
+  $handler = [System.Net.Http.HttpClientHandler]::new()
+  $client = [System.Net.Http.HttpClient]::new($handler)
+  $client.Timeout = [TimeSpan]::FromHours(2)
+
+  $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $Url)
+  $request.Headers.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer', $BearerToken)
+  if (-not [string]::IsNullOrWhiteSpace($WorkspaceId)) {
+    $request.Headers.Add('X-Workspace-Id', $WorkspaceId)
+  }
+
+  $sourceInfo = Get-Item $SourcePath
+  $expectedHash = (Get-FileHash -Algorithm SHA256 -Path $SourcePath).Hash.ToLowerInvariant()
+  $sha256 = [System.Security.Cryptography.SHA256]::Create()
+  $crypto = $null
+  $response = $null
+  $stream = $null
+  $bytesReadTotal = [int64]0
+  $buffer = New-Object byte[](4MB)
+
+  try {
+    $response = $client.SendAsync($request, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+    if (-not $response.IsSuccessStatusCode) {
+      $body = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+      throw "download returned HTTP $([int]$response.StatusCode): $body"
+    }
+
+    $stream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+    $crypto = [System.Security.Cryptography.CryptoStream]::new([System.IO.Stream]::Null, $sha256, [System.Security.Cryptography.CryptoStreamMode]::Write)
+    while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+      $crypto.Write($buffer, 0, $read)
+      $bytesReadTotal += $read
+    }
+    $crypto.FlushFinalBlock()
+    $actualHash = [BitConverter]::ToString($sha256.Hash).Replace("-", "").ToLowerInvariant()
+
+    if ($bytesReadTotal -ne $sourceInfo.Length) {
+      throw "downloaded large object size mismatch for $([IO.Path]::GetFileName($SourcePath)): expected $($sourceInfo.Length) bytes, got $bytesReadTotal"
+    }
+    if ($actualHash -ne $expectedHash) {
+      throw "downloaded large object hash mismatch for $([IO.Path]::GetFileName($SourcePath))"
+    }
+  } finally {
+    if ($crypto) {
+      $crypto.Dispose()
+    }
+    if ($stream) {
+      $stream.Dispose()
+    }
+    if ($response) {
+      $response.Dispose()
+    }
+    if ($sha256) {
+      $sha256.Dispose()
+    }
+    if ($request) {
+      $request.Dispose()
+    }
+    if ($client) {
+      $client.Dispose()
+    }
+  }
 }
 
 function Upload-MultipartFile {
@@ -410,6 +581,9 @@ $apiProc = $null
 $rng = $null
 
 try {
+  if (Test-Path $storageDir) {
+    Remove-Item -LiteralPath $storageDir -Recurse -Force -ErrorAction SilentlyContinue
+  }
   Ensure-DockerReady
   Stop-PortListeners -Ports @([int]$ApiPort, [int]$PgPort, [int]$RedisPort, [int]$MinioApiPort, [int]$MinioConsolePort, [int]$PoolerPort)
   Remove-ContainerSafe -Name $pgbName
@@ -601,16 +775,16 @@ try {
     }
   }
 
-  $largeUploadJobs = @()
   foreach ($filePath in $largePaths | Select-Object -Skip 1) {
     $fileName = [IO.Path]::GetFileName($filePath)
     $fileSize = (Get-Item $filePath).Length
-    $session = New-StorageUploadSession -ApiPort $ApiPort -Token $token -WorkspaceId $workspaceId -BucketName $bucketName -FileName $fileName -FileSize $fileSize -ContentType "application/octet-stream"
-    $uploadUrl = "http://127.0.0.1:$ApiPort$($session.upload_url)"
-    $label = "ozybase-upload-$([IO.Path]::GetFileNameWithoutExtension($filePath))"
-    $largeUploadJobs += Start-StreamingUploadJob -Label $label -UploadUrl $uploadUrl -UploadToken $session.upload_token -FilePath $filePath -BearerToken $token -WorkspaceId $workspaceId
+    $multipartSession = New-MultipartUploadSession -ApiPort $ApiPort -Token $token -WorkspaceId $workspaceId -BucketName $bucketName -FileName $fileName -FileSize $fileSize -ContentType "application/octet-stream"
+    Upload-MultipartFile -ApiPort $ApiPort -Token $token -WorkspaceId $workspaceId -SessionId $multipartSession.session_id -FilePath $filePath -ChunkSizeBytes $multipartSession.chunk_size_bytes -StartPart 1
+    $completeMultipart = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ApiPort/api/files/uploads/multipart/$($multipartSession.session_id)/complete" -Headers ($headers + @{ "Content-Type" = "application/json" }) -Body "{}"
+    if ($null -eq $completeMultipart -or [string]::IsNullOrWhiteSpace([string]$completeMultipart.name)) {
+      throw "multipart completion did not return the stored object payload for $fileName"
+    }
   }
-  Wait-CurlProcesses -Jobs $largeUploadJobs
 
   $uploadedBytes = [long](($smallPaths | ForEach-Object { (Get-Item $_).Length } | Measure-Object -Sum).Sum + ($largePaths | ForEach-Object { (Get-Item $_).Length } | Measure-Object -Sum).Sum)
 
@@ -705,29 +879,9 @@ WHERE bucket_id IN (SELECT id FROM _v_buckets WHERE name = '$bucketName')
     throw "expected $LargeFiles large storage objects, got $($largeEntries.Count)"
   }
 
-  $downloadJobs = @()
   foreach ($entry in $largeEntries) {
-    $target = Join-Path $storageDir ("download-" + $entry.name)
-    $downloadJobs += Start-CurlProcess -Label ("ozybase-download-" + $entry.name) -Arguments @(
-      "-sS",
-      "-o", $target,
-      "-w", "%{http_code}",
-      "-H", "Authorization: Bearer $token",
-      "-H", "X-Workspace-Id: $workspaceId",
-      "http://127.0.0.1:$ApiPort$($entry.path)"
-    ) -ExpectedStatuses @("200")
-  }
-  Wait-CurlProcesses -Jobs $downloadJobs
-
-  foreach ($entry in $largeEntries) {
-    $target = Join-Path $storageDir ("download-" + $entry.name)
     $source = Join-Path $storageDir $entry.name
-    if (-not (Test-Path $target)) {
-      throw "downloaded file missing: $target"
-    }
-    if ((Get-Item $target).Length -ne (Get-Item $source).Length) {
-      throw "downloaded large object size mismatch for $($entry.name)"
-    }
+    Assert-StreamDownloadMatchesSource -Url "http://127.0.0.1:$ApiPort$($entry.path)" -BearerToken $token -WorkspaceId $workspaceId -SourcePath $source
   }
   $deleteBucket = Invoke-RestMethod -Method Delete -Uri "http://127.0.0.1:$ApiPort/api/files/buckets/$bucketName" -Headers $headers
   if ([int]$deleteBucket.deleted_files -lt ($expectedFileCount - 1)) {
@@ -760,8 +914,5 @@ finally {
   Remove-ContainerSafe -Name $minioName
   Remove-ContainerSafe -Name $redisName
   Remove-ContainerSafe -Name $pgName
-  try {
-    docker network rm $network 2>$null | Out-Null
-  } catch {
-  }
+  Remove-NetworkSafe -Name $network
 }

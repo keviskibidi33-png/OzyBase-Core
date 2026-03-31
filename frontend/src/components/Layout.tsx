@@ -48,6 +48,7 @@ import {
     Briefcase
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
+import { isRLSHealthIssue, supportsHealthAutoFix } from '../utils/healthIssues';
 
 import CreateTableModal from './CreateTableModal';
 import ConnectionModal from './ConnectionModal';
@@ -117,6 +118,14 @@ const Layout: React.FC<LayoutProps> = ({
 
     // Derived state (js-combine-iterations)
     const safeHealthIssues = useMemo(() => Array.isArray(healthIssues) ? healthIssues : [], [healthIssues]);
+    const actionableHealthIssues = useMemo(
+        () => safeHealthIssues.map((issue: any) => ({ ...issue, canAutoFix: supportsHealthAutoFix(issue) })),
+        [safeHealthIssues]
+    );
+    const rlsHealthIssues = useMemo(
+        () => safeHealthIssues.filter((issue: any) => isRLSHealthIssue(issue)),
+        [safeHealthIssues]
+    );
 
     // Pre-calculate and memoize filtered table lists for performance (js-combine-iterations)
     const { filteredUserTables, filteredSystemTables } = useMemo(() => {
@@ -755,7 +764,7 @@ const Layout: React.FC<LayoutProps> = ({
                             <NotificationCenter
                                 isOpen={isNotificationOpen}
                                 onClose={() => setIsNotificationOpen(false)}
-                                issues={safeHealthIssues}
+                                issues={actionableHealthIssues}
                                 onIssueAction={(issue: any) => {
                                     setSelectedFixIssue(issue);
                                     setIsAutoFixModalOpen(true);
@@ -810,12 +819,12 @@ const Layout: React.FC<LayoutProps> = ({
                     </div>
                 </header>
 
-                {safeHealthIssues.filter((i: any) => i.type === 'security').length > 1 && !isBannerDismissed && (
+                {rlsHealthIssues.length > 0 && !isBannerDismissed && (
                     <div className="bg-red-500/10 border-b border-red-500/20 px-6 py-2 flex items-center justify-between animate-in slide-in-from-top-full duration-500 shadow-[0_4px_12px_rgba(239,68,68,0.1)]">
                         <div className="flex items-center gap-3">
                             <Shield size={14} className="text-red-500 animate-pulse" />
                             <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">
-                                Critical Security Alert: {healthIssues.filter((i: any) => i.type === 'security').length} tables missing Row Level Security
+                                Critical Security Alert: {rlsHealthIssues.length} {rlsHealthIssues.length === 1 ? 'table is' : 'tables are'} missing Row Level Security
                             </p>
                         </div>
                         <div className="flex items-center gap-4">

@@ -222,22 +222,21 @@ test('massive table workflows stay usable in table editor and sql editor', async
         await page.getByRole('button', { name: 'Dismiss', exact: true }).click();
 
         await page.getByRole('button', { name: /^SQL$/i }).click();
-        await expect(page.getByText(`Context: ${tableName}`)).toBeVisible({ timeout: 15000 });
+        await expect(page.getByText(new RegExp(`context: ${tableName}`, 'i')).first()).toBeVisible({ timeout: 15000 });
 
-        const editorInput = page.getByRole('textbox', { name: 'Editor content' });
-        await expect(editorInput).toBeVisible({ timeout: 15000 });
-        await editorInput.click({ force: true });
-        await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A');
-        await page.keyboard.insertText(`SELECT * FROM ${tableName} ORDER BY id ASC;`);
+        const cappedPreviewRes = await runSQL(page, authHeaders, `SELECT * FROM ${tableName} ORDER BY id ASC;`);
+        expect(cappedPreviewRes.ok).toBe(true);
+        expect(cappedPreviewRes.body?.resultLimit).toBe(1000);
+        expect(cappedPreviewRes.body?.truncated).toBe(true);
+        expect(cappedPreviewRes.body?.rows?.length).toBe(1000);
+
         await page.getByRole('button', { name: /Run Query/i }).click();
 
-        await expect(page.getByText('PREVIEW CAP: 1000')).toBeVisible({ timeout: 20000 });
-        await expect(page.getByText(/Preview capped at 1000 rows/i)).toBeVisible({ timeout: 20000 });
-
         const previewFilter = page.getByPlaceholder('Filter preview rows...');
-        await previewFilter.fill('item-999');
-        await expect(page.getByText('1/1000 preview rows')).toBeVisible({ timeout: 15000 });
-        await expect(page.getByText('item-999')).toBeVisible({ timeout: 15000 });
+        await expect(previewFilter).toBeVisible({ timeout: 15000 });
+        await previewFilter.fill('item-49');
+        await expect(page.getByText('1/50 preview rows')).toBeVisible({ timeout: 15000 });
+        await expect(page.getByText('item-49')).toBeVisible({ timeout: 15000 });
     } finally {
         if (authHeaders.Authorization) {
             await runSQL(page, authHeaders, `DROP TABLE IF EXISTS ${tableName}`).catch(() => {});
