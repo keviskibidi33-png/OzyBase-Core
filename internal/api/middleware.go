@@ -475,7 +475,6 @@ func MetricsMiddleware(h *Handler) echo.MiddlewareFunc {
 				// Check for Geo Breach
 				isBreach, _ := h.Geo.CheckBreach(context.Background(), ip, geo.Country)
 				if isBreach {
-					// ... existing logic ...
 					detailsMap := map[string]any{
 						"ip":      ip,
 						"country": geo.Country,
@@ -483,6 +482,23 @@ func MetricsMiddleware(h *Handler) echo.MiddlewareFunc {
 						"method":  entry.Method,
 						"path":    entry.Path,
 					}
+					var alreadyOpen bool
+					_ = h.DB.Pool.QueryRow(context.Background(), `
+						SELECT EXISTS (
+							SELECT 1
+							FROM _v_security_alerts
+							WHERE type = 'geo_breach'
+							  AND is_resolved = false
+							  AND COALESCE(metadata->>'ip', '') = $1
+							  AND COALESCE(metadata->>'country', '') = $2
+							  AND COALESCE(metadata->>'city', '') = $3
+							  AND created_at >= NOW() - INTERVAL '15 minutes'
+						)
+					`, ip, geo.Country, geo.City).Scan(&alreadyOpen)
+					if alreadyOpen {
+						return
+					}
+
 					details, _ := json.Marshal(detailsMap)
 					_, _ = h.DB.Pool.Exec(context.Background(), `
 						INSERT INTO _v_security_alerts (type, severity, message, metadata)

@@ -187,7 +187,7 @@ function App() {
             case 'RealtimeInspector':
                 return <RealtimeInspector view={props.view} />;
             case 'Advisors':
-                return <Advisors />;
+                return <Advisors onViewSelect={setSelectedView} />;
             case 'Observability':
                 return <Observability onViewSelect={setSelectedView} />;
             case 'LogsAnalytics':

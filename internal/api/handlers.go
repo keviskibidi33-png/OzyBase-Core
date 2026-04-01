@@ -578,7 +578,9 @@ func (h *Handler) UpdateSecurityPolicy(c echo.Context) error {
 	// Invalidate cache if it's geo_fencing
 	if req.Type == "geo_fencing" {
 		h.Geo.InvalidatePolicy()
+		_, _ = h.resolveGeoBreachAlerts(c.Request().Context(), "")
 	}
+	h.invalidateHealthIssuesCache()
 
 	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
 }

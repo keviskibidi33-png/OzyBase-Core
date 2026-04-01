@@ -18,7 +18,6 @@ interface ModulePageHeroProps {
   eyebrow: string;
   title: string;
   description: string;
-  descriptionLabel?: string;
   icon?: LucideIcon;
   pills?: readonly HeroPill[];
   stats?: readonly HeroStat[];
@@ -37,30 +36,19 @@ const PILL_TONE_CLASS: Record<HeroTone, string> = {
 const ModulePageHero: React.FC<ModulePageHeroProps> = ({
   eyebrow,
   title,
-  description,
-  descriptionLabel = "Quick brief",
   icon: Icon,
   pills = [],
   stats = [],
   actions,
   className = "",
 }) => {
-  const hasDescription = description.trim().length > 0;
-  const showAside = hasDescription || Boolean(actions);
-
   return (
     <section
       className={`relative overflow-hidden rounded-[32px] border border-[#2e2e2e] bg-[radial-gradient(circle_at_top_right,rgba(254,254,0,0.08),transparent_42%),linear-gradient(180deg,rgba(23,23,23,0.96),rgba(12,12,12,0.98))] shadow-2xl ${className}`.trim()}
     >
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
       <div className="relative p-6 md:p-8">
-        <div
-          className={`grid gap-6 ${
-            showAside
-              ? "xl:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] xl:items-start"
-              : ""
-          }`}
-        >
+        <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">
             <div className="flex items-start gap-4">
               {Icon ? (
@@ -94,25 +82,10 @@ const ModulePageHero: React.FC<ModulePageHeroProps> = ({
             ) : null}
           </div>
 
-          {showAside ? (
-            <aside className="flex min-w-0 flex-col gap-3 xl:items-stretch">
-              {actions ? (
-                <div className="flex flex-wrap items-center gap-3 xl:justify-end">
-                  {actions}
-                </div>
-              ) : null}
-
-              {hasDescription ? (
-                <div className="rounded-[24px] border border-primary/15 bg-[#0d0d0d]/95 p-5 shadow-[inset_0_1px_0_rgba(254,254,0,0.08)]">
-                  <p className="text-[10px] font-black uppercase tracking-[0.24em] text-primary/80">
-                    {descriptionLabel}
-                  </p>
-                  <p className="mt-3 text-sm leading-relaxed text-zinc-300">
-                    {description}
-                  </p>
-                </div>
-              ) : null}
-            </aside>
+          {actions ? (
+            <div className="flex shrink-0 flex-wrap items-center gap-3 xl:max-w-sm xl:justify-end">
+              {actions}
+            </div>
           ) : null}
         </div>
 

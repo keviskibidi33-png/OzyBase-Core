@@ -6,6 +6,11 @@ interface NotificationIssue {
     title?: string;
     description?: string;
     fixable?: boolean;
+    reviewable?: boolean;
+    review_key?: string;
+    action_view?: string;
+    action_label?: string;
+    count?: number;
     [key: string]: unknown;
 }
 
@@ -14,10 +19,11 @@ interface NotificationCenterProps {
     onClose: () => void;
     issues: NotificationIssue[];
     onIssueAction: (issue: NotificationIssue) => void;
+    onReviewIssue: (issue: NotificationIssue) => void;
     onViewLogs: () => void;
 }
 
-const NotificationCenter = ({ isOpen, onClose, issues, onIssueAction, onViewLogs }: NotificationCenterProps) => {
+const NotificationCenter = ({ isOpen, onClose, issues, onIssueAction, onReviewIssue, onViewLogs }: NotificationCenterProps) => {
     return (
         <div
             className={`absolute top-16 right-6 z-[100] w-[420px] overflow-hidden origin-top-right transition-all duration-200 ozy-floating-panel ${
@@ -64,26 +70,57 @@ const NotificationCenter = ({ isOpen, onClose, issues, onIssueAction, onViewLogs
                                     </div>
                                     <div className="space-y-1.5 flex-1 min-w-0">
                                         <div className="flex items-center justify-between gap-4">
-                                            <p className="text-xs font-black text-zinc-200 uppercase tracking-tight group-hover:text-white transition-colors leading-tight truncate">
-                                                {issue.title ?? 'Untitled issue'}
-                                            </p>
+                                            <div className="flex min-w-0 items-center gap-2">
+                                                <p className="text-xs font-black text-zinc-200 uppercase tracking-tight group-hover:text-white transition-colors leading-tight truncate">
+                                                    {issue.title ?? 'Untitled issue'}
+                                                </p>
+                                                {typeof issue.count === 'number' && issue.count > 1 ? (
+                                                    <span className="rounded-full border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-zinc-400">
+                                                        {issue.count} events
+                                                    </span>
+                                                ) : null}
+                                            </div>
                                             <span className="text-[8px] font-bold text-zinc-700 whitespace-nowrap">JUST NOW</span>
                                         </div>
                                         <p className="text-[10px] text-zinc-500 leading-relaxed font-medium">
                                             {issue.description ?? 'No details available.'}
                                         </p>
-                                        <div className="flex items-center gap-3 mt-3">
+                                        <div className="mt-3 flex flex-wrap items-center gap-3">
                                             <span className={`text-[8px] font-black px-2 py-0.5 rounded uppercase tracking-widest ${issue.type === 'security' ? 'bg-red-500/20 text-red-500' : 'bg-amber-500/20 text-amber-500'
                                                 }`}>
                                                 {issue.type}
                                             </span>
-                                            <span className={`flex items-center gap-1.5 text-[8px] font-black px-2 py-0.5 rounded uppercase tracking-widest transition-all transform translate-x-2 group-hover:translate-x-0 ${issue.fixable
-                                                ? 'text-primary bg-primary/10 border border-primary/20 opacity-0 group-hover:opacity-100'
-                                                : 'text-zinc-500 bg-zinc-900 border border-zinc-800 opacity-100'
-                                                }`}>
-                                                {issue.fixable ? <Zap size={10} fill="currentColor" /> : null}
-                                                {issue.fixable ? 'Auto-Fix Now' : 'Review in Advisors'}
-                                            </span>
+                                            {issue.fixable ? (
+                                                <span className="flex items-center gap-1.5 rounded border border-primary/20 bg-primary/10 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-primary transition-all transform translate-x-2 opacity-0 group-hover:translate-x-0 group-hover:opacity-100">
+                                                    <Zap size={10} fill="currentColor" />
+                                                    Auto-Fix Now
+                                                </span>
+                                            ) : (
+                                                <>
+                                                    <button
+                                                        type="button"
+                                                        onClick={(event) => {
+                                                            event.stopPropagation();
+                                                            onIssueAction(issue);
+                                                        }}
+                                                        className="rounded border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-zinc-300 transition-colors hover:border-primary/30 hover:text-primary"
+                                                    >
+                                                        {String(issue.action_label || 'Review in Advisors')}
+                                                    </button>
+                                                    {issue.reviewable ? (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(event) => {
+                                                                event.stopPropagation();
+                                                                onReviewIssue(issue);
+                                                            }}
+                                                            className="rounded border border-zinc-800 bg-[#111111] px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-zinc-500 transition-colors hover:border-emerald-500/30 hover:text-emerald-300"
+                                                        >
+                                                            Mark reviewed
+                                                        </button>
+                                                    ) : null}
+                                                </>
+                                            )}
                                         </div>
                                     </div>
                                 </div>

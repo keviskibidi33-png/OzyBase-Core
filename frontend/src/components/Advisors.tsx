@@ -24,6 +24,11 @@ interface HealthIssueResponse {
     title: string;
     description: string;
     fixable?: boolean;
+    reviewable?: boolean;
+    review_key?: string;
+    action_view?: string;
+    action_label?: string;
+    count?: number;
 }
 
 interface AdvisorIssue {
@@ -35,6 +40,11 @@ interface AdvisorIssue {
     desc: string;
     status: 'Error' | 'Warning';
     fixable: boolean;
+    reviewable: boolean;
+    reviewKey?: string;
+    actionView?: string;
+    actionLabel?: string;
+    count?: number;
 }
 
 interface AdvisorStats {
@@ -61,7 +71,11 @@ const getErrorMessage = (error: unknown, fallback: string): string => {
     return fallback;
 };
 
-const Advisors: React.FC = () => {
+interface AdvisorsProps {
+    onViewSelect?: (view: string) => void;
+}
+
+const Advisors: React.FC<AdvisorsProps> = ({ onViewSelect }) => {
     const [issues, setIssues] = useState<AdvisorIssue[]>([]);
     const [loading, setLoading] = useState(true);
     const [stats, setStats] = useState<AdvisorStats>({
@@ -94,7 +108,12 @@ const Advisors: React.FC = () => {
                     title: item.title,
                     desc: item.description,
                     status: item.type === 'security' ? 'Error' : 'Warning',
-                    fixable: item.fixable !== false
+                    fixable: item.fixable !== false,
+                    reviewable: item.reviewable === true,
+                    reviewKey: item.review_key,
+                    actionView: item.action_view,
+                    actionLabel: item.action_label,
+                    count: typeof item.count === 'number' ? item.count : undefined
                     }));
                 setIssues(parsed);
             }
@@ -139,6 +158,39 @@ const Advisors: React.FC = () => {
             }
         } catch (error) {
             console.error("Fix failed", error);
+            showToast('Network error or server unavailable', 'error');
+        } finally {
+            setFixingId(null);
+        }
+    };
+
+    const handleReviewIssue = async (issue: AdvisorIssue) => {
+        const issueId = typeof issue.id === 'number' ? issue.id : null;
+        setFixingId(issueId);
+        try {
+            const res = await fetchWithAuth('/api/project/health/review', {
+                method: 'POST',
+                body: JSON.stringify({
+                    type: issue.type,
+                    issue: issue.title,
+                    review_key: issue.reviewKey || ''
+                })
+            });
+            if (!res.ok) {
+                const errData: unknown = await res.json();
+                const message = (
+                    typeof errData === 'object' &&
+                    errData !== null &&
+                    'error' in errData &&
+                    typeof (errData as { error?: unknown }).error === 'string'
+                ) ? (errData as { error: string }).error : 'Failed to review alert';
+                showToast(message, 'error');
+                return;
+            }
+            showToast(`Reviewed: ${issue.title}`, 'success');
+            await fetchHealth();
+        } catch (error) {
+            console.error("Review failed", error);
             showToast('Network error or server unavailable', 'error');
         } finally {
             setFixingId(null);
@@ -265,6 +317,11 @@ const Advisors: React.FC = () => {
                                                     {issue.typeLabel}
                                                 </span>
                                                 <h3 className="text-sm font-bold text-zinc-100 uppercase tracking-tight">{issue.title}</h3>
+                                                {typeof issue.count === 'number' && issue.count > 1 ? (
+                                                    <span className="rounded-full border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-zinc-400">
+                                                        {issue.count} events
+                                                    </span>
+                                                ) : null}
                                             </div>
                                             <p className="text-xs text-zinc-500 font-medium leading-relaxed max-w-2xl">
                                                 {issue.desc}
@@ -283,6 +340,26 @@ const Advisors: React.FC = () => {
                                                     {fixingId === issue.id ? <RefreshCw size={12} className="animate-spin" /> : <Zap size={12} fill="currentColor" />}
                                                     {fixingId === issue.id ? 'Fixing...' : 'Auto-Fix'}
                                                 </button>
+                                            ) : issue.reviewable ? (
+                                                <>
+                                                    <button
+                                                        onClick={() => {
+                                                            if (issue.actionView) {
+                                                                onViewSelect?.(issue.actionView);
+                                                            }
+                                                        }}
+                                                        className="px-4 py-2 border border-zinc-800 rounded-lg text-[10px] font-black uppercase tracking-widest text-zinc-300 hover:border-primary/30 hover:text-primary transition-all"
+                                                    >
+                                                        {issue.actionLabel || 'Open relevant module'}
+                                                    </button>
+                                                    <button
+                                                        onClick={() => { void handleReviewIssue(issue); }}
+                                                        disabled={fixingId !== null}
+                                                        className="px-4 py-2 border border-emerald-500/20 bg-emerald-500/10 rounded-lg text-[10px] font-black uppercase tracking-widest text-emerald-300 hover:border-emerald-400/40 transition-all disabled:opacity-50"
+                                                    >
+                                                        {fixingId === issue.id ? 'Reviewing...' : 'Mark Reviewed'}
+                                                    </button>
+                                                </>
                                             ) : (
                                                 <span className="px-4 py-2 border border-zinc-800 rounded-lg text-[10px] font-black uppercase tracking-widest text-zinc-500">
                                                     Manual Review

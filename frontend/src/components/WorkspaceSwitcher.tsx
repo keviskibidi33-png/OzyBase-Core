@@ -22,11 +22,19 @@ interface Workspace {
 }
 
 interface WorkspaceSwitcherProps {
-    onWorkspaceChange?: (workspaceID: string) => void;
+    onWorkspaceChange?: (workspaceID: string | null) => void;
     onViewSelect?: (view: string) => void;
     isExpanded?: boolean;
     workspaceId?: string | null;
 }
+
+const normalizeWorkspaceId = (value: unknown): string | null => {
+    if (value === null || value === undefined) {
+        return null;
+    }
+    const normalized = String(value).trim();
+    return normalized ? normalized : null;
+};
 
 const WorkspaceSwitcher = ({ onWorkspaceChange, onViewSelect, isExpanded = false, workspaceId = null }: WorkspaceSwitcherProps) => {
     const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -43,16 +51,23 @@ const WorkspaceSwitcher = ({ onWorkspaceChange, onViewSelect, isExpanded = false
                 const workspaceData = Array.isArray(data) ? (data as Workspace[]) : [];
                 setWorkspaces(workspaceData);
                 
-                const storedId = workspaceId || localStorage.getItem('ozy_workspace_id');
-                const active = workspaceData.find((w: any) => w.id === storedId) || workspaceData[0] || null;
+                const storedId = normalizeWorkspaceId(workspaceId) || normalizeWorkspaceId(localStorage.getItem('ozy_workspace_id'));
+                const active = workspaceData.find((w: any) => normalizeWorkspaceId(w.id) === storedId) || workspaceData[0] || null;
                 
                 if (active) {
                     setActiveWorkspace(active);
-                    if (!storedId || storedId !== active.id) {
-                        localStorage.setItem('ozy_workspace_id', active.id);
+                    const activeId = normalizeWorkspaceId(active.id);
+                    if (activeId && storedId !== activeId) {
+                        localStorage.setItem('ozy_workspace_id', activeId);
                     }
-                    if (workspaceId !== active.id) {
-                        onWorkspaceChange?.(active.id);
+                    if (activeId && normalizeWorkspaceId(workspaceId) !== activeId) {
+                        onWorkspaceChange?.(activeId);
+                    }
+                } else {
+                    setActiveWorkspace(null);
+                    localStorage.removeItem('ozy_workspace_id');
+                    if (normalizeWorkspaceId(workspaceId) !== null) {
+                        onWorkspaceChange?.(null);
                     }
                 }
             }
@@ -78,18 +93,33 @@ const WorkspaceSwitcher = ({ onWorkspaceChange, onViewSelect, isExpanded = false
     }, [fetchWorkspaces]);
 
     useEffect(() => {
-        if (!workspaceId || workspaces.length === 0) {
+        if (workspaces.length === 0) {
+            setActiveWorkspace(null);
             return;
         }
-        const nextActive = workspaces.find((workspace: Workspace) => workspace.id === workspaceId) || null;
-        if (nextActive) {
-            setActiveWorkspace(nextActive);
+
+        const normalizedWorkspaceId = normalizeWorkspaceId(workspaceId);
+        if (!normalizedWorkspaceId) {
+            const storedId = normalizeWorkspaceId(localStorage.getItem('ozy_workspace_id'));
+            if (storedId) {
+                const storedWorkspace = workspaces.find((workspace: Workspace) => normalizeWorkspaceId(workspace.id) === storedId) || null;
+                if (storedWorkspace) {
+                    setActiveWorkspace(storedWorkspace);
+                    return;
+                }
+                localStorage.removeItem('ozy_workspace_id');
+            }
+            setActiveWorkspace(null);
+            return;
         }
+
+        const nextActive = workspaces.find((workspace: Workspace) => normalizeWorkspaceId(workspace.id) === normalizedWorkspaceId) || null;
+        setActiveWorkspace(nextActive);
     }, [workspaceId, workspaces]);
 
     const handleSelect = (workspace: Workspace) => {
         setActiveWorkspace(workspace);
-        localStorage.setItem('ozy_workspace_id', workspace.id);
+        localStorage.setItem('ozy_workspace_id', String(workspace.id));
         setIsOpen(false);
         if (onWorkspaceChange) onWorkspaceChange(workspace.id);
     };
@@ -117,6 +147,9 @@ const WorkspaceSwitcher = ({ onWorkspaceChange, onViewSelect, isExpanded = false
     return (
         <div className={`relative w-full transition-all duration-300 ${isExpanded ? 'px-4 mb-6' : 'px-1 mb-4'}`} ref={dropdownRef}>
             <div 
+                data-testid="workspace-switcher-toggle"
+                role="button"
+                aria-label="Open project switcher"
                 onClick={() => setIsOpen(!isOpen)}
                 className={`group relative flex items-center transition-all cursor-pointer select-none ${
                     isExpanded 

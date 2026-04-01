@@ -1197,6 +1197,83 @@ type HealthIssue struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	Fixable     bool   `json:"fixable"`
+	Reviewable  bool   `json:"reviewable,omitempty"`
+	ReviewKey   string `json:"review_key,omitempty"`
+	ActionView  string `json:"action_view,omitempty"`
+	ActionLabel string `json:"action_label,omitempty"`
+	Count       int    `json:"count,omitempty"`
+}
+
+func reviewKeySegment(value any) string {
+	trimmed := strings.TrimSpace(fmt.Sprint(value))
+	if trimmed == "" || trimmed == "<nil>" {
+		return ""
+	}
+	return strings.ReplaceAll(trimmed, "|", "/")
+}
+
+func buildGeoBreachReviewKey(ip, country, city string) string {
+	return strings.Join([]string{
+		"geo_breach",
+		reviewKeySegment(ip),
+		reviewKeySegment(country),
+		reviewKeySegment(city),
+	}, "|")
+}
+
+func parseGeoBreachReviewKey(reviewKey string) (ip, country, city string, ok bool) {
+	parts := strings.Split(reviewKey, "|")
+	if len(parts) != 4 || parts[0] != "geo_breach" {
+		return "", "", "", false
+	}
+	return strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2]), strings.TrimSpace(parts[3]), true
+}
+
+func buildSecurityAlertHealthIssue(alertType string, details map[string]any) (HealthIssue, string, bool) {
+	switch strings.TrimSpace(alertType) {
+	case "geo_breach":
+		ip := reviewKeySegment(details["ip"])
+		country := reviewKeySegment(details["country"])
+		city := reviewKeySegment(details["city"])
+		location := "unknown location"
+		switch {
+		case country != "" && city != "":
+			location = fmt.Sprintf("%s (%s)", country, city)
+		case country != "":
+			location = country
+		case city != "":
+			location = city
+		}
+
+		desc := fmt.Sprintf("Access attempt from unauthorized location: %s", location)
+		if ip != "" {
+			desc += fmt.Sprintf(" via IP %s", ip)
+		}
+		desc += ". Review geo-fencing policy or mark the alert as reviewed after validation."
+
+		reviewKey := buildGeoBreachReviewKey(ip, country, city)
+		return HealthIssue{
+			Type:        "security",
+			Title:       "Geographic Access Breach",
+			Description: desc,
+			Reviewable:  true,
+			ReviewKey:   reviewKey,
+			ActionView:  "security_policies",
+			ActionLabel: "Open Geo-Fencing",
+		}, reviewKey, true
+	case "system_error":
+		return HealthIssue{
+			Type:        "security",
+			Title:       "System Configuration Error",
+			Description: fmt.Sprintf("Error: %v", details["error"]),
+		}, "system_error", true
+	default:
+		return HealthIssue{
+			Type:        "security",
+			Title:       "Security Alert",
+			Description: "A security event was detected.",
+		}, strings.TrimSpace(alertType), true
+	}
 }
 
 // GetHealthIssues handles GET /api/project/health
@@ -1328,27 +1405,42 @@ func (h *Handler) GetHealthIssues(c echo.Context) error {
 	rows, err = h.DB.Pool.Query(ctx, "SELECT type, severity, metadata FROM _v_security_alerts WHERE is_resolved = false ORDER BY created_at DESC LIMIT 10")
 	if err == nil {
 		defer rows.Close()
+		type aggregatedAlert struct {
+			issue HealthIssue
+			count int
+		}
+		aggregated := make(map[string]*aggregatedAlert)
+		order := make([]string, 0, 8)
+
 		for rows.Next() {
 			var aType, severity string
 			var details map[string]any
 			if err := rows.Scan(&aType, &severity, &details); err == nil {
-				title := "Unknown Security Alert"
-				desc := "A security event was detected."
-
-				if aType == "geo_breach" && details != nil {
-					title = "Geographic Access Breach"
-					desc = fmt.Sprintf("Access attempt from unauthorized location: %v (%v) via IP %v", details["country"], details["city"], details["ip"])
-				} else if aType == "system_error" && details != nil {
-					title = "System Configuration Error"
-					desc = fmt.Sprintf("Error: %v", details["error"])
+				issue, aggregateKey, include := buildSecurityAlertHealthIssue(aType, details)
+				if !include {
+					continue
 				}
-
-				issues = append(issues, HealthIssue{
-					Type:        "security",
-					Title:       title,
-					Description: desc,
-				})
+				if aggregateKey == "" {
+					aggregateKey = fmt.Sprintf("%s:%v", aType, details)
+				}
+				if existing, ok := aggregated[aggregateKey]; ok {
+					existing.count++
+					continue
+				}
+				aggregated[aggregateKey] = &aggregatedAlert{
+					issue: issue,
+					count: 1,
+				}
+				order = append(order, aggregateKey)
 			}
+		}
+
+		for _, aggregateKey := range order {
+			aggregate := aggregated[aggregateKey]
+			if aggregate.count > 1 {
+				aggregate.issue.Count = aggregate.count
+			}
+			issues = append(issues, aggregate.issue)
 		}
 	}
 
@@ -1366,6 +1458,12 @@ type FixHealthRequest struct {
 	Issue string `json:"issue"`
 }
 
+type ReviewHealthRequest struct {
+	Type      string `json:"type"`
+	Issue     string `json:"issue"`
+	ReviewKey string `json:"review_key"`
+}
+
 func isRLSHealthFixIssue(issueType, issue string) bool {
 	typeLower := strings.ToLower(strings.TrimSpace(issueType))
 	if typeLower != "security" {
@@ -1375,6 +1473,35 @@ func isRLSHealthFixIssue(issueType, issue string) bool {
 	return strings.Contains(issueLower, "row level security") ||
 		strings.Contains(issueLower, "missing rls policies") ||
 		strings.Contains(issueLower, " rls ")
+}
+
+func (h *Handler) resolveGeoBreachAlerts(ctx context.Context, reviewKey string) (int64, error) {
+	ip, country, city, ok := parseGeoBreachReviewKey(strings.TrimSpace(reviewKey))
+	var tag pgconn.CommandTag
+	var err error
+	if ok {
+		tag, err = h.DB.Pool.Exec(ctx, `
+			UPDATE _v_security_alerts
+			SET is_resolved = true
+			WHERE type = 'geo_breach'
+			  AND is_resolved = false
+			  AND COALESCE(metadata->>'ip', '') = $1
+			  AND COALESCE(metadata->>'country', '') = $2
+			  AND COALESCE(metadata->>'city', '') = $3
+		`, ip, country, city)
+	} else {
+		tag, err = h.DB.Pool.Exec(ctx, `
+			UPDATE _v_security_alerts
+			SET is_resolved = true
+			WHERE type = 'geo_breach'
+			  AND is_resolved = false
+		`)
+	}
+	if err != nil {
+		return 0, err
+	}
+	h.invalidateHealthIssuesCache()
+	return tag.RowsAffected(), nil
 }
 
 func isHealthIssueAutoFixable(issueType, issue string) bool {
@@ -1614,6 +1741,42 @@ func (h *Handler) FixHealthIssues(c echo.Context) error {
 	return c.JSON(http.StatusBadRequest, map[string]string{
 		"error":      "Fix strategy not found for this issue: " + req.Issue,
 		"error_code": "FIX_STRATEGY_NOT_FOUND",
+	})
+}
+
+// ReviewHealthIssues handles POST /api/project/health/review
+func (h *Handler) ReviewHealthIssues(c echo.Context) error {
+	var req ReviewHealthRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
+	defer cancel()
+
+	typeLower := strings.ToLower(strings.TrimSpace(req.Type))
+	issueLower := strings.ToLower(strings.TrimSpace(req.Issue))
+	if typeLower != "security" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Only security review flows are supported"})
+	}
+
+	if strings.Contains(issueLower, "geographic access breach") || strings.HasPrefix(strings.TrimSpace(req.ReviewKey), "geo_breach|") {
+		affected, err := h.resolveGeoBreachAlerts(ctx, req.ReviewKey)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to review geo breach alerts: " + err.Error()})
+		}
+		if affected == 0 {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "No matching geo breach alerts were pending review"})
+		}
+		return c.JSON(http.StatusOK, map[string]any{
+			"message":        "Geo breach alerts marked as reviewed",
+			"rows_affected":  affected,
+			"reviewed_issue": req.Issue,
+		})
+	}
+
+	return c.JSON(http.StatusBadRequest, map[string]string{
+		"error": "Review strategy not found for this issue: " + req.Issue,
 	})
 }
 

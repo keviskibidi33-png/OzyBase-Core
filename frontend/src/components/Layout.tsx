@@ -86,6 +86,26 @@ interface CoreUpdateStatus {
     message?: string;
 }
 
+const resetScrollPosition = (viewport: HTMLElement | null) => {
+    if (!viewport) {
+        return;
+    }
+
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    viewport.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+
+    viewport.querySelectorAll<HTMLElement>('*').forEach((node) => {
+        const styles = window.getComputedStyle(node);
+        const scrollsY = node.scrollHeight > node.clientHeight + 8 && /(auto|scroll)/.test(styles.overflowY);
+        const scrollsX = node.scrollWidth > node.clientWidth + 8 && /(auto|scroll)/.test(styles.overflowX);
+
+        if (scrollsY || scrollsX || node.classList.contains('custom-scrollbar')) {
+            node.scrollTop = 0;
+            node.scrollLeft = 0;
+        }
+    });
+};
+
 const Layout: React.FC<LayoutProps> = ({
     children,
     selectedView,
@@ -125,6 +145,7 @@ const Layout: React.FC<LayoutProps> = ({
 
     const notificationRef = useRef<HTMLDivElement | null>(null);
     const userDropdownRef = useRef<HTMLDivElement | null>(null);
+    const contentViewportRef = useRef<HTMLDivElement | null>(null);
 
     // Derived state (js-combine-iterations)
     const safeHealthIssues = useMemo(() => Array.isArray(healthIssues) ? healthIssues : [], [healthIssues]);
@@ -254,6 +275,28 @@ const Layout: React.FC<LayoutProps> = ({
         };
     }, [isNotificationOpen, isUserDropdownOpen]);
 
+    useEffect(() => {
+        const viewport = contentViewportRef.current;
+        if (!viewport) return undefined;
+
+        let rafTwo = 0;
+        const rafOne = window.requestAnimationFrame(() => {
+            resetScrollPosition(viewport);
+            rafTwo = window.requestAnimationFrame(() => {
+                resetScrollPosition(viewport);
+            });
+        });
+        const timeoutId = window.setTimeout(() => {
+            resetScrollPosition(viewport);
+        }, 140);
+
+        return () => {
+            window.cancelAnimationFrame(rafOne);
+            window.cancelAnimationFrame(rafTwo);
+            window.clearTimeout(timeoutId);
+        };
+    }, [selectedView, selectedTable, workspaceId]);
+
     const handleApplyFix = React.useCallback(async (issue: any) => {
         try {
             const res = await fetchWithAuth('/api/project/health/fix', {
@@ -266,7 +309,7 @@ const Layout: React.FC<LayoutProps> = ({
             if (res.ok) {
                 showToast(`Applied fix for: ${issue.title}`, 'success');
                 // Refresh health after fix
-                fetchWithAuth('/api/project/health')
+                fetchWithAuth('/api/project/health?refresh=true')
                     .then((res: any) => res.json())
                     .then((data: any) => setHealthIssues(Array.isArray(data) ? data : []));
             } else {
@@ -278,6 +321,37 @@ const Layout: React.FC<LayoutProps> = ({
             showToast('Network error or server unavailable', 'error');
         }
     }, [showToast]);
+
+    const handleReviewIssue = React.useCallback(async (issue: any) => {
+        try {
+            const res = await fetchWithAuth('/api/project/health/review', {
+                method: 'POST',
+                body: JSON.stringify({
+                    type: issue?.type,
+                    issue: issue?.title,
+                    review_key: issue?.review_key || ''
+                })
+            });
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                showToast(errData.error || 'Failed to mark alert as reviewed', 'error');
+                return;
+            }
+            showToast(`Reviewed: ${issue?.title || 'selected alert'}`, 'success');
+            const healthRes = await fetchWithAuth('/api/project/health?refresh=true');
+            const healthData = await healthRes.json();
+            setHealthIssues(Array.isArray(healthData) ? healthData : []);
+        } catch (error) {
+            console.error(error);
+            showToast('Network error or server unavailable', 'error');
+        }
+    }, [showToast]);
+
+    const openIssueTarget = React.useCallback((issue: any) => {
+        const targetView = String(issue?.action_view || '').trim();
+        onMenuViewSelect(targetView || 'advisors');
+        setIsNotificationOpen(false);
+    }, [onMenuViewSelect]);
 
     const handleLogout = React.useCallback(() => {
         localStorage.removeItem('ozy_token');
@@ -733,7 +807,7 @@ const Layout: React.FC<LayoutProps> = ({
             )}
 
             {/* Main Content Area */}
-            <div className={`flex-1 flex flex-col min-w-0 bg-[#0c0c0c] ${!shouldShowExplorer(selectedView) ? 'animate-in fade-in slide-in-from-left-2 duration-300' : ''}`}>
+            <div ref={contentViewportRef} data-testid="module-shell" className={`flex-1 flex flex-col min-w-0 bg-[#0c0c0c] ${!shouldShowExplorer(selectedView) ? 'animate-in fade-in slide-in-from-left-2 duration-300' : ''}`}>
                 <header className="h-14 border-b border-[#2e2e2e] bg-[#111111] flex items-center justify-between px-6 flex-shrink-0">
                     <div className="flex items-center gap-2 text-[11px] font-bold tracking-tight">
                         <span className="text-zinc-600 hover:text-zinc-400 cursor-pointer transition-colors uppercase tracking-[0.1em]">OzyBase</span>
@@ -758,6 +832,7 @@ const Layout: React.FC<LayoutProps> = ({
 
                         <div className="relative" ref={notificationRef}>
                             <button
+                                aria-label="Open notifications"
                                 onClick={() => setIsNotificationOpen(!isNotificationOpen)}
                                 className={`w-8 h-8 rounded-lg bg-zinc-900 border border-[#2e2e2e] flex items-center justify-center transition-all ${safeHealthIssues.length > 0
                                     ? safeHealthIssues.some((i: any) => i.type === 'security')
@@ -780,14 +855,14 @@ const Layout: React.FC<LayoutProps> = ({
                                 issues={safeHealthIssues}
                                 onIssueAction={(issue: any) => {
                                     if (issue?.fixable === false) {
-                                        onMenuViewSelect('advisors');
-                                        setIsNotificationOpen(false);
+                                        openIssueTarget(issue);
                                         return;
                                     }
                                     setSelectedFixIssue(issue);
                                     setIsAutoFixModalOpen(true);
                                     setIsNotificationOpen(false);
                                 }}
+                                onReviewIssue={handleReviewIssue}
                                 onViewLogs={() => {
                                     onMenuViewSelect('advisors');
                                     setIsNotificationOpen(false);
