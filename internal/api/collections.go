@@ -16,6 +16,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/labstack/echo/v4"
+	"golang.org/x/text/language"
+	"golang.org/x/text/language/display"
 )
 
 // Collection represents a collection in the system
@@ -1256,6 +1258,7 @@ func buildSecurityAlertHealthIssue(alertType string, details map[string]any) (He
 			Type:        "security",
 			Title:       "Geographic Access Breach",
 			Description: desc,
+			Fixable:     true,
 			Reviewable:  true,
 			ReviewKey:   reviewKey,
 			ActionView:  "security_policies",
@@ -1476,23 +1479,24 @@ func isRLSHealthFixIssue(issueType, issue string) bool {
 }
 
 func normalizeAllowedCountries(raw any) []string {
+	next := make([]string, 0)
+	push := func(country string) {
+		canonical := canonicalGeoCountryValue(country)
+		if canonical == "" || containsFold(next, canonical) {
+			return
+		}
+		next = append(next, canonical)
+	}
+
 	switch value := raw.(type) {
 	case []string:
-		next := make([]string, 0, len(value))
 		for _, country := range value {
-			trimmed := strings.TrimSpace(country)
-			if trimmed != "" {
-				next = append(next, trimmed)
-			}
+			push(country)
 		}
 		return next
 	case []any:
-		next := make([]string, 0, len(value))
 		for _, item := range value {
-			trimmed := strings.TrimSpace(fmt.Sprint(item))
-			if trimmed != "" && trimmed != "<nil>" {
-				next = append(next, trimmed)
-			}
+			push(fmt.Sprint(item))
 		}
 		return next
 	default:
@@ -1500,13 +1504,65 @@ func normalizeAllowedCountries(raw any) []string {
 	}
 }
 
+func canonicalGeoCountryValue(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || trimmed == "<nil>" {
+		return ""
+	}
+	if region, err := language.ParseRegion(strings.ToUpper(trimmed)); err == nil {
+		if displayName := strings.TrimSpace(display.English.Regions().Name(region)); displayName != "" {
+			return displayName
+		}
+	}
+	return trimmed
+}
+
 func containsFold(values []string, target string) bool {
 	for _, value := range values {
-		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(target)) {
+		if geoCountryValuesMatch(value, target) {
 			return true
 		}
 	}
 	return false
+}
+
+func geoCountryValuesMatch(left string, right string) bool {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" || right == "" {
+		return false
+	}
+	if strings.EqualFold(left, right) {
+		return true
+	}
+	if normalizeGeoCountryLabel(left) == normalizeGeoCountryLabel(right) {
+		return true
+	}
+	if region, err := language.ParseRegion(strings.ToUpper(left)); err == nil {
+		if displayName := strings.TrimSpace(display.English.Regions().Name(region)); displayName != "" {
+			if strings.EqualFold(displayName, right) || normalizeGeoCountryLabel(displayName) == normalizeGeoCountryLabel(right) {
+				return true
+			}
+		}
+	}
+	if region, err := language.ParseRegion(strings.ToUpper(right)); err == nil {
+		if displayName := strings.TrimSpace(display.English.Regions().Name(region)); displayName != "" {
+			if strings.EqualFold(displayName, left) || normalizeGeoCountryLabel(displayName) == normalizeGeoCountryLabel(left) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func normalizeGeoCountryLabel(value string) string {
+	var builder strings.Builder
+	for _, r := range strings.TrimSpace(strings.ToLower(value)) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			builder.WriteRune(r)
+		}
+	}
+	return builder.String()
 }
 
 func (h *Handler) resolveGeoBreachAlerts(ctx context.Context, reviewKey string) (int64, error) {
@@ -1546,6 +1602,9 @@ func isHealthIssueAutoFixable(issueType, issue string) bool {
 		return true
 	}
 	if typeLower == "security" && strings.Contains(issueLower, "public list rules") {
+		return true
+	}
+	if typeLower == "security" && strings.Contains(issueLower, "geographic access breach") {
 		return true
 	}
 	if typeLower == "performance" && strings.Contains(issueLower, "sequential scans") {

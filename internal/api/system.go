@@ -120,9 +120,10 @@ func (h *Handler) SetupSystem(c echo.Context) error {
 	case "secure":
 		// A. Enable Geo-Fencing for the provided country
 		if req.AllowCountry != "" {
+			allowedCountries := normalizeAllowedCountries([]string{req.AllowCountry})
 			config := map[string]any{
 				"enabled":           true,
-				"allowed_countries": []string{req.AllowCountry},
+				"allowed_countries": allowedCountries,
 			}
 			configJSON, err := json.Marshal(config)
 			if err != nil {

@@ -328,6 +328,27 @@ const Advisors: React.FC<AdvisorsProps> = ({ onViewSelect }) => {
                                             </p>
                                         </div>
                                         <div className="flex items-center gap-3">
+                                            {issue.actionView && issue.reviewable ? (
+                                                <button
+                                                    onClick={() => {
+                                                        onViewSelect?.(issue.actionView);
+                                                    }}
+                                                    className="px-4 py-2 border border-zinc-800 rounded-lg text-[10px] font-black uppercase tracking-widest text-zinc-300 hover:border-primary/30 hover:text-primary transition-all"
+                                                >
+                                                    {issue.actionLabel || 'Open relevant module'}
+                                                </button>
+                                            ) : null}
+
+                                            {issue.reviewable ? (
+                                                <button
+                                                    onClick={() => { void handleReviewIssue(issue); }}
+                                                    disabled={fixingId !== null}
+                                                    className="px-4 py-2 border border-emerald-500/20 bg-emerald-500/10 rounded-lg text-[10px] font-black uppercase tracking-widest text-emerald-300 hover:border-emerald-400/40 transition-all disabled:opacity-50"
+                                                >
+                                                    {fixingId === issue.id ? 'Reviewing...' : 'Mark Reviewed'}
+                                                </button>
+                                            ) : null}
+
                                             {issue.fixable ? (
                                                 <button
                                                     onClick={() => {
@@ -340,31 +361,11 @@ const Advisors: React.FC<AdvisorsProps> = ({ onViewSelect }) => {
                                                     {fixingId === issue.id ? <RefreshCw size={12} className="animate-spin" /> : <Zap size={12} fill="currentColor" />}
                                                     {fixingId === issue.id ? 'Fixing...' : 'Auto-Fix'}
                                                 </button>
-                                            ) : issue.reviewable ? (
-                                                <>
-                                                    <button
-                                                        onClick={() => {
-                                                            if (issue.actionView) {
-                                                                onViewSelect?.(issue.actionView);
-                                                            }
-                                                        }}
-                                                        className="px-4 py-2 border border-zinc-800 rounded-lg text-[10px] font-black uppercase tracking-widest text-zinc-300 hover:border-primary/30 hover:text-primary transition-all"
-                                                    >
-                                                        {issue.actionLabel || 'Open relevant module'}
-                                                    </button>
-                                                    <button
-                                                        onClick={() => { void handleReviewIssue(issue); }}
-                                                        disabled={fixingId !== null}
-                                                        className="px-4 py-2 border border-emerald-500/20 bg-emerald-500/10 rounded-lg text-[10px] font-black uppercase tracking-widest text-emerald-300 hover:border-emerald-400/40 transition-all disabled:opacity-50"
-                                                    >
-                                                        {fixingId === issue.id ? 'Reviewing...' : 'Mark Reviewed'}
-                                                    </button>
-                                                </>
-                                            ) : (
+                                            ) : (!issue.reviewable ? (
                                                 <span className="px-4 py-2 border border-zinc-800 rounded-lg text-[10px] font-black uppercase tracking-widest text-zinc-500">
                                                     Manual Review
                                                 </span>
-                                            )}
+                                            ) : null)}
                                         </div>
                                     </div>
                                 </div>

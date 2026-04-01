@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL || 'admin@ozybase.local';
+const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL || 'system@ozybase.local';
 const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD || 'OzyBase123!';
 
 async function login(page) {
@@ -152,7 +152,8 @@ test('production QA smoke: overlays + storage + tables + edge functions', async 
         await page.reload({ waitUntil: 'networkidle' });
 
         await page.getByRole('button', { name: 'Table Editor' }).click();
-        await expect(page.getByText('TABLE EDITOR').first()).toBeVisible({ timeout: 20000 });
+        await expect(page.getByRole('button', { name: /Saved Views/i })).toBeVisible({ timeout: 20000 });
+        await expect(page.getByText('Current Table')).toHaveCount(0);
         await expect(page.getByRole('button', { name: new RegExp(tableName, 'i') }).first()).toBeVisible({ timeout: 20000 });
         await page.getByRole('button', { name: new RegExp(tableName, 'i') }).first().click();
 

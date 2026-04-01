@@ -26,7 +26,6 @@ import {
     Filter
 } from 'lucide-react';
 import { fetchWithAuth } from '../utils/api';
-import ModulePageHero from './ModulePageHero';
 import SqlResultsHeader from './sql-terminal/SqlResultsHeader';
 import { useRef, useEffect, useCallback, lazy, Suspense } from 'react';
 import loader from '@monaco-editor/loader';
@@ -780,32 +779,6 @@ const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange, initialTableN
     const hasResultRows = Boolean(hasTabularResults && (results?.rows?.length || 0) > 0);
     const canExportResults = Boolean(hasTabularResults);
     const normalizedResultSearch = resultSearchTerm.trim().toLowerCase();
-    const sqlHeroPills = [
-        { label: initialTableName ? `context: ${initialTableName}` : 'global database context', tone: initialTableName ? 'accent' : 'neutral' },
-        { label: results?.truncated ? 'preview cap active' : 'full query controls', tone: results?.truncated ? 'warning' : 'success' },
-        { label: syncing ? 'refreshing catalog' : 'autocomplete ready', tone: syncing ? 'accent' : 'neutral' },
-    ] as const;
-    const sqlHeroStats = [
-        {
-            label: 'Indexed Tables',
-            value: `${catalog.userTables.length}`,
-            hint: 'Autocomplete is built from live table and column metadata.',
-        },
-        {
-            label: 'Saved Queries',
-            value: `${savedQueries.length}`,
-            hint: savedQueries.length > 0
-                ? 'Keep reusable diagnostics and admin workflows one click away.'
-                : 'Save frequently used statements once they prove useful.',
-        },
-        {
-            label: 'Recent History',
-            value: `${history.length}`,
-            hint: history.length > 0
-                ? 'Your latest successful statements stay available in the sidebar.'
-                : 'Successful queries will start building local history automatically.',
-        },
-    ];
     const filteredResultRows = React.useMemo(() => {
         if (!hasTabularResults || !results) {
             return [];
@@ -1001,18 +974,6 @@ const SqlTerminal: React.FC<SqlTerminalProps> = ({ onSchemaChange, initialTableN
 
                 {/* SQL Input (Monaco Editor - Lazy Loaded) */}
                 <div className="flex-1 relative flex flex-col overflow-hidden bg-[#111111]">
-                    <div className="border-b border-[#2e2e2e] bg-[#111111] px-4 py-4 sm:px-6">
-                        <ModulePageHero
-                            eyebrow="SQL Editor"
-                            title="Direct SQL access"
-                            description={initialTableName
-                                ? `Run read and write queries against Production DB with autocomplete already aware of ${initialTableName}. Explain plans, capped previews, and exports stay close to the editor.`
-                                : 'Run read and write SQL, inspect explain plans, and export preview results without losing context. Safe preview caps keep large queries usable while you explore.'}
-                            icon={Terminal}
-                            pills={sqlHeroPills}
-                            stats={sqlHeroStats}
-                        />
-                    </div>
                     <Suspense fallback={
                         <div className="flex-1 flex items-center justify-center bg-[#111111]">
                             <span className="text-[10px] font-black uppercase tracking-widest text-zinc-600 animate-pulse">Loading Editor...</span>

@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL || "admin@ozybase.local";
+const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL || "system@ozybase.local";
 const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD || "OzyBase123!";
 
 async function login(page) {
@@ -49,13 +49,11 @@ test("ux audit: core surfaces explain themselves clearly", async ({ page }) => {
   });
 
   await page.getByRole("button", { name: "Table Editor" }).click();
-  await expect(
-    page.getByText(
-      /Browse, filter, sort, and update rows without writing SQL|Inspect rows and schema safely from the grid/i,
-    ),
-  ).toBeVisible({ timeout: 15000 });
-  await expect(page.getByText("Current Table")).toBeVisible();
-  await expect(page.getByText("Visible Columns")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Saved Views/i })).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(page.getByText("Current Table")).toHaveCount(0);
+  await expect(page.getByText("Visible Columns")).toHaveCount(0);
   await page.getByRole("button", { name: /Saved Views/i }).click();
   await expect(page.getByText("Save This Layout")).toBeVisible();
   await page.getByRole("button", { name: /Saved Views/i }).click({ force: true });
@@ -64,11 +62,11 @@ test("ux audit: core surfaces explain themselves clearly", async ({ page }) => {
   await page.getByRole("button", { name: /^Insert$/ }).click({ force: true });
 
   await page.getByRole("button", { name: "SQL Editor" }).click();
-  await expect(page.getByText("Direct SQL access")).toBeVisible({
+  await expect(page.getByRole("button", { name: /Run Query/i })).toBeVisible({
     timeout: 15000,
   });
-  await expect(page.getByText("Indexed Tables")).toBeVisible();
-  await expect(page.getByText(/Run read and write SQL/i)).toBeVisible();
+  await expect(page.getByText("Direct SQL access")).toHaveCount(0);
+  await expect(page.getByText("Quick Brief")).toHaveCount(0);
   await page.getByRole("button", { name: /Run Query/i }).click();
   await expect(page.getByText("Query Results")).toBeVisible({
     timeout: 15000,

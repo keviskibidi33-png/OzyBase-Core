@@ -83,10 +83,15 @@ const SecurityManager = () => {
 
     const addCountry = () => {
         if (!policies) return;
-        if (!newCountry || policies.geo_fencing.allowed_countries.includes(newCountry)) return;
+        const normalizedCountry = newCountry.trim();
+        if (!normalizedCountry) return;
+        const alreadyExists = policies.geo_fencing.allowed_countries.some((country: string) =>
+            country.trim().toLowerCase() === normalizedCountry.toLowerCase()
+        );
+        if (alreadyExists) return;
         const newPolicy = {
             ...policies.geo_fencing,
-            allowed_countries: [...policies.geo_fencing.allowed_countries, newCountry]
+            allowed_countries: [...policies.geo_fencing.allowed_countries, normalizedCountry]
         };
         setPolicies({ ...policies, geo_fencing: newPolicy });
         savePolicy('geo_fencing', newPolicy);
@@ -153,6 +158,16 @@ const SecurityManager = () => {
                 </div>
 
                 <div className="space-y-6">
+                    {geo.enabled && geo.allowed_countries.length === 0 && (
+                        <div className="flex items-start gap-3 p-4 bg-red-500/5 border border-red-500/20 rounded-xl">
+                            <AlertTriangle className="text-red-400 shrink-0" size={16} />
+                            <p className="text-[10px] text-red-300/90 leading-relaxed font-medium">
+                                <span className="font-black uppercase tracking-widest mr-2">Warning:</span>
+                                Geo-Fencing is enabled without any allowed countries. In this state, every external country will be treated as blocked until you add at least one allowed location or disable the policy.
+                            </p>
+                        </div>
+                    )}
+
                     <div className="bg-[#0c0c0c] border border-[#2e2e2e] p-6 rounded-2xl">
                         <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-4">Allowed Countries</label>
 

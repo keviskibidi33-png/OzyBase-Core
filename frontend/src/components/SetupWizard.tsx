@@ -49,9 +49,16 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }: any) => {
                 const country = (
                     typeof data === 'object' &&
                     data !== null &&
+                    'country_name' in data &&
+                    typeof (data as { country_name?: unknown }).country_name === 'string'
+                ) ? (data as { country_name: string }).country_name : (
+                    (
+                    typeof data === 'object' &&
+                    data !== null &&
                     'country' in data &&
                     typeof (data as { country?: unknown }).country === 'string'
-                ) ? (data as { country: string }).country : '';
+                    ) ? (data as { country: string }).country : ''
+                );
                 setFormData((prev: any) => ({ ...prev, country }));
             })
             .catch(() => console.warn('Could not detect location'))
@@ -103,8 +110,8 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }: any) => {
 
     return (
         <div className="fixed inset-0 bg-black/95 flex items-center justify-center p-4 z-50 backdrop-blur-sm animate-in fade-in duration-500">
-            <div className="w-full max-w-4xl bg-[#0a0a0a] border border-zinc-800 rounded-[2rem] overflow-hidden shadow-2xl flex flex-col md:flex-row h-[600px]">
-                <div className="w-full md:w-1/3 bg-zinc-900/50 p-8 flex flex-col justify-between border-r border-zinc-800 relative overflow-hidden">
+            <div className="w-full max-w-4xl bg-[#0a0a0a] border border-zinc-800 rounded-[2rem] overflow-hidden shadow-2xl flex max-h-[calc(100vh-2rem)] min-h-[560px] flex-col md:min-h-[600px] md:flex-row">
+                <div className="w-full md:w-1/3 bg-zinc-900/50 p-8 flex flex-col justify-between border-r border-zinc-800 relative overflow-y-auto">
                     <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent pointer-events-none" />
 
                     <div>
@@ -143,9 +150,9 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }: any) => {
                     </div>
                 </div>
 
-                <div className="flex-1 p-8 md:p-12 flex flex-col relative">
+                <div className="flex-1 min-h-0 p-8 md:p-12 flex flex-col relative">
                     {step === 1 ? (
-                        <div className="animate-in slide-in-from-right duration-500">
+                        <div className="animate-in slide-in-from-right duration-500 flex-1 min-h-0 overflow-y-auto pr-1">
                             <h2 className="text-2xl font-black text-white uppercase tracking-tight mb-2">How do you want to start?</h2>
                             <p className="text-zinc-500 text-sm mb-8">Choose your initial security posture.</p>
 
@@ -206,13 +213,13 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }: any) => {
                             </div>
                         </div>
                     ) : (
-                        <div className="animate-in slide-in-from-right duration-500 h-full flex flex-col">
+                        <div className="animate-in slide-in-from-right duration-500 h-full min-h-0 flex flex-col">
                             <button onClick={() => setStep(1)} className="text-xs text-zinc-500 hover:text-white mb-4 flex items-center gap-1">Back</button>
 
                             <h2 className="text-2xl font-black text-white uppercase tracking-tight mb-2">Register Admin Account</h2>
                             <p className="text-zinc-500 text-sm mb-6">Create your credentials to administrate the whole system.</p>
 
-                            <div className="space-y-4 flex-1">
+                            <div className="space-y-4 flex-1 min-h-0 overflow-y-auto pr-1">
                                 <div className="space-y-2">
                                     <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Email</label>
                                     <input

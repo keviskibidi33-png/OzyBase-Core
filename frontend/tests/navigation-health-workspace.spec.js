@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL || 'admin@ozybase.local';
+const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL || 'system@ozybase.local';
 const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD || 'OzyBase123!';
 
 async function login(page) {
@@ -84,7 +84,8 @@ test('navigation reset, geo review flow, and workspace lifecycle stay autonomous
     expect(scrolledTop).toBeGreaterThan(100);
 
     await page.getByRole('button', { name: 'SQL Editor', exact: true }).first().click();
-    await expect(page.getByText('Direct SQL access')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole('button', { name: /Run Query/i })).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Direct SQL access')).toHaveCount(0);
     await expect(page.getByText('Quick Brief')).toHaveCount(0);
     const hasResidualScroll = await page.getByTestId('module-shell').evaluate((node) =>
       Array.from(node.querySelectorAll('.custom-scrollbar')).some((element) => element.scrollTop > 0),

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL || 'admin@ozybase.local';
+const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL || 'system@ozybase.local';
 const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD || 'OzyBase123!';
 
 test('critical UI smoke: login + modules + authenticated project endpoints', async ({ page }) => {
@@ -15,10 +15,10 @@ test('critical UI smoke: login + modules + authenticated project endpoints', asy
   await expect(page.getByText('MODULE ACTIVITY')).toBeVisible({ timeout: 20000 });
 
   await page.getByRole('button', { name: 'SQL Editor' }).click();
-  await expect(page.getByText('SQL Editor').first()).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole('button', { name: /Run Query/i })).toBeVisible({ timeout: 15000 });
 
   await page.getByRole('button', { name: 'Table Editor' }).click();
-  await expect(page.getByText('TABLE EDITOR').first()).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole('button', { name: /Saved Views/i })).toBeVisible({ timeout: 15000 });
 
   await page.getByRole('button', { name: 'Authentication' }).click();
   await page.getByRole('button', { name: 'Security Hub' }).click();

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL || 'admin@ozybase.local';
+const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL || 'system@ozybase.local';
 const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD || 'OzyBase123!';
 
 async function ensureSystemInitialized(page) {
@@ -129,7 +129,7 @@ test('massive table workflows stay usable in table editor and sql editor', async
         await page.reload({ waitUntil: 'networkidle' });
 
         await page.getByRole('button', { name: 'Table Editor' }).click();
-        await expect(page.getByText('TABLE EDITOR').first()).toBeVisible({ timeout: 20000 });
+        await expect(page.getByRole('button', { name: /Saved Views/i })).toBeVisible({ timeout: 20000 });
         await page.getByRole('button', { name: new RegExp(tableName, 'i') }).first().click();
 
         await expect(page.getByText(`${rowCount} rows`)).toBeVisible({ timeout: 20000 });
@@ -204,7 +204,7 @@ test('massive table workflows stay usable in table editor and sql editor', async
         expect(afterReloadStorage.pinned).toBe('["amount"]');
         expect(afterReloadStorage.widths).toContain('"title"');
         await page.getByRole('button', { name: 'Table Editor' }).click();
-        await expect(page.getByText('TABLE EDITOR').first()).toBeVisible({ timeout: 20000 });
+        await expect(page.getByRole('button', { name: /Saved Views/i })).toBeVisible({ timeout: 20000 });
         await page.getByRole('button', { name: new RegExp(tableName, 'i') }).first().click();
         await expect(page.getByText(`${rowCount} rows`)).toBeVisible({ timeout: 20000 });
         const reloadedTitleBox = await page.getByTestId('table-header-title').boundingBox();
@@ -222,7 +222,7 @@ test('massive table workflows stay usable in table editor and sql editor', async
         await page.getByRole('button', { name: 'Dismiss', exact: true }).click();
 
         await page.getByRole('button', { name: /^SQL$/i }).click();
-        await expect(page.getByText(new RegExp(`context: ${tableName}`, 'i')).first()).toBeVisible({ timeout: 15000 });
+        await expect(page.getByRole('button', { name: /Run Query/i })).toBeVisible({ timeout: 15000 });
 
         const cappedPreviewRes = await runSQL(page, authHeaders, `SELECT * FROM ${tableName} ORDER BY id ASC;`);
         expect(cappedPreviewRes.ok).toBe(true);

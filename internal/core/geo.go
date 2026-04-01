@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Xangel0s/OzyBase/internal/data"
+	"golang.org/x/text/language"
+	"golang.org/x/text/language/display"
 )
 
 type GeoInfo struct {
@@ -85,13 +88,55 @@ func (s *GeoService) CheckBreach(ctx context.Context, ip string, country string)
 
 	isAllowed := false
 	for _, c := range policy.AllowedCountries {
-		if c == country {
+		if geoCountryMatches(c, country) {
 			isAllowed = true
 			break
 		}
 	}
 
 	return !isAllowed, nil
+}
+
+func geoCountryMatches(allowed string, actual string) bool {
+	allowed = strings.TrimSpace(allowed)
+	actual = strings.TrimSpace(actual)
+	if allowed == "" || actual == "" {
+		return false
+	}
+	if strings.EqualFold(allowed, actual) {
+		return true
+	}
+	if normalizeGeoCountryLabel(allowed) == normalizeGeoCountryLabel(actual) {
+		return true
+	}
+
+	if region, err := language.ParseRegion(strings.ToUpper(allowed)); err == nil {
+		if displayName := strings.TrimSpace(display.English.Regions().Name(region)); displayName != "" {
+			if strings.EqualFold(displayName, actual) || normalizeGeoCountryLabel(displayName) == normalizeGeoCountryLabel(actual) {
+				return true
+			}
+		}
+	}
+
+	if region, err := language.ParseRegion(strings.ToUpper(actual)); err == nil {
+		if displayName := strings.TrimSpace(display.English.Regions().Name(region)); displayName != "" {
+			if strings.EqualFold(displayName, allowed) || normalizeGeoCountryLabel(displayName) == normalizeGeoCountryLabel(allowed) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func normalizeGeoCountryLabel(value string) string {
+	var builder strings.Builder
+	for _, r := range strings.TrimSpace(strings.ToLower(value)) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			builder.WriteRune(r)
+		}
+	}
+	return builder.String()
 }
 
 func (s *GeoService) GetLocation(ctx context.Context, ip string) (GeoInfo, error) {

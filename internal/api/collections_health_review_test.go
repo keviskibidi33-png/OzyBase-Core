@@ -29,16 +29,30 @@ func TestBuildSecurityAlertHealthIssueGeoBreach(t *testing.T) {
 	if issue.Title != "Geographic Access Breach" {
 		t.Fatalf("unexpected title %q", issue.Title)
 	}
+	if !issue.Fixable {
+		t.Fatalf("expected geo breach issue to expose auto-fix")
+	}
 	if !issue.Reviewable {
 		t.Fatalf("expected reviewable issue")
-	}
-	if issue.Fixable {
-		t.Fatalf("expected geo breach to stay review-only")
 	}
 	if issue.ActionView != "security_policies" {
 		t.Fatalf("unexpected action view %q", issue.ActionView)
 	}
 	if issue.ActionLabel != "Open Geo-Fencing" {
 		t.Fatalf("unexpected action label %q", issue.ActionLabel)
+	}
+}
+
+func TestNormalizeAllowedCountriesCanonicalizesIsoCodes(t *testing.T) {
+	allowed := normalizeAllowedCountries([]any{"PE", "Peru", " CL ", "", nil, "Chile"})
+
+	if len(allowed) != 2 {
+		t.Fatalf("expected 2 canonical countries, got %d: %#v", len(allowed), allowed)
+	}
+	if allowed[0] != "Peru" {
+		t.Fatalf("expected first country to normalize to Peru, got %q", allowed[0])
+	}
+	if allowed[1] != "Chile" {
+		t.Fatalf("expected second country to normalize to Chile, got %q", allowed[1])
 	}
 }

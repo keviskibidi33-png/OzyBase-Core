@@ -162,10 +162,10 @@ func TestIsHealthIssueAutoFixable(t *testing.T) {
 			want:      true,
 		},
 		{
-			name:      "geo breach is review only",
+			name:      "geo breach is auto-fixable",
 			issueType: "security",
 			issue:     "Geographic Access Breach",
-			want:      false,
+			want:      true,
 		},
 	}
 

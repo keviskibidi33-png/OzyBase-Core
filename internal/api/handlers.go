@@ -537,6 +537,12 @@ func (h *Handler) GetSecurityPolicies(c echo.Context) error {
 		if err := rows.Scan(&pType, &config); err == nil {
 			var configMap any
 			_ = json.Unmarshal(config, &configMap)
+			if pType == "geo_fencing" {
+				if geoConfig, ok := configMap.(map[string]any); ok {
+					geoConfig["allowed_countries"] = normalizeAllowedCountries(geoConfig["allowed_countries"])
+					configMap = geoConfig
+				}
+			}
 			policies[pType] = configMap
 		}
 	}
@@ -561,6 +567,10 @@ func (h *Handler) UpdateSecurityPolicy(c echo.Context) error {
 
 	if err := c.Bind(&req); err != nil {
 		return err
+	}
+
+	if req.Type == "geo_fencing" {
+		req.Config["allowed_countries"] = normalizeAllowedCountries(req.Config["allowed_countries"])
 	}
 
 	configJSON, _ := json.Marshal(req.Config)
