@@ -30,7 +30,33 @@ type releaseAsset struct {
 
 type releaseResponse struct {
 	TagName string         `json:"tag_name"`
+	HTMLURL string         `json:"html_url"`
 	Assets  []releaseAsset `json:"assets"`
+}
+
+type ReleaseMetadata struct {
+	TagName string
+	HTMLURL string
+}
+
+func DefaultRepo() string {
+	return defaultRepo
+}
+
+func LatestRelease(repo string) (ReleaseMetadata, error) {
+	if repo == "" {
+		repo = defaultRepo
+	}
+
+	release, err := fetchRelease(repo, "")
+	if err != nil {
+		return ReleaseMetadata{}, err
+	}
+
+	return ReleaseMetadata{
+		TagName: release.TagName,
+		HTMLURL: release.HTMLURL,
+	}, nil
 }
 
 // Options configures upgrade behavior.

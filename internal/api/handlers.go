@@ -80,6 +80,10 @@ type Handler struct {
 	healthIssuesCache      []HealthIssue
 	healthIssuesCacheUntil time.Time
 
+	updateStatusCacheMu    sync.RWMutex
+	updateStatusCache      *ProjectUpdateStatus
+	updateStatusCacheUntil time.Time
+
 	siemFlushMu     sync.Mutex
 	lastSIEMFlushAt time.Time
 }

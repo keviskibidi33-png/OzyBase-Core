@@ -77,6 +77,15 @@ interface LayoutProps {
     onWorkspaceChange: (workspaceId: string | null) => void;
 }
 
+interface CoreUpdateStatus {
+    update_available?: boolean;
+    latest_version?: string;
+    current_version?: string;
+    release_url?: string;
+    status?: string;
+    message?: string;
+}
+
 const Layout: React.FC<LayoutProps> = ({
     children,
     selectedView,
@@ -102,10 +111,12 @@ const Layout: React.FC<LayoutProps> = ({
     const [selectedSchema, setSelectedSchema] = useState('public');
     const [isSchemaDropdownOpen, setIsSchemaDropdownOpen] = useState(false);
     const [healthIssues, setHealthIssues] = useState<any[]>([]);
+    const [updateStatus, setUpdateStatus] = useState<CoreUpdateStatus | null>(null);
     const [isNotificationOpen, setIsNotificationOpen] = useState(false);
     const [selectedFixIssue, setSelectedFixIssue] = useState<any>(null);
     const [isAutoFixModalOpen, setIsAutoFixModalOpen] = useState(false);
     const [isBannerDismissed, setIsBannerDismissed] = useState(false);
+    const [isUpdateBannerDismissed, setIsUpdateBannerDismissed] = useState(false);
     const [toast, setToast] = useState<any>(null);
     const [confirmDeleteTable, setConfirmDeleteTable] = useState<any>(null);
     const [explorerSearchTerm, setExplorerSearchTerm] = useState('');
@@ -117,6 +128,10 @@ const Layout: React.FC<LayoutProps> = ({
 
     // Derived state (js-combine-iterations)
     const safeHealthIssues = useMemo(() => Array.isArray(healthIssues) ? healthIssues : [], [healthIssues]);
+    const rlsCoverageIssues = useMemo(() => safeHealthIssues.filter((issue: any) => {
+        const title = String(issue?.title || '').toLowerCase();
+        return title.includes('row level security') || title.includes('missing rls policies');
+    }), [safeHealthIssues]);
 
     // Pre-calculate and memoize filtered table lists for performance (js-combine-iterations)
     const { filteredUserTables, filteredSystemTables } = useMemo(() => {
@@ -199,8 +214,15 @@ const Layout: React.FC<LayoutProps> = ({
                 .then((data: any) => setHealthIssues(Array.isArray(data) ? data : []))
                 .catch((err: any) => console.error("Failed to fetch health info", err));
         };
+        const fetchUpdateStatus = () => {
+            fetchWithAuth('/api/project/update-status')
+                .then((res: any) => res.json())
+                .then((data: any) => setUpdateStatus(data && typeof data === 'object' ? data : null))
+                .catch((err: any) => console.error("Failed to fetch update status", err));
+        };
 
         fetchHealth();
+        fetchUpdateStatus();
         const healthInterval = setInterval(fetchHealth, 10000); // Check every 10s
 
         // Re-show banner every 10 minutes if still not fixed
@@ -757,6 +779,11 @@ const Layout: React.FC<LayoutProps> = ({
                                 onClose={() => setIsNotificationOpen(false)}
                                 issues={safeHealthIssues}
                                 onIssueAction={(issue: any) => {
+                                    if (issue?.fixable === false) {
+                                        onMenuViewSelect('advisors');
+                                        setIsNotificationOpen(false);
+                                        return;
+                                    }
                                     setSelectedFixIssue(issue);
                                     setIsAutoFixModalOpen(true);
                                     setIsNotificationOpen(false);
@@ -810,12 +837,12 @@ const Layout: React.FC<LayoutProps> = ({
                     </div>
                 </header>
 
-                {safeHealthIssues.filter((i: any) => i.type === 'security').length > 1 && !isBannerDismissed && (
+                {rlsCoverageIssues.length > 0 && !isBannerDismissed && (
                     <div className="bg-red-500/10 border-b border-red-500/20 px-6 py-2 flex items-center justify-between animate-in slide-in-from-top-full duration-500 shadow-[0_4px_12px_rgba(239,68,68,0.1)]">
                         <div className="flex items-center gap-3">
                             <Shield size={14} className="text-red-500 animate-pulse" />
                             <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">
-                                Critical Security Alert: {healthIssues.filter((i: any) => i.type === 'security').length} tables missing Row Level Security
+                                Critical Security Alert: {rlsCoverageIssues.length} table{rlsCoverageIssues.length === 1 ? '' : 's'} still need Row Level Security coverage
                             </p>
                         </div>
                         <div className="flex items-center gap-4">
@@ -829,6 +856,43 @@ const Layout: React.FC<LayoutProps> = ({
                                 onClick={() => setIsBannerDismissed(true)}
                                 className="p-1 text-red-500/50 hover:text-red-500 transition-colors bg-red-500/5 hover:bg-red-500/10 rounded"
                                 title="Dismiss for 10 minutes"
+                            >
+                                <X size={14} />
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {updateStatus?.update_available && !isUpdateBannerDismissed && (
+                    <div className="bg-amber-500/10 border-b border-amber-500/20 px-6 py-2 flex items-center justify-between animate-in slide-in-from-top-full duration-500 shadow-[0_4px_12px_rgba(245,158,11,0.08)]">
+                        <div className="flex items-center gap-3">
+                            <AlertTriangle size={14} className="text-amber-300" />
+                            <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest">
+                                Core Update Available: {updateStatus.latest_version || 'latest release'} is newer than {updateStatus.current_version || 'this build'}
+                            </p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            {updateStatus.release_url ? (
+                                <button
+                                    onClick={() => window.open(updateStatus.release_url, '_blank', 'noopener,noreferrer')}
+                                    className="text-[9px] font-black bg-amber-400 text-black px-3 py-1 rounded-md uppercase tracking-widest hover:bg-amber-300 transition-all"
+                                >
+                                    View Release
+                                </button>
+                            ) : null}
+                            <button
+                                onClick={() => {
+                                    onMenuViewSelect('settings');
+                                    setIsUpdateBannerDismissed(true);
+                                }}
+                                className="text-[9px] font-black border border-amber-300/30 text-amber-200 px-3 py-1 rounded-md uppercase tracking-widest hover:bg-amber-500/10 transition-all"
+                            >
+                                Open Settings
+                            </button>
+                            <button
+                                onClick={() => setIsUpdateBannerDismissed(true)}
+                                className="p-1 text-amber-200/50 hover:text-amber-200 transition-colors bg-amber-500/5 hover:bg-amber-500/10 rounded"
+                                title="Dismiss update banner"
                             >
                                 <X size={14} />
                             </button>
@@ -920,4 +984,3 @@ const Layout: React.FC<LayoutProps> = ({
 };
 
 export default Layout;
-

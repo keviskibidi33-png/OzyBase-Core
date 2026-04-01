@@ -233,7 +233,7 @@ const AuthManager: React.FC<AuthManagerProps> = ({ view = 'users', onViewSelect 
             </div>
 
             <div className="p-8 flex-1 overflow-auto custom-scrollbar">
-                <div className="bg-[#111111] border border-[#2e2e2e] rounded-3xl overflow-hidden shadow-2xl">
+                <div className="bg-[#111111] border border-[#2e2e2e] rounded-3xl overflow-visible shadow-2xl relative z-0">
                     <div className="px-6 py-4 border-b border-[#2e2e2e] bg-[#1a1a1a] flex items-center justify-between">
                         <div className="flex gap-6">
                             <button
@@ -327,7 +327,7 @@ const AuthManager: React.FC<AuthManagerProps> = ({ view = 'users', onViewSelect 
                                                         <MoreVertical size={16} />
                                                     </button>
                                                     {openMenuUserId === user.id && (
-                                                        <div className="absolute right-0 top-10 z-20 w-48 p-2 ozy-floating-panel">
+                                                        <div className="absolute right-0 top-10 z-[60] w-48 p-2 ozy-floating-panel shadow-[0_20px_45px_rgba(0,0,0,0.45)]">
                                                             <button
                                                                 onClick={() => {
                                                                     setSelectedUser(user);

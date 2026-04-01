@@ -8,6 +8,7 @@ import (
 var performanceSignalExcludedAuditPathPrefixes = []string{
 	"/api/project/logs",
 	"/api/project/info",
+	"/api/project/update-status",
 	"/api/project/observability/slo",
 	"/api/project/security/alert-routing",
 	"/api/project/health",

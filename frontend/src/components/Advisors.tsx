@@ -23,6 +23,7 @@ interface HealthIssueResponse {
     type: IssueType;
     title: string;
     description: string;
+    fixable?: boolean;
 }
 
 interface AdvisorIssue {
@@ -33,6 +34,7 @@ interface AdvisorIssue {
     title: string;
     desc: string;
     status: 'Error' | 'Warning';
+    fixable: boolean;
 }
 
 interface AdvisorStats {
@@ -91,7 +93,8 @@ const Advisors: React.FC = () => {
                     severity: item.type === 'security' ? 'Critical' : 'Warning',
                     title: item.title,
                     desc: item.description,
-                    status: item.type === 'security' ? 'Error' : 'Warning'
+                    status: item.type === 'security' ? 'Error' : 'Warning',
+                    fixable: item.fixable !== false
                     }));
                 setIssues(parsed);
             }
@@ -268,17 +271,23 @@ const Advisors: React.FC = () => {
                                             </p>
                                         </div>
                                         <div className="flex items-center gap-3">
-                                            <button
-                                                onClick={() => {
-                                                    setSelectedFixIssue(issue);
-                                                    setIsAutoFixModalOpen(true);
-                                                }}
-                                                disabled={fixingId !== null}
-                                                className="px-4 py-2 bg-zinc-100 text-black border border-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-primary hover:border-primary transition-all flex items-center gap-2 disabled:opacity-50"
-                                            >
-                                                {fixingId === issue.id ? <RefreshCw size={12} className="animate-spin" /> : <Zap size={12} fill="currentColor" />}
-                                                {fixingId === issue.id ? 'Fixing...' : 'Auto-Fix'}
-                                            </button>
+                                            {issue.fixable ? (
+                                                <button
+                                                    onClick={() => {
+                                                        setSelectedFixIssue(issue);
+                                                        setIsAutoFixModalOpen(true);
+                                                    }}
+                                                    disabled={fixingId !== null}
+                                                    className="px-4 py-2 bg-zinc-100 text-black border border-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-primary hover:border-primary transition-all flex items-center gap-2 disabled:opacity-50"
+                                                >
+                                                    {fixingId === issue.id ? <RefreshCw size={12} className="animate-spin" /> : <Zap size={12} fill="currentColor" />}
+                                                    {fixingId === issue.id ? 'Fixing...' : 'Auto-Fix'}
+                                                </button>
+                                            ) : (
+                                                <span className="px-4 py-2 border border-zinc-800 rounded-lg text-[10px] font-black uppercase tracking-widest text-zinc-500">
+                                                    Manual Review
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
                                 </div>

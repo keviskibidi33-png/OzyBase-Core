@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"net/http"
 	"net/mail"
 	"os"
@@ -96,7 +98,19 @@ func (h *AuthHandler) CSRFToken(c echo.Context) error {
 	token, _ := c.Get("csrf").(string)
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "csrf token unavailable"})
+		buf := make([]byte, 32)
+		if _, err := rand.Read(buf); err != nil {
+			return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "csrf token unavailable"})
+		}
+		token = hex.EncodeToString(buf)
+		c.SetCookie(&http.Cookie{
+			Name:     "_ozy_csrf",
+			Value:    token,
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   !strings.EqualFold(os.Getenv("DEBUG"), "true"),
+			SameSite: http.SameSiteStrictMode,
+		})
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{"csrf_token": token})

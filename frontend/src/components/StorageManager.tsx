@@ -263,17 +263,20 @@ const StorageManager = (_props: StorageManagerProps) => {
         },
     ];
 
-    const openBucketDialog = (mode: BucketDialogMode) => {
+    const openBucketDialog = (mode: BucketDialogMode, bucket: StorageBucket = selectedBucket) => {
+        if (mode === 'edit') {
+            setSelectedBucketName(bucket.name);
+        }
         setBucketDialogMode(mode);
         setBucketForm(mode === 'edit'
             ? {
-                name: selectedBucket.name,
-                isPublic: selectedBucket.public,
-                isRLS: selectedBucket.rls_enabled,
-                rlsRule: selectedBucket.rls_rule || DEFAULT_RLS_RULE,
-                maxFileSizeMB: selectedBucket.max_file_size_bytes > 0 ? (selectedBucket.max_file_size_bytes / (1024 * 1024)).toString() : '',
-                maxTotalSizeMB: selectedBucket.max_total_size_bytes > 0 ? (selectedBucket.max_total_size_bytes / (1024 * 1024)).toString() : '',
-                lifecycleDeleteAfterDays: selectedBucket.lifecycle_delete_after_days > 0 ? selectedBucket.lifecycle_delete_after_days.toString() : '',
+                name: bucket.name,
+                isPublic: bucket.public,
+                isRLS: bucket.rls_enabled,
+                rlsRule: bucket.rls_rule || DEFAULT_RLS_RULE,
+                maxFileSizeMB: bucket.max_file_size_bytes > 0 ? (bucket.max_file_size_bytes / (1024 * 1024)).toString() : '',
+                maxTotalSizeMB: bucket.max_total_size_bytes > 0 ? (bucket.max_total_size_bytes / (1024 * 1024)).toString() : '',
+                lifecycleDeleteAfterDays: bucket.lifecycle_delete_after_days > 0 ? bucket.lifecycle_delete_after_days.toString() : '',
             }
             : EMPTY_BUCKET_FORM);
     };
@@ -372,7 +375,7 @@ const StorageManager = (_props: StorageManagerProps) => {
             const start = (partNumber - 1) * session.chunk_size_bytes;
             const end = Math.min(start + session.chunk_size_bytes, file.size);
             const chunk = file.slice(start, end);
-            setUploadSummary(`${file.name} · chunk ${partNumber}/${session.total_parts}`);
+            setUploadSummary(`${file.name} / chunk ${partNumber}/${session.total_parts}`);
             const response = await fetchWithAuth(`/api/files/uploads/multipart/${encodeURIComponent(session.session_id)}/parts/${partNumber}`, {
                 method: 'PUT',
                 headers: {
@@ -428,7 +431,7 @@ const StorageManager = (_props: StorageManagerProps) => {
             if (!response.ok) throw new Error(await extractError(response, 'Failed to run lifecycle cleanup'));
             const payload = await response.json().catch(() => null) as { deleted_objects?: number; reclaimed_size_human?: string } | null;
             await Promise.all([fetchFiles(selectedBucket.name), fetchBuckets(selectedBucket.name)]);
-            showToast(`Lifecycle cleanup removed ${payload?.deleted_objects ?? 0} object(s)${payload?.reclaimed_size_human ? ` · ${payload.reclaimed_size_human}` : ''}`, 'success');
+            showToast(`Lifecycle cleanup removed ${payload?.deleted_objects ?? 0} object(s)${payload?.reclaimed_size_human ? ` / ${payload.reclaimed_size_human}` : ''}`, 'success');
         } catch (error) {
             console.error(error);
             showToast(error instanceof Error ? error.message : 'Failed to run lifecycle cleanup', 'error');
@@ -510,21 +513,45 @@ const StorageManager = (_props: StorageManagerProps) => {
                 </div>
                 <div className="space-y-2 overflow-y-auto pr-1 custom-scrollbar">
                     {loadingBuckets ? <div className="rounded-3xl border border-[#202020] bg-[#111111] p-5 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-600">Syncing buckets...</div> : buckets.map((bucket) => (
-                        <button key={bucket.id} type="button" onClick={() => setSelectedBucketName(bucket.name)} className={`w-full rounded-[24px] border p-4 text-left transition-all ${selectedBucketName === bucket.name ? 'border-primary/20 bg-primary/10' : 'border-transparent bg-[#111111] hover:border-[#2e2e2e]'}`}>
-                            <div className="flex items-start justify-between gap-3">
-                                <div className="flex min-w-0 items-start gap-3">
-                                    <div className={`mt-0.5 flex h-11 w-11 items-center justify-center rounded-2xl border ${selectedBucketName === bucket.name ? 'border-primary/20 bg-primary/10 text-primary' : 'border-zinc-800 bg-[#0c0c0c] text-zinc-500'}`}>
-                                        <HardDrive size={18} />
+                        <div key={bucket.id} className={`rounded-[24px] border p-4 transition-all ${selectedBucketName === bucket.name ? 'border-primary/20 bg-primary/10' : 'border-transparent bg-[#111111] hover:border-[#2e2e2e]'}`}>
+                            <button type="button" onClick={() => setSelectedBucketName(bucket.name)} className="w-full text-left">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="flex min-w-0 items-start gap-3">
+                                        <div className={`mt-0.5 flex h-11 w-11 items-center justify-center rounded-2xl border ${selectedBucketName === bucket.name ? 'border-primary/20 bg-primary/10 text-primary' : 'border-zinc-800 bg-[#0c0c0c] text-zinc-500'}`}>
+                                            <HardDrive size={18} />
+                                        </div>
+                                        <div className="min-w-0">
+                                            <p className="truncate text-sm font-black text-white">{bucket.name}</p>
+                                            <p className="mt-1 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">{bucket.public ? 'Public' : 'Private'} / {bucket.object_count} objects</p>
+                                        </div>
                                     </div>
-                                    <div className="min-w-0">
-                                        <p className="truncate text-sm font-black text-white">{bucket.name}</p>
-                                        <p className="mt-1 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">{bucket.public ? 'Public' : 'Private'} · {bucket.object_count} objects</p>
-                                    </div>
+                                    <div className="flex items-center gap-2 text-zinc-500">{bucket.public ? <Globe size={13} /> : <Lock size={13} />}{bucket.rls_enabled ? <Shield size={13} className="text-primary" /> : null}</div>
                                 </div>
-                                <div className="flex items-center gap-2 text-zinc-500">{bucket.public ? <Globe size={13} /> : <Lock size={13} />}{bucket.rls_enabled ? <Shield size={13} className="text-primary" /> : null}</div>
+                            </button>
+                            <div className="mt-4 flex items-center justify-between gap-3">
+                                <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-600">{formatSize(bucket.total_size)}</span>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => openBucketDialog('edit', bucket)}
+                                        className="rounded-lg border border-zinc-800 px-2.5 py-1.5 text-[9px] font-black uppercase tracking-widest text-zinc-400 transition-colors hover:border-primary/30 hover:text-primary"
+                                    >
+                                        Edit
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setSelectedBucketName(bucket.name);
+                                            setBucketPendingDelete(bucket);
+                                        }}
+                                        disabled={bucket.name === 'default'}
+                                        className="rounded-lg border border-red-500/20 px-2.5 py-1.5 text-[9px] font-black uppercase tracking-widest text-red-300 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+                                    >
+                                        Delete
+                                    </button>
+                                </div>
                             </div>
-                            <div className="mt-4 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-600">{formatSize(bucket.total_size)}</div>
-                        </button>
+                        </div>
                     ))}
                 </div>
             </div>
@@ -553,11 +580,21 @@ const StorageManager = (_props: StorageManagerProps) => {
                         <div className="flex flex-wrap items-center justify-between gap-3">
                             <div className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-[#0c0c0c] px-3 py-2.5">
                                 <Search size={14} className="text-zinc-600" />
-                                <input type="text" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search objects..." className="w-56 bg-transparent text-xs font-bold text-zinc-100 outline-none placeholder:text-zinc-700" />
+                                <input type="text" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search objects by name or MIME type..." className="w-72 bg-transparent text-xs font-bold text-zinc-100 outline-none placeholder:text-zinc-700" />
+                                {searchQuery.trim() ? (
+                                    <button type="button" onClick={() => setSearchQuery('')} className="rounded-md p-1 text-zinc-600 transition-colors hover:text-zinc-100">
+                                        <Plus className="rotate-45" size={12} />
+                                    </button>
+                                ) : null}
                             </div>
-                            <div className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-[#0c0c0c] p-1">
+                            <div className="flex items-center gap-3">
+                                <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-600">
+                                    {filteredFiles.length} match{filteredFiles.length === 1 ? '' : 'es'}
+                                </span>
+                                <div className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-[#0c0c0c] p-1">
                                 <button type="button" onClick={() => setViewMode('grid')} className={`rounded-lg p-2 transition-colors ${viewMode === 'grid' ? 'bg-primary text-black' : 'text-zinc-600 hover:text-zinc-200'}`}><LayoutGrid size={16} /></button>
                                 <button type="button" onClick={() => setViewMode('list')} className={`rounded-lg p-2 transition-colors ${viewMode === 'list' ? 'bg-primary text-black' : 'text-zinc-600 hover:text-zinc-200'}`}><List size={16} /></button>
+                                </div>
                             </div>
                         </div>
                         <div className="rounded-2xl border border-[#2e2e2e] bg-[#111111] px-5 py-4">
@@ -578,8 +615,9 @@ const StorageManager = (_props: StorageManagerProps) => {
                         ) : filteredFiles.length === 0 ? (
                             <div className="flex h-72 flex-col items-center justify-center gap-4 rounded-[28px] border-2 border-dashed border-zinc-900 bg-[#111111]/70">
                                 <FolderOpen size={44} className="text-zinc-800" />
-                                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">This bucket is empty</p>
-                                <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="rounded-xl bg-primary px-5 py-2.5 text-[10px] font-black uppercase tracking-widest text-black transition-colors hover:bg-[#E6E600] disabled:cursor-not-allowed disabled:opacity-60">{isUploading ? 'Uploading...' : 'Upload object'}</button>
+                                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">{searchQuery.trim() ? 'No objects match this search' : 'This bucket is empty'}</p>
+                                <p className="text-[11px] text-zinc-600">{searchQuery.trim() ? 'Try a different filename or clear the filter.' : 'Upload your first object to start using this bucket.'}</p>
+                                <button type="button" onClick={() => searchQuery.trim() ? setSearchQuery('') : fileInputRef.current?.click()} disabled={isUploading} className="rounded-xl bg-primary px-5 py-2.5 text-[10px] font-black uppercase tracking-widest text-black transition-colors hover:bg-[#E6E600] disabled:cursor-not-allowed disabled:opacity-60">{searchQuery.trim() ? 'Clear search' : isUploading ? 'Uploading...' : 'Upload object'}</button>
                             </div>
                         ) : viewMode === 'list' ? (
                             <div className="overflow-hidden rounded-[28px] border border-[#2e2e2e] bg-[#111111]">
@@ -605,7 +643,7 @@ const StorageManager = (_props: StorageManagerProps) => {
                                             <div className="rounded-full border border-zinc-800 px-3 py-1 text-[9px] font-black uppercase tracking-[0.18em] text-zinc-500">{file.content_type || 'binary'}</div>
                                         </div>
                                         <h3 className="truncate text-lg font-black text-white">{file.name}</h3>
-                                        <p className="mt-2 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-600">{formatSize(file.size)} · {formatDate(file.created_at)}</p>
+                                        <p className="mt-2 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-600">{formatSize(file.size)} / {formatDate(file.created_at)}</p>
                                         <div className="mt-8 flex items-center justify-between gap-3">
                                             <button type="button" onClick={() => void handleOpenFile(file)} className="inline-flex items-center gap-2 rounded-xl border border-zinc-800 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-200 transition-colors hover:border-primary/30 hover:text-primary"><Download size={14} />Open</button>
                                             <button type="button" onClick={() => setFilePendingDelete(file)} className="inline-flex items-center gap-2 rounded-xl border border-red-500/20 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-red-300 transition-colors hover:bg-red-500/10"><Trash2 size={14} />Delete</button>
@@ -623,7 +661,7 @@ const StorageManager = (_props: StorageManagerProps) => {
                                 <div className="rounded-3xl border border-[#2e2e2e] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Read Access</p><p className="mt-2 text-lg font-black text-white">{selectedBucket.public ? 'Public' : 'Authenticated only'}</p><p className="mt-2 text-sm text-zinc-500">{selectedBucket.public ? 'Anon reads work when RLS does not narrow access.' : 'Objects require a user session or service role key.'}</p></div>
                                 <div className="rounded-3xl border border-[#2e2e2e] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">RLS Rule</p><code className="mt-3 block overflow-x-auto rounded-2xl border border-zinc-800 bg-[#070707] px-4 py-4 text-xs text-primary">{selectedBucket.rls_enabled ? selectedBucket.rls_rule : 'true'}</code></div>
                                 <div className="rounded-3xl border border-[#2e2e2e] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Per-File Limit</p><p className="mt-2 text-lg font-black text-white">{formatBucketLimit(selectedBucket.max_file_size_bytes)}</p><p className="mt-2 text-sm text-zinc-500">Session uploads reject oversize files before the stream starts and keep the limit consistent across local or S3 backends.</p></div>
-                                <div className="rounded-3xl border border-[#2e2e2e] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Bucket Quota</p><p className="mt-2 text-lg font-black text-white">{formatBucketLimit(selectedBucket.max_total_size_bytes)}</p><p className="mt-2 text-sm text-zinc-500">{selectedBucket.max_total_size_bytes > 0 ? `Current usage ${formatSize(selectedBucket.total_size)} · ${Math.round(selectedBucket.usage_ratio_pct ?? 0)}%` : 'Keep this empty when you do not want a total-capacity ceiling.'}</p></div>
+                                <div className="rounded-3xl border border-[#2e2e2e] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Bucket Quota</p><p className="mt-2 text-lg font-black text-white">{formatBucketLimit(selectedBucket.max_total_size_bytes)}</p><p className="mt-2 text-sm text-zinc-500">{selectedBucket.max_total_size_bytes > 0 ? `Current usage ${formatSize(selectedBucket.total_size)} / ${Math.round(selectedBucket.usage_ratio_pct ?? 0)}%` : 'Keep this empty when you do not want a total-capacity ceiling.'}</p></div>
                                 <div className="rounded-3xl border border-[#2e2e2e] bg-[#0c0c0c] p-5"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Lifecycle Retention</p><p className="mt-2 text-lg font-black text-white">{selectedBucket.lifecycle_delete_after_days > 0 ? `${selectedBucket.lifecycle_delete_after_days} day${selectedBucket.lifecycle_delete_after_days === 1 ? '' : 's'}` : 'Disabled'}</p><p className="mt-2 text-sm text-zinc-500">Use retention to sweep stale objects from self-hosted buckets without manual cleanup.</p><button type="button" onClick={() => void handleLifecycleSweep()} disabled={isSweepingLifecycle || selectedBucket.lifecycle_delete_after_days <= 0} className="mt-4 inline-flex items-center gap-2 rounded-xl border border-zinc-800 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-200 transition-colors hover:border-primary/30 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"><RefreshCw size={14} />{isSweepingLifecycle ? 'Sweeping...' : 'Run sweep'}</button></div>
                             </div>
                         </div>

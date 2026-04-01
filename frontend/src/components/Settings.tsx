@@ -19,6 +19,7 @@ const MENU_ITEMS = [
   { id: "infrastructure", name: "Infrastructure", icon: Server },
   { id: "billing", name: "Billing", icon: CreditCard },
   { id: "api_keys", name: "API Keys", icon: Key },
+  { id: "mcp_gateway", name: "MCP Gateway", icon: Key },
 ];
 
 interface SettingsProps {
@@ -62,6 +63,15 @@ interface ConnectionInfo {
   git_commit?: string;
 }
 
+interface UpdateStatus {
+  update_available?: boolean;
+  latest_version?: string;
+  current_version?: string;
+  release_url?: string;
+  status?: string;
+  message?: string;
+}
+
 const formatDeploymentProfile = (profile?: string) => {
   switch (profile) {
     case "azure_cloud":
@@ -99,6 +109,7 @@ const Settings: React.FC<SettingsProps> = ({
   );
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState<string | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
 
   const currentView = useMemo(
     () => (MENU_ITEMS.some((item) => item.id === view) ? view : "general"),
@@ -117,14 +128,17 @@ const Settings: React.FC<SettingsProps> = ({
   const loadProjectData = async () => {
     setLoading(true);
     try {
-      const [infoRes, connectionRes] = await Promise.all([
+      const [infoRes, connectionRes, updateRes] = await Promise.all([
         fetchWithAuth("/api/project/info"),
         fetchWithAuth("/api/project/connection"),
+        fetchWithAuth("/api/project/update-status"),
       ]);
       const info = await infoRes.json();
       const connection = await connectionRes.json();
+      const update = await updateRes.json();
       setProjectInfo(info);
       setConnectionInfo(connection);
+      setUpdateStatus(update);
     } catch (error) {
       console.error("Failed to load project settings:", error);
     } finally {
@@ -162,6 +176,15 @@ const Settings: React.FC<SettingsProps> = ({
               ? "success"
               : "warning",
           },
+          updateStatus?.update_available
+            ? {
+                label: `core ${updateStatus.latest_version} available`,
+                tone: "warning",
+              }
+            : {
+                label: "core release current",
+                tone: "neutral",
+              },
         ]}
         stats={[
           {
@@ -243,6 +266,79 @@ const Settings: React.FC<SettingsProps> = ({
               controls in the dashboard. Unsupported actions such as restart,
               pause or domain management are intentionally hidden.
             </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div className={`rounded-3xl border p-6 shadow-2xl ${updateStatus?.update_available ? "border-amber-500/20 bg-amber-500/5" : "border-[#2e2e2e] bg-[#171717]/50"}`}>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2">
+                Core Release Channel
+              </p>
+              <h3 className="text-lg font-black text-white uppercase tracking-tight">
+                {updateStatus?.update_available ? "Update available" : "Release status"}
+              </h3>
+              <p className="text-[11px] text-zinc-400 mt-2 leading-relaxed">
+                {updateStatus?.message || "The dashboard checks GitHub releases so operators notice production updates without polling the repo manually."}
+              </p>
+            </div>
+            <div className={`inline-flex items-center rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] ${updateStatus?.update_available ? "bg-amber-500/10 text-amber-300 border border-amber-500/20" : "bg-zinc-900 text-zinc-400 border border-zinc-800"}`}>
+              {updateStatus?.update_available ? "Action" : "Current"}
+            </div>
+          </div>
+          <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+            <div className="rounded-2xl border border-[#2e2e2e] bg-[#0c0c0c] p-4">
+              <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Current core</p>
+              <p className="mt-2 text-white font-semibold">{updateStatus?.current_version || connectionInfo?.app_version || "unknown"}</p>
+            </div>
+            <div className="rounded-2xl border border-[#2e2e2e] bg-[#0c0c0c] p-4">
+              <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Latest release</p>
+              <p className="mt-2 text-white font-semibold">{updateStatus?.latest_version || "not available"}</p>
+            </div>
+          </div>
+          <div className="mt-5 flex flex-wrap gap-3">
+            {updateStatus?.release_url ? (
+              <button
+                onClick={() => window.open(updateStatus.release_url, "_blank", "noopener,noreferrer")}
+                className="px-4 py-2 rounded-xl bg-primary text-black text-[10px] font-black uppercase tracking-widest hover:bg-[#E6E600] transition-colors"
+              >
+                View release
+              </button>
+            ) : null}
+            <button
+              onClick={() => onViewSelect?.("infrastructure")}
+              className="px-4 py-2 rounded-xl border border-zinc-800 text-zinc-300 text-[10px] font-black uppercase tracking-widest hover:border-primary/30 hover:text-primary transition-colors"
+            >
+              Review runtime
+            </button>
+          </div>
+        </div>
+
+        <div className="rounded-3xl border border-[#2e2e2e] bg-[#171717]/50 p-6 shadow-2xl">
+          <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2">
+            MCP Gateway
+          </p>
+          <h3 className="text-lg font-black text-white uppercase tracking-tight">
+            AI access to your project DB
+          </h3>
+          <p className="text-[11px] text-zinc-400 mt-2 leading-relaxed">
+            The MCP endpoint is not a separate install. It lives under API Keys, uses the Secret key, and generates the VS Code snippet you need for `mcp.json`.
+          </p>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <button
+              onClick={() => onViewSelect?.("mcp_gateway")}
+              className="px-4 py-2 rounded-xl bg-primary text-black text-[10px] font-black uppercase tracking-widest hover:bg-[#E6E600] transition-colors"
+            >
+              Open MCP Gateway
+            </button>
+            <button
+              onClick={() => onViewSelect?.("api_keys")}
+              className="px-4 py-2 rounded-xl border border-zinc-800 text-zinc-300 text-[10px] font-black uppercase tracking-widest hover:border-primary/30 hover:text-primary transition-colors"
+            >
+              Open API keys
+            </button>
           </div>
         </div>
       </div>
@@ -615,7 +711,24 @@ const Settings: React.FC<SettingsProps> = ({
     </div>
   );
 
-  const renderApiKeys = () => <EssentialApiKeysPanel />;
+  const renderApiKeys = (focusMCP = false) => (
+    <div className="space-y-8 animate-in fade-in duration-300">
+      {focusMCP ? (
+        <div className="rounded-3xl border border-primary/20 bg-primary/5 p-6 shadow-2xl">
+          <p className="text-[10px] font-black uppercase tracking-widest text-primary mb-2">
+            MCP Gateway
+          </p>
+          <h3 className="text-lg font-black text-white uppercase tracking-tight">
+            Connect VS Code or another MCP client
+          </h3>
+          <p className="text-[11px] text-zinc-400 mt-2 leading-relaxed">
+            Reveal the Secret key below, then copy the generated MCP snippet. This uses the built-in `/api/project/mcp` backend and does not require a separate server install.
+          </p>
+        </div>
+      ) : null}
+      <EssentialApiKeysPanel />
+    </div>
+  );
 
   if (loading) {
     return (
@@ -664,6 +777,7 @@ const Settings: React.FC<SettingsProps> = ({
           {currentView === "infrastructure" && renderInfrastructure()}
           {currentView === "billing" && renderBilling()}
           {currentView === "api_keys" && renderApiKeys()}
+          {currentView === "mcp_gateway" && renderApiKeys(true)}
         </div>
       </div>
     </div>

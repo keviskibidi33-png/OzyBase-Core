@@ -1196,6 +1196,7 @@ type HealthIssue struct {
 	Type        string `json:"type"` // "security" | "performance"
 	Title       string `json:"title"`
 	Description string `json:"description"`
+	Fixable     bool   `json:"fixable"`
 }
 
 // GetHealthIssues handles GET /api/project/health
@@ -1351,6 +1352,10 @@ func (h *Handler) GetHealthIssues(c echo.Context) error {
 		}
 	}
 
+	for index := range issues {
+		issues[index].Fixable = isHealthIssueAutoFixable(issues[index].Type, issues[index].Title)
+	}
+
 	h.setCachedHealthIssues(issues, 10*time.Second)
 	return c.JSON(http.StatusOK, issues)
 }
@@ -1370,6 +1375,25 @@ func isRLSHealthFixIssue(issueType, issue string) bool {
 	return strings.Contains(issueLower, "row level security") ||
 		strings.Contains(issueLower, "missing rls policies") ||
 		strings.Contains(issueLower, " rls ")
+}
+
+func isHealthIssueAutoFixable(issueType, issue string) bool {
+	typeLower := strings.ToLower(strings.TrimSpace(issueType))
+	issueLower := strings.ToLower(strings.TrimSpace(issue))
+
+	if isRLSHealthFixIssue(issueType, issue) {
+		return true
+	}
+	if typeLower == "security" && strings.Contains(issueLower, "public list rules") {
+		return true
+	}
+	if typeLower == "performance" && strings.Contains(issueLower, "sequential scans") {
+		return true
+	}
+	if typeLower == "performance" && strings.Contains(issueLower, "missing an index") {
+		return true
+	}
+	return false
 }
 
 func inferRLSAutoFixRuleFromColumns(tableName string, available map[string]struct{}) string {
