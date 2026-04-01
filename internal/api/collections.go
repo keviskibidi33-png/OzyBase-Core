@@ -341,7 +341,7 @@ func (h *Handler) renameCollectionMetadataForTable(ctx context.Context, oldTable
 	}
 
 	var pgErr *pgconn.PgError
-	if err != nil && !(errors.As(err, &pgErr) && pgErr.Code == "42703") {
+	if err != nil && (!errors.As(err, &pgErr) || pgErr.Code != "42703") {
 		return fmt.Errorf("failed to rename collection metadata from %s to %s: %w", oldTableName, newTableName, err)
 	}
 

@@ -388,7 +388,7 @@ func (svc *httpClient) request(ctx context.Context, method, path string, payload
 		}
 
 		rawBody, readErr := io.ReadAll(response.Body)
-		response.Body.Close()
+		_ = response.Body.Close()
 		if readErr != nil {
 			return nil, readErr
 		}
