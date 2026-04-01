@@ -73,6 +73,7 @@ var adminAuditDescriptors = map[string]adminAuditDescriptor{
 	"DELETE /api/project/integrations/:id":             {Action: "integrations_delete", TargetParam: "id"},
 	"POST /api/project/integrations/:id/test":          {Action: "integrations_test", TargetParam: "id"},
 	"POST /api/project/health/fix":                     {Action: "project_health_fix"},
+	"POST /api/project/health/review":                  {Action: "project_health_review"},
 	"DELETE /api/functions/:name":                      {Action: "function_delete", TargetParam: "name"},
 	"POST /api/security/firewall":                      {Action: "firewall_rule_create"},
 	"DELETE /api/security/firewall/:id":                {Action: "firewall_rule_delete", TargetParam: "id"},

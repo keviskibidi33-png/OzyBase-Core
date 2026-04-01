@@ -142,6 +142,42 @@ func TestIsRLSHealthFixIssue(t *testing.T) {
 	}
 }
 
+func TestIsHealthIssueAutoFixable(t *testing.T) {
+	tests := []struct {
+		name      string
+		issueType string
+		issue     string
+		want      bool
+	}{
+		{
+			name:      "rls issue is fixable",
+			issueType: "security",
+			issue:     "Table `users` does not have Row Level Security enabled",
+			want:      true,
+		},
+		{
+			name:      "public list rules are fixable",
+			issueType: "security",
+			issue:     "2 collections have public list rules",
+			want:      true,
+		},
+		{
+			name:      "geo breach is review only",
+			issueType: "security",
+			issue:     "Geographic Access Breach",
+			want:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isHealthIssueAutoFixable(tt.issueType, tt.issue); got != tt.want {
+				t.Fatalf("expected %v, got %v", tt.want, got)
+			}
+		})
+	}
+}
+
 func TestInferRLSAutoFixRuleFromColumns(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -8,6 +8,7 @@ import (
 var performanceSignalExcludedAuditPathPrefixes = []string{
 	"/api/project/logs",
 	"/api/project/info",
+	"/api/project/update-status",
 	"/api/project/observability/slo",
 	"/api/project/security/alert-routing",
 	"/api/project/health",
@@ -38,9 +39,7 @@ func buildPerformanceSignalExclusionSQL(column string) string {
 
 	var builder strings.Builder
 	for _, prefix := range performanceSignalExcludedAuditPathPrefixes {
-		builder.WriteString("\n  AND ")
-		builder.WriteString(column)
-		fmt.Fprintf(&builder, " NOT LIKE '%s%%'", prefix)
+		fmt.Fprintf(&builder, "\n  AND %s NOT LIKE '%s%%'", column, prefix)
 	}
 	return builder.String()
 }

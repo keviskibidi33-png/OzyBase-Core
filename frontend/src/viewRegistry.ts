@@ -143,6 +143,7 @@ export const VIEW_REGISTRY: Record<string, ViewMeta> = {
     infrastructure: { id: 'infrastructure', group: 'settings', label: 'Infrastructure', component: 'Settings', props: { view: 'infrastructure' }, supportsExplorer: false },
     billing: { id: 'billing', group: 'settings', label: 'Billing', component: 'Settings', props: { view: 'billing' }, supportsExplorer: false },
     api_keys: { id: 'api_keys', group: 'settings', label: 'API Keys', component: 'Settings', props: { view: 'api_keys' }, supportsExplorer: false },
+    mcp_gateway: { id: 'mcp_gateway', group: 'settings', label: 'MCP Gateway', component: 'Settings', props: { view: 'mcp_gateway' }, supportsExplorer: false },
 
     workspaces: { id: 'workspaces', group: 'workspaces', label: 'Projects', component: 'WorkspaceManager', props: { view: 'wm_overview' }, supportsExplorer: true },
     wm_overview: { id: 'wm_overview', group: 'workspaces', label: 'My Projects', component: 'WorkspaceManager', props: { view: 'wm_overview' }, supportsExplorer: true },
@@ -225,6 +226,7 @@ export const SUBMENUS: Record<string, SubmenuItem[]> = {
         { id: 'infrastructure', name: 'Infrastructure', icon: Server },
         { id: 'billing', name: 'Billing', icon: CreditCard },
         { id: 'api_keys', name: 'API Keys', icon: Key },
+        { id: 'mcp_gateway', name: 'MCP Gateway', icon: Terminal },
     ],
     workspaces: [
         { id: 'wm_overview', name: 'My Projects', icon: Briefcase },

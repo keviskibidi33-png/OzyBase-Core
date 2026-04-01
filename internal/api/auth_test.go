@@ -65,3 +65,22 @@ func TestCSRFToken_ReturnsContextToken(t *testing.T) {
 		assert.JSONEq(t, `{"csrf_token":"csrf-test-token"}`, rec.Body.String())
 	}
 }
+
+func TestCSRFToken_FallsBackToIssuedToken(t *testing.T) {
+	e := echo.New()
+	h := &AuthHandler{}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/csrf", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	if assert.NoError(t, h.CSRFToken(c)) {
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "csrf_token")
+		cookies := rec.Result().Cookies()
+		if assert.Len(t, cookies, 1) {
+			assert.Equal(t, "_ozy_csrf", cookies[0].Name)
+			assert.NotEmpty(t, cookies[0].Value)
+		}
+	}
+}

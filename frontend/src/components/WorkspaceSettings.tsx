@@ -194,6 +194,7 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
 
         setSaving(true);
         try {
+            const deletedWorkspaceId = String(workspaceId);
             const res = await fetchWithAuth(`/api/workspaces/${workspaceId}`, {
                 method: 'DELETE'
             });
@@ -201,10 +202,21 @@ const WorkspaceSettings: React.FC<WorkspaceSettingsProps> = ({
                 throw new Error(await readErrorMessage(res, 'Unable to delete workspace.'));
             }
 
-            const activeWorkspaceId = localStorage.getItem('ozy_workspace_id');
-            if (activeWorkspaceId && String(activeWorkspaceId) === String(workspaceId)) {
-                localStorage.removeItem('ozy_workspace_id');
-                onWorkspaceChange?.(null);
+            setWorkspace(null);
+            setMembers([]);
+            localStorage.removeItem('ozy_workspace_id');
+            onWorkspaceChange?.(null);
+
+            const workspacesRes = await fetchWithAuth('/api/workspaces');
+            const remainingWorkspaces = workspacesRes.ok ? await workspacesRes.json() : [];
+            const fallbackWorkspace = Array.isArray(remainingWorkspaces)
+                ? remainingWorkspaces.find((item: any) => String(item?.id || '') !== deletedWorkspaceId)
+                : null;
+
+            if (fallbackWorkspace?.id) {
+                const nextWorkspaceId = String(fallbackWorkspace.id);
+                localStorage.setItem('ozy_workspace_id', nextWorkspaceId);
+                onWorkspaceChange?.(nextWorkspaceId);
             }
 
             onViewSelect?.('workspaces');

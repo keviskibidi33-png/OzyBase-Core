@@ -585,6 +585,7 @@ func setupEcho(ctx context.Context, h *api.Handler, cfg *config.Config, cronMgr 
 		// Project Info
 		apiGroup.GET("/project/info", h.GetProjectInfo, authRequired)
 		apiGroup.GET("/project/connection", h.GetProjectConnection, authRequired, adminOnly)
+		apiGroup.GET("/project/update-status", h.GetProjectUpdateStatus, authRequired)
 		apiGroup.GET("/project/health", h.GetHealthIssues, authRequired)
 		apiGroup.GET("/project/performance/advisor", h.GetPerformanceAdvisor, authRequired, adminOnly)
 		apiGroup.GET("/project/performance/advisor/history", h.GetPerformanceAdvisorHistory, authRequired, adminOnly)
@@ -629,6 +630,7 @@ func setupEcho(ctx context.Context, h *api.Handler, cfg *config.Config, cronMgr 
 
 		// Security Dashboard Routes
 		apiGroup.POST("/project/health/fix", h.FixHealthIssues, authRequired, adminOnly)
+		apiGroup.POST("/project/health/review", h.ReviewHealthIssues, authRequired, adminOnly)
 		apiGroup.GET("/project/logs", h.GetLogs, authRequired)
 		apiGroup.GET("/project/logs/export", h.ExportLogs, authRequired)
 		apiGroup.GET("/security/firewall", h.ListIPRules, authRequired)

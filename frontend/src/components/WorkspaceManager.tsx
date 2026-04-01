@@ -39,14 +39,29 @@ const WorkspaceManager = ({ onWorkspaceChange, onViewSelect, view = 'wm_overview
             const res = await fetchWithAuth('/api/workspaces');
             if (res.ok) {
                 const data = await res.json();
-                setWorkspaces(data || []);
+                const workspaceList = Array.isArray(data) ? data : [];
+                setWorkspaces(workspaceList);
+
+                const storedWorkspaceId = String(localStorage.getItem('ozy_workspace_id') || '').trim();
+                if (workspaceList.length === 0) {
+                    localStorage.removeItem('ozy_workspace_id');
+                    onWorkspaceChange?.(null);
+                    return;
+                }
+
+                const activeWorkspace = workspaceList.find((workspace: any) => String(workspace?.id || '') === storedWorkspaceId) || workspaceList[0];
+                const activeWorkspaceId = String(activeWorkspace?.id || '').trim();
+                if (activeWorkspaceId && activeWorkspaceId !== storedWorkspaceId) {
+                    localStorage.setItem('ozy_workspace_id', activeWorkspaceId);
+                    onWorkspaceChange?.(activeWorkspaceId);
+                }
             }
         } catch (err) {
             console.error("Failed to fetch workspaces", err);
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [onWorkspaceChange]);
 
     const fetchMembersForWorkspaces = useCallback(async (items: any) => {
         if (!Array.isArray(items) || items.length === 0) {
@@ -80,7 +95,7 @@ const WorkspaceManager = ({ onWorkspaceChange, onViewSelect, view = 'wm_overview
 
     const createWorkspace = useCallback(async (nameToUse: any) => {
         const normalized = String(nameToUse || '').trim();
-        if (!normalized) return;
+        if (!normalized) return null;
         try {
             const res = await fetchWithAuth('/api/workspaces', {
                 method: 'POST',
@@ -88,22 +103,32 @@ const WorkspaceManager = ({ onWorkspaceChange, onViewSelect, view = 'wm_overview
                 body: JSON.stringify({ name: normalized })
             });
             if (res.ok) {
+                const createdWorkspace = await res.json();
                 setNewWorkspaceName('');
                 setShowCreateModal(false);
-                fetchWorkspaces();
+                await fetchWorkspaces();
+                if (createdWorkspace?.id) {
+                    const createdWorkspaceId = String(createdWorkspace.id);
+                    localStorage.setItem('ozy_workspace_id', createdWorkspaceId);
+                    onWorkspaceChange?.(createdWorkspaceId);
+                    onViewSelect?.('workspace_settings');
+                }
+                return createdWorkspace;
             }
         } catch (err) {
             console.error("Failed to create workspace", err);
         }
-    }, [fetchWorkspaces]);
+        return null;
+    }, [fetchWorkspaces, onViewSelect, onWorkspaceChange]);
 
     const handleCreate = useCallback(async () => {
         await createWorkspace(newWorkspaceName);
     }, [createWorkspace, newWorkspaceName]);
 
     const handleSelect = (workspace: any) => {
-        localStorage.setItem('ozy_workspace_id', workspace.id);
-        if (onWorkspaceChange) onWorkspaceChange(workspace.id);
+        const nextWorkspaceId = String(workspace.id);
+        localStorage.setItem('ozy_workspace_id', nextWorkspaceId);
+        if (onWorkspaceChange) onWorkspaceChange(nextWorkspaceId);
         if (onViewSelect) onViewSelect('overview');
     };
 
@@ -305,8 +330,9 @@ const WorkspaceManager = ({ onWorkspaceChange, onViewSelect, view = 'wm_overview
                                             className="p-2 text-zinc-600 hover:text-white transition-colors"
                                             onClick={(e: any) => {
                                                 e.stopPropagation();
-                                                localStorage.setItem('ozy_workspace_id', w.id);
-                                                if (onWorkspaceChange) onWorkspaceChange(w.id);
+                                                const nextWorkspaceId = String(w.id);
+                                                localStorage.setItem('ozy_workspace_id', nextWorkspaceId);
+                                                if (onWorkspaceChange) onWorkspaceChange(nextWorkspaceId);
                                                 if (onViewSelect) onViewSelect('workspace_settings');
                                             }}
                                         >

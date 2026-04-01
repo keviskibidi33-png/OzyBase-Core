@@ -136,9 +136,7 @@ func (h *FileHandler) Upload(c echo.Context) error {
 			"error": "Failed to open uploaded file: " + err.Error(),
 		})
 	}
-	defer func() {
-		_ = source.Close()
-	}()
+	defer func() { _ = source.Close() }()
 
 	displayName := cleanObjectName(fileHeader.Filename)
 	objectKey := buildObjectStorageKey(displayName)
@@ -696,9 +694,7 @@ func (h *FileHandler) Download(c echo.Context) error {
 	if err != nil {
 		return storageErrorResponse(c, err)
 	}
-	defer func() {
-		_ = reader.Close()
-	}()
+	defer func() { _ = reader.Close() }()
 
 	contentType := strings.TrimSpace(object.ContentType)
 	if contentType == "" {

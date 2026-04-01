@@ -2,11 +2,14 @@ package data
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -476,12 +479,16 @@ func (db *DB) BulkInsertRecord(ctx context.Context, collectionName string, recor
 		return fmt.Errorf("invalid collection name: %s", collectionName)
 	}
 
-	validCols, err := db.GetTableColumns(ctx, collectionName)
+	validColumns, err := db.GetTableColumns(ctx, collectionName)
+	if err != nil {
+		return err
+	}
+	columnTypes, err := db.GetTableColumnTypes(ctx, collectionName)
 	if err != nil {
 		return err
 	}
 
-	columns := collectBulkInsertColumns(validCols, records)
+	columns := collectBulkInsertColumns(validColumns, records)
 
 	if len(columns) == 0 {
 		return fmt.Errorf("no valid columns found for import")
@@ -494,7 +501,7 @@ func (db *DB) BulkInsertRecord(ctx context.Context, collectionName string, recor
 			if end > len(records) {
 				end = len(records)
 			}
-			if err := execBulkInsertChunk(ctx, tx, collectionName, columns, records[start:end], start); err != nil {
+			if err := execBulkInsertChunk(ctx, tx, collectionName, columns, columnTypes, records[start:end], start); err != nil {
 				return err
 			}
 		}
@@ -502,11 +509,11 @@ func (db *DB) BulkInsertRecord(ctx context.Context, collectionName string, recor
 	})
 }
 
-func collectBulkInsertColumns(validCols map[string]bool, records []map[string]any) []string {
+func collectBulkInsertColumns(validColumns map[string]bool, records []map[string]any) []string {
 	columnSet := make(map[string]struct{})
 	for _, record := range records {
 		for col := range record {
-			if !IsValidIdentifier(col) || !validCols[col] {
+			if !IsValidIdentifier(col) || !validColumns[col] {
 				continue
 			}
 			if col == "id" || col == "created_at" || col == "updated_at" || col == "deleted_at" {
@@ -542,14 +549,17 @@ func bulkInsertChunkSize(columnCount int) int {
 	return chunkSize
 }
 
-func execBulkInsertChunk(ctx context.Context, tx pgx.Tx, collectionName string, columns []string, records []map[string]any, rowOffset int) error {
-	query, values := buildBulkInsertStatement(collectionName, columns, records)
+func execBulkInsertChunk(ctx context.Context, tx pgx.Tx, collectionName string, columns []string, columnTypes map[string]string, records []map[string]any, rowOffset int) error {
+	query, values, err := buildBulkInsertStatement(collectionName, columns, columnTypes, records, rowOffset)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, query, values...); err != nil {
 		if len(records) == 1 {
 			return fmt.Errorf("row %d import failed: %w", rowOffset+1, err)
 		}
 		for index, record := range records {
-			if rowErr := execBulkInsertChunk(ctx, tx, collectionName, columns, []map[string]any{record}, rowOffset+index); rowErr != nil {
+			if rowErr := execBulkInsertChunk(ctx, tx, collectionName, columns, columnTypes, []map[string]any{record}, rowOffset+index); rowErr != nil {
 				return rowErr
 			}
 		}
@@ -558,7 +568,7 @@ func execBulkInsertChunk(ctx context.Context, tx pgx.Tx, collectionName string, 
 	return nil
 }
 
-func buildBulkInsertStatement(collectionName string, columns []string, records []map[string]any) (string, []any) {
+func buildBulkInsertStatement(collectionName string, columns []string, columnTypes map[string]string, records []map[string]any, rowOffset int) (string, []any, error) {
 	var builder strings.Builder
 	builder.Grow(len(collectionName) + len(columns)*16 + len(records)*len(columns)*6)
 	builder.WriteString("INSERT INTO ")
@@ -581,24 +591,185 @@ func buildBulkInsertStatement(collectionName string, columns []string, records [
 			}
 			builder.WriteString("$")
 			builder.WriteString(strconv.Itoa(argIndex))
-			values = append(values, normalizeBulkInsertValue(record[col]))
+			value, err := normalizeImportedValue(columnTypes[col], record[col])
+			if err != nil {
+				return "", nil, fmt.Errorf("row %d column %s: %w", rowOffset+rowIndex+1, col, err)
+			}
+			values = append(values, value)
 			argIndex++
 		}
 		builder.WriteString(")")
 	}
 
-	return builder.String(), values
+	return builder.String(), values, nil
 }
 
-func normalizeBulkInsertValue(value any) any {
-	raw, ok := value.(string)
-	if !ok {
-		return value
+func normalizeImportedValue(columnType string, raw any) (any, error) {
+	if raw == nil {
+		return nil, nil
 	}
 
+	typeName := strings.ToLower(strings.TrimSpace(columnType))
+	switch value := raw.(type) {
+	case string:
+		return normalizeImportedString(typeName, value)
+	case json.RawMessage:
+		return normalizeImportedString(typeName, string(value))
+	case float64:
+		return normalizeImportedNumber(typeName, value)
+	case float32:
+		return normalizeImportedNumber(typeName, float64(value))
+	case int:
+		return normalizeImportedNumber(typeName, float64(value))
+	case int32:
+		return normalizeImportedNumber(typeName, float64(value))
+	case int64:
+		return normalizeImportedNumber(typeName, float64(value))
+	case bool:
+		if isBooleanImportType(typeName) {
+			return value, nil
+		}
+		return value, nil
+	default:
+		if isJSONImportType(typeName) {
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return nil, fmt.Errorf("encode json value: %w", err)
+			}
+			return json.RawMessage(encoded), nil
+		}
+		return value, nil
+	}
+}
+
+func normalizeImportedString(typeName, raw string) (any, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return nil
+		return nil, nil
 	}
-	return trimmed
+
+	switch {
+	case isBooleanImportType(typeName):
+		switch strings.ToLower(trimmed) {
+		case "true", "t", "1", "yes", "y", "on":
+			return true, nil
+		case "false", "f", "0", "no", "n", "off":
+			return false, nil
+		default:
+			return nil, fmt.Errorf("expected boolean value")
+		}
+	case isIntegerImportType(typeName):
+		parsed, err := strconv.ParseInt(trimmed, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("expected integer value")
+		}
+		return parsed, nil
+	case isNumericImportType(typeName):
+		parsed, err := strconv.ParseFloat(trimmed, 64)
+		if err != nil {
+			return nil, fmt.Errorf("expected numeric value")
+		}
+		return parsed, nil
+	case isUUIDImportType(typeName):
+		if _, err := uuid.Parse(trimmed); err != nil {
+			return nil, fmt.Errorf("expected UUID value")
+		}
+		return trimmed, nil
+	case isDateTimeImportType(typeName):
+		parsed, err := parseImportedTime(trimmed)
+		if err != nil {
+			return nil, err
+		}
+		if typeName == "date" {
+			return parsed.Format("2006-01-02"), nil
+		}
+		return parsed, nil
+	case isJSONImportType(typeName):
+		if json.Valid([]byte(trimmed)) {
+			return json.RawMessage(trimmed), nil
+		}
+		encoded, err := json.Marshal(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("encode json string: %w", err)
+		}
+		return json.RawMessage(encoded), nil
+	default:
+		return raw, nil
+	}
+}
+
+func normalizeImportedNumber(typeName string, value float64) (any, error) {
+	switch {
+	case isIntegerImportType(typeName):
+		return int64(value), nil
+	case isNumericImportType(typeName):
+		return value, nil
+	case isBooleanImportType(typeName):
+		return value != 0, nil
+	case isJSONImportType(typeName):
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("encode numeric json value: %w", err)
+		}
+		return json.RawMessage(encoded), nil
+	default:
+		return value, nil
+	}
+}
+
+func isBooleanImportType(typeName string) bool {
+	return typeName == "boolean" || typeName == "bool"
+}
+
+func isIntegerImportType(typeName string) bool {
+	switch typeName {
+	case "smallint", "integer", "bigint", "int2", "int4", "int8", "smallserial", "serial", "bigserial":
+		return true
+	default:
+		return false
+	}
+}
+
+func isNumericImportType(typeName string) bool {
+	switch typeName {
+	case "numeric", "decimal", "real", "double precision", "float4", "float8":
+		return true
+	default:
+		return false
+	}
+}
+
+func isUUIDImportType(typeName string) bool {
+	return typeName == "uuid"
+}
+
+func isJSONImportType(typeName string) bool {
+	return typeName == "json" || typeName == "jsonb"
+}
+
+func isDateTimeImportType(typeName string) bool {
+	switch typeName {
+	case "date", "timestamp", "timestamp without time zone", "timestamp with time zone", "timestamptz":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseImportedTime(raw string) (time.Time, error) {
+	layouts := []string{
+		time.RFC3339,
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+		"2006-01-02",
+		"2006/01/02",
+		"02/01/2006",
+		"01/02/2006",
+	}
+	for _, layout := range layouts {
+		if parsed, err := time.Parse(layout, raw); err == nil {
+			return parsed, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("expected date or timestamp value")
 }

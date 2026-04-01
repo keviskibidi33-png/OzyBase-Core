@@ -53,10 +53,12 @@ test("essential keys UI: reveal, rotate and validate MCP with service_role", asy
 
   await page.getByAltText("OzyBase").hover();
   await page.getByRole("button", { name: "Settings" }).click();
-  await expect(page.getByText("Project Metadata")).toBeVisible({
+  await expect(
+    page.getByRole("heading", { name: "General Settings" }),
+  ).toBeVisible({
     timeout: 15000,
   });
-  await page.getByRole("button", { name: "API Keys" }).click();
+  await page.getByRole("button", { name: "API Keys", exact: true }).click();
   await expect(page.getByText("Essential key vault")).toBeVisible({
     timeout: 15000,
   });
